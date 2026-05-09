@@ -402,3 +402,36 @@ def test_tier2_maker_bonus_outranks_pure_shared():
     # 兩部都 1 shared → Tier 1 跳過（≥2 過濾）→ Tier 2 補；cand_a 因 maker bonus 排前
     assert out[0].id == 10
     assert out[1].id == 11
+
+
+# ------------------------------------------------------------------
+# Tier 1 contract regression
+# ------------------------------------------------------------------
+
+def test_regression_codex_p1_duplicate_target_does_not_consume_tier1_slot():
+    # 57b 場景：corpus 從 DB build，rank() 收到的 target 是另一個 fetched Video
+    # 同 stable_key 但不同 Python object → `is` 排不掉
+    # 修前：target 副本占 Tier 1 slot → 從 Tier 2 補位 → 違反「Tier 1 嚴格 before Tier 2」契約
+    padding = [_v(id=4000 + i, tags=[f"pad_{i}"]) for i in range(30)]
+    target_in_corpus = _v(id=1, tags=["rareA", "rareB", "rareC"], maker="MK_T")
+    # 3 部 strong Tier 1（≥2 shared，diff maker）
+    strong_cands = [
+        _v(id=10 + i, tags=["rareA", "rareB", f"u_{i}"], maker="MK_X")
+        for i in range(3)
+    ]
+    # 1 部 Tier 2 only with maker bonus（修前會擠進 top_k=3）
+    tier2_with_bonus = _v(id=20, tags=["rareA", "u_t2"], maker="MK_T")
+
+    r = SimilarRanker(padding + [target_in_corpus] + strong_cands + [tier2_with_bonus])
+
+    # 另一個 Python object，同 id（DB row 重抓場景）
+    target_query = _v(id=1, tags=["rareA", "rareB", "rareC"], maker="MK_T")
+    assert target_query is not target_in_corpus
+
+    out = r.rank(target_query, top_k=3)
+    strong_ids = {10, 11, 12}
+    assert all(c.id in strong_ids for c in out), (
+        f"Tier 1 slot consumed by target duplicate; got {[c.id for c in out]}"
+    )
+    # target 副本不應出現在結果
+    assert all(c.id != 1 for c in out)

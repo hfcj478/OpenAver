@@ -1,12 +1,17 @@
+from __future__ import annotations
+
 import math
 import random
 import re
 from collections import defaultdict
+from typing import TYPE_CHECKING
 
-from core.database import Video
 from core.similar.canonicalize import canonicalize
 from core.similar.cast_bucket import cast_bucket
 from core.similar.idf import build_idf, idf_jaccard, IDF_HOT_THRESHOLD  # noqa: F401
+
+if TYPE_CHECKING:
+    from core.database import Video
 
 
 # CD-57a-5：番號 prefix 提取，支援多段 prefix（FC2-PPV 等）
@@ -237,9 +242,13 @@ class SimilarRanker:
         result: list[Video] = []
 
         retrieved = self._retrieve(target_canon, exclude=target, top_n=100)
+        # Codex P1 fix：DB 場景 target 可能是 corpus 內 row 的另一個 Python object
+        # （`_retrieve` 的 `is` 排不掉），用 stable_key 兜底防 Tier 1 slot 被 target 副本占用
+        target_key = self._stable_key(target)
         tier1_pool = [
             c for c in retrieved
-            if len(target_useful & self._useful_set(c)) >= 2
+            if self._stable_key(c) != target_key
+            and len(target_useful & self._useful_set(c)) >= 2
         ]
         for c in self._mmr_rerank(target, tier1_pool, top_k=top_k):
             k = self._stable_key(c)
