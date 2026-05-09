@@ -470,7 +470,7 @@ async def get_stats():
 
 
 @router.delete("/cache")
-async def clear_cache():
+async def clear_cache():  # noqa: ranker-invalidate (DELETE FROM videos only in docstring; actual deletion delegates to repo.clear_all() which already calls SimilarRankerCache.invalidate())
     """清除所有影片快取（DELETE FROM videos）"""
     try:
         db_path = get_db_path()
