@@ -792,13 +792,13 @@
     }
 }
 
-/* ─── 56c-T3 / T3fix: Clip Mode 入口按鈕 + Sparkle Burst 預覽 ────────────
- * .lightbox-clip-btn — 玻璃材質圓鈕，與 .lightbox-close 鏡射對稱（左上 1rem/1rem）
+/* ─── 56c-T3 / T3fix: Similar Mode 入口按鈕 + Sparkle Burst 預覽 ────────────
+ * .lightbox-similar-btn — 玻璃材質圓鈕，與 .lightbox-close 鏡射對稱（左上 1rem/1rem）
  *   尺寸 44×44，與 .lightbox-close 鏡射對稱（同尺寸 + 同距邊 1rem）
  *   icon 用 --star-glow 香檳金，呼應 56b 星空主題（CD-56B-6）
  * .sparkle-burst — Magic 點擊預演，10 顆四角星 sparkle burst（GSAP 操作 opacity/scale/rotation）
  */
-.lightbox-clip-btn {
+.lightbox-similar-btn {
     position: absolute;
     top: 1rem;
     left: 1rem;
@@ -821,30 +821,30 @@
                 box-shadow var(--duration-fast) var(--ease-out);
 }
 
-.lightbox-clip-btn:hover {
+.lightbox-similar-btn:hover {
     background: rgba(255, 255, 255, 0.3);
     border-color: rgba(255, 255, 255, 0.6);
     transform: scale(1.08);
     box-shadow: var(--fluent-shadow-16);
 }
 
-.lightbox-clip-btn:active {
+.lightbox-similar-btn:active {
     transform: scale(0.95);
 }
 
-.lightbox-clip-btn:focus-visible {
+.lightbox-similar-btn:focus-visible {
     outline: 2px solid var(--star-glow);
     outline-offset: 2px;
 }
 
-.lightbox-clip-btn i {
+.lightbox-similar-btn i {
     color: var(--star-glow);
     font-size: 1.25rem;  /* 對齊 .lightbox-close 的 font-size */
     line-height: 1;
 }
 
-/* 56c-T7：手機降級 mobile clip grid =========================================*/
-.lightbox-clip-mobile {
+/* 56c-T7：手機降級 mobile similar grid =========================================*/
+.lightbox-similar-mobile {
     margin-top: 0.75rem;         /* --space-3 不存在，用 raw 0.75rem */
     padding: 0.75rem;
     background: rgba(255,255,255,0.06);  /* 低於 .lb-action-btn 0.15，輕量區分 */
@@ -901,9 +901,9 @@
     text-overflow: ellipsis;
 }
 
-/* 確保 mobile collapse 只在小螢幕渲染（桌面應永遠 clipModeMobileOpen = false） */
+/* 確保 mobile collapse 只在小螢幕渲染（桌面應永遠 similarModeMobileOpen = false） */
 @media (min-width: 768px) {
-    .lightbox-clip-mobile {
+    .lightbox-similar-mobile {
         display: none !important;   /* 桌面安全網：即使 state 殘留也不顯示 */
     }
 }
@@ -2612,7 +2612,7 @@ body.sidebar-collapsed .showcase-footer {
     }
 }
 
-/* dim theme override（clip-stage 永遠暗底 — Constellation 是星空場景） */
+/* dim theme override（similar-stage 永遠暗底 — Constellation 是星空場景） */
 [data-theme="dim"] .similar-stage-dust circle,
 .similar-stage .similar-stage-dust circle {
     fill: var(--star-line-bright);
@@ -2782,11 +2782,11 @@ body.sidebar-collapsed .showcase-footer {
     /* z-index 不指定 — 純座標 anchor 不需參與堆疊 */
 }
 
-/* 56c-T4: clip mode 停留期間的 main image — .similar-stage-inner 子元素，
+/* 56c-T4: similar mode 停留期間的 main image — .similar-stage-inner 子元素，
    與 8 cards 走同一 design-space layout 路徑，resize 自動跟隨 inner scale。
    codex 改良：不用 transform: translate(-50%,-50%)，避免與 GSAP scale tween
    混疊；改 left:380 top:185（中心點數學等價於 design-space (480, 310)）。
-   codex P1-2：pointer-events 改 auto（從 _buildClipMainStatic 接 click → onClipMainImgClick），
+   codex P1-2：pointer-events 改 auto（從 _buildSimilarMainStatic 接 click → onSimilarMainImgClick），
    同 stacking context 內 z=11 < play button z=12，play button 仍在上層命中正確。 */
 .similar-main-static {
     position: absolute;
@@ -2806,8 +2806,8 @@ body.sidebar-collapsed .showcase-footer {
 /* 56c-T4 (codex P1-2)：.similar-main-overlay 已移除。
    原本是 .similar-stage 直屬子層 z=2001，會在 root stacking context 蓋住
    被 .similar-stage-inner transform stacking context 囚禁的 play button (z=12)，
-   導致點擊 play button 實際打到 overlay → onClipMainImgClick → closeClipMode，
-   而非 playClipMainVideo。改用 main static 直接接 click（同 inner stacking 內，
+   導致點擊 play button 實際打到 overlay → onSimilarMainImgClick → closeSimilarMode，
+   而非 playSimilarMainVideo。改用 main static 直接接 click（同 inner stacking 內，
    play button z=12 仍在 main static z=11 之上），點擊命中正確。 */
 
 /* 56c-T4: play button 在 .similar-stage-inner 內 design-space coords，
@@ -2852,7 +2852,7 @@ body.sidebar-collapsed .showcase-footer {
     outline-offset: 2px;
 }
 
-/* < 960px：clip-stage-inner 寬 960px，視窗不足以完整顯示
+/* < 960px：similar-stage-inner 寬 960px，視窗不足以完整顯示
    56c-T7 才實作手機 < 768px 降級（x-collapse 平面化）；本 task 桌面優先，
    < 960px 暫時隱藏（沿用 motion-lab 慣例） */
 @media (max-width: 959px) {

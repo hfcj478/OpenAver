@@ -261,8 +261,8 @@ export function stateSimilar() {
         if (!coverEl) return resolve();
         const coverContainer = coverEl.closest('.lightbox-cover');
         if (!coverContainer) return resolve();
-        if (window.GhostFly && typeof window.GhostFly.play56cClipScanPreview === 'function') {
-          window.GhostFly.play56cClipScanPreview(coverContainer, resolve);
+        if (window.GhostFly && typeof window.GhostFly.play56cSimilarScanPreview === 'function') {
+          window.GhostFly.play56cSimilarScanPreview(coverContainer, resolve);
         } else {
           resolve();
         }
@@ -446,7 +446,7 @@ export function stateSimilar() {
           }
         }
       } else {
-        // 無 slip-through（進 clip 後直接關）→ 不動，沿用既有行為
+        // 無 slip-through（進 similar mode 後直接關）→ 不動，沿用既有行為
         this._silentSwitchLightboxByNumber(this._similarLastDrilledNumber);
       }
 
@@ -461,7 +461,7 @@ export function stateSimilar() {
 
       // 5. unmount stage（x-effect 觸發 destroySimilarStage cleanup）
       this.similarModeOpen = false;
-      this.similarModeMobileOpen = false;  // 56c-T7：關閉 clip mode 時 reset，避免下次開 lightbox 殘留
+      this.similarModeMobileOpen = false;  // 56c-T7：關閉 similar mode 時 reset，避免下次開 lightbox 殘留
 
       this.similarModeAnimating = false;
     },
@@ -493,7 +493,7 @@ export function stateSimilar() {
       try {
         newData = await this._fetchSimilarResults(clickedItem.number);
       } catch (_err) {
-        // _fetchSimilarResults 已 showToast；clip mode 保持開啟，只放棄本次 slip-through
+        // _fetchSimilarResults 已 showToast；similar mode 保持開啟，只放棄本次 slip-through
         this.similarModeAnimating = false;
         return;
       }
@@ -596,7 +596,7 @@ export function stateSimilar() {
         nextVisible,
         this.similarCards,
         this.similarRailLines,
-        this._similarMainStatic,  // 56c-T4: 從 _clipMainGhost 改為 inner static img
+        this._similarMainStatic,  // 56c-T4: 從 _similarMainGhost 改為 inner static img
         () => {
           if (generation !== this._similarGeneration) return; // destroyed during slip-through
           // codex-fix5: 移到 onComplete（t≈1.10s+），此時 pureExit 卡 opacity 已 0、
@@ -665,7 +665,7 @@ export function stateSimilar() {
     },
 
     /**
-     * onSimilarCardHoverEnter — 從 motion-lab/constellation-host.js 搬遷，命名前綴改 clip
+     * onSimilarCardHoverEnter — 從 motion-lab/constellation-host.js 搬遷，命名前綴改 similar
      */
     onSimilarCardHoverEnter(slotId) {
       if (this.similarModeAnimating || !this.similarVisibleSlots.has(slotId)) return;
@@ -764,10 +764,10 @@ export function stateSimilar() {
     },
 
     /**
-     * 56c-T5 codex-fix1: 播放 clip mode 中央主圖對應的影片
+     * 56c-T5 codex-fix1: 播放 similar mode 中央主圖對應的影片
      * 56c-T5 codex-fix2 (P1 二次修法): 改用 `_videos`（未過濾）read-only lookup，
      * 避免 filtered view 下 slip-through 到範圍外影片時 fallback 舊片。
-     * _filteredVideos 是 Showcase 篩選後的子集；CLIP 結果來自全 DB，若影片被 filter 排除
+     * _filteredVideos 是 Showcase 篩選後的子集；similar 結果來自全 DB，若影片被 filter 排除
      * 則 findIndex 回 -1，導致 play button 靜默 fallback 播放進場前的舊片（P1 bug）。
      * _videos（state-base.js:22 普通 JS Array）透過 _setVideos() in-place mutate，
      * 跨模組 reference 永遠有效，search scope 為全庫。
@@ -778,7 +778,7 @@ export function stateSimilar() {
      *
      * fallback 鏈：
      *   1. _similarLastDrilledNumber（最近一次 slip-through 鑽入的 number）
-     *   2. similarQueryVideo.number（進入 clip mode 時的 query video）
+     *   2. similarQueryVideo.number（進入 similar mode 時的 query video）
      *   3. currentLightboxVideo.path（未 slip-through 過時最終 fallback）
      */
     playSimilarMainVideo() {
@@ -852,7 +852,7 @@ export function stateSimilar() {
 
     /**
      * _buildSimilarRailStarMap — T6 corridor 預算（HOVER_DISTANCE=40px 不變）
-     * Selector 改 .similar-stage-dust circle（搬遷自 .clip-lab-dust circle）
+     * Selector 改 .similar-stage-dust circle（搬遷自 motion-lab dust circle）
      */
     _buildSimilarRailStarMap() {
       const dustEls = [...document.querySelectorAll('.similar-stage-dust circle')];
@@ -1232,7 +1232,7 @@ export function stateSimilar() {
       const resp = await fetch(url);
       if (!resp.ok) {
         this.showToast(window.t('similar_mode.fetch_failed'), 'error');
-        throw new Error('clip fetch failed: ' + resp.status);
+        throw new Error('similar fetch failed: ' + resp.status);
       }
       return resp.json();
     },

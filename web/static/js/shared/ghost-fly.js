@@ -36,7 +36,7 @@
      * 既有 caller 不傳 options → 走 default 'full' 分支零回歸。
      *
      * 56c-T4: 第三參數 options.parent 預設 `document.body`（向後相容）；
-     * 56c clip mode 傳入 `.similar-stage`，讓 ghost 進入 .similar-stage 自己建立的
+     * 56c similar mode 傳入 `.similar-stage`，讓 ghost 進入 .similar-stage 自己建立的
      * stacking context — 同 stacking context 內 main-overlay z=2001 才能正確
      * 蓋過 ghost z=2000。其他 callers 不傳 → 走 default body → 行為不變。
      *
@@ -122,7 +122,7 @@
         }
     }
 
-    // ─── 56c Clip Mode 進退場 helper（plan-56c §1 CD-56C-3 / CD-56C-2 / CD-56C-11）──
+    // ─── 56c Similar Mode 進退場 helper（plan-56c §1 CD-56C-3 / CD-56C-2 / CD-56C-11）──
 
     /**
      * 56c-T2 (CD-56C-3 + CD-56C-11): Lightbox cover → Constellation stage 中央 進場
@@ -203,7 +203,7 @@
         gsap.killTweensOf(ghost);
 
         var tl = gsap.timeline({
-            id: 'clipEnter',
+            id: 'similarEnter',
             onComplete: function () {
                 // ghost 留在中央給 state-similar.js 接管，**不 cleanup**
                 if (typeof opts.onComplete === 'function') opts.onComplete(ghost);
@@ -262,7 +262,7 @@
         gsap.killTweensOf(mainImgGhost);
 
         var tl = gsap.timeline({
-            id: 'clipExit',
+            id: 'similarExit',
             onComplete: function () {
                 cleanupGhost(mainImgGhost, targetCoverEl);
                 if (typeof opts.onComplete === 'function') opts.onComplete();
@@ -284,7 +284,7 @@
     }
 
     /**
-     * 56c-T2 (CD-56C-2): Clip Scan Preview — lightbox 點 .bi-magic 時的 0.4s 預覽動畫
+     * 56c-T2 (CD-56C-2): Similar Scan Preview — lightbox 點 .bi-magic 時的 0.4s 預覽動畫
      *
      * 56c-T3fix: 改為 sparkle burst（10 顆四角星，stagger fade-in + scale + rotate + sine yoyo + accel fade-out）
      * 對應 magic.png 視覺隱喻；廢棄舊三層光帶（left dim / beam / right glow）。
@@ -305,7 +305,7 @@
      * @param {Function} [onComplete] - 動畫完成 callback（缺 DOM 時也會立即觸發）
      * @returns {gsap.core.Timeline|null}
      */
-    function play56cClipScanPreview(coverEl, onComplete) {
+    function play56cSimilarScanPreview(coverEl, onComplete) {
         var done = function () { if (typeof onComplete === 'function') onComplete(); };
 
         if (!coverEl) { done(); return null; }
@@ -324,7 +324,7 @@
         gsap.set(stars, { clearProps: 'opacity,scale,rotation,transform' });
         gsap.set(burst, { opacity: 0 });
 
-        var tl = gsap.timeline({ id: 'clipSparkleBurst' });
+        var tl = gsap.timeline({ id: 'similarSparkleBurst' });
         tl.set(burst, { opacity: 1 });
         tl.set(stars, { opacity: 0, scale: 0, rotation: 'random(-30, 30)' });
 
@@ -364,10 +364,10 @@
         cleanupGhost: cleanupGhost,
         cleanupStaleGhosts: cleanupStaleGhosts,
 
-        // 56c-T2: Clip Mode 進退場 + scan preview helper（callsite 在 56c-T3 / T5）
+        // 56c-T2: Similar Mode 進退場 + scan preview helper（callsite 在 56c-T3 / T5）
         play56cConstellationEnter: play56cConstellationEnter,
         play56cConstellationExit: play56cConstellationExit,
-        play56cClipScanPreview: play56cClipScanPreview,
+        play56cSimilarScanPreview: play56cSimilarScanPreview,
 
         /**
          * Grid → Lightbox ghost fly

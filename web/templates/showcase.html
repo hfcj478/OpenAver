@@ -529,7 +529,7 @@
 
                 <!-- 56c-T3fix: Magic 按鈕（與 .lightbox-close 鏡射對稱，video mode only）
                      56c-T4: 直接呼叫 openSimilarMode()——sparkle burst 已搬至 state-similar openSimilarMode 流程內部統一管理 -->
-                <button class="lightbox-clip-btn"
+                <button class="lightbox-similar-btn"
                         x-show="currentLightboxVideo && !currentLightboxActress && !showFavoriteActresses"
                         @click="openSimilarMode()"
                         :aria-label="t('similar_mode.button_aria_label')">
@@ -664,7 +664,7 @@
                             </div>
                             <!-- Cover Action Buttons -->
                             <!-- 56c-fix-v2: x-show="!!currentLightboxVideo?.path" guards standalone
-                                 clip-exit mode (path undefined) — regular lightbox items always have
+                                 similar-exit mode (path undefined) — regular lightbox items always have
                                  path so existing behavior is unaffected. -->
                             <div class="cover-actions" x-show="!!currentLightboxVideo?.path">
                                 <button class="lb-action-btn" @click="playVideo(currentLightboxVideo?.path)" data-tooltip="{{ t('showcase.action.play') }}" aria-label="{{ t('showcase.action.play') }}">
@@ -804,7 +804,7 @@
                         </div>
 
                         <!-- 56c-T7：手機 < 768px cosine 前 4 張 collapse（x-collapse 需 @alpinejs/collapse plugin，已在 base.html 行 640 載入） -->
-                        <div class="lightbox-clip-mobile"
+                        <div class="lightbox-similar-mobile"
                              x-show="similarModeMobileOpen"
                              x-collapse>
                           <div class="similar-mobile-grid">
@@ -939,7 +939,7 @@
 
     </div>
 
-    <!-- 56c-T4: Clip Stage Sibling（與 .showcase-lightbox / .sample-gallery 同層 fixed
+    <!-- 56c-T4: Similar Stage Sibling（與 .showcase-lightbox / .sample-gallery 同層 fixed
          z-index:1501 > sample-gallery 1500 > showcase-lightbox 1000；
          x-show 不用 x-if，DOM 永遠在（gotchas Alpine 8）。
          x-trap.inert 鎖 focus；x-effect 觸發 init/destroy lifecycle。
@@ -1077,7 +1077,7 @@
 
             <!-- 56c-T4: main image visual center anchor — single source of truth
                  for ghost-fly enter target rect。design-space 480,310 200×250 center。 -->
-            <div class="similar-main-anchor" x-ref="clipMainAnchor" aria-hidden="true"></div>
+            <div class="similar-main-anchor" x-ref="similarMainAnchor" aria-hidden="true"></div>
 
             <!-- 12 slot cards（id 對映 similar-card-XX；@click / @mouseenter / @mouseleave 走 onSimilarCardXxx） -->
             <template x-for="anchor in SIMILAR_ANCHORS" :key="anchor.id">

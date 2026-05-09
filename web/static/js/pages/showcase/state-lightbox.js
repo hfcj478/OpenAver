@@ -33,7 +33,6 @@ export function stateLightbox() {
 
         _lightboxAnimating: false,      // B16: Lightbox 動畫進行中 guard
         _lightboxGeneration: 0,         // B19: invalidation token for deferred $nextTick lightbox callbacks
-        _similarScanAnimating: false,      // 56c-T3 (Codex P2-A): clip scan preview in-flight guard
 
         // Sample Gallery 狀態 (T7)
         sampleGalleryOpen: false,
@@ -215,29 +214,6 @@ export function stateLightbox() {
             });
         },
 
-        // 56c-T3: Similar Mode 入口按鈕 click handler — placeholder（T4 接通 openSimilarMode）
-        // 觸發 0.4s 光帶預演（純視覺）；PRM 短路；GhostFly/gsap 缺失時 helper 內 graceful return
-        onClipMagicClick() {
-            // Codex P2-A: in-flight guard，避免連點重複建 timeline 導致 race
-            if (this._similarScanAnimating) return;
-            var coverEl = (this.$refs && this.$refs.lightboxCoverImg)
-                ? this.$refs.lightboxCoverImg.closest('.lightbox-cover')
-                : document.querySelector('.lightbox-cover');
-            if (!coverEl) return;
-            if (window.OpenAver && window.OpenAver.prefersReducedMotion) {
-                // PRM：跳過光帶（56c-T4 接通後改為直接 this.openSimilarMode()）
-                return;
-            }
-            if (window.GhostFly && typeof window.GhostFly.play56cClipScanPreview === 'function') {
-                var self = this;
-                self._similarScanAnimating = true;
-                window.GhostFly.play56cClipScanPreview(coverEl, function () {
-                    self._similarScanAnimating = false;
-                    // 56c-T3 placeholder; 56c-T4 將以此 callback 啟動 self.openSimilarMode()
-                });
-            }
-        },
-
         closeLightbox() {
             // F2: cancel pending delayed clear from previous close / searchFromMetadata
             if (this.lightboxCloseTimer) {
@@ -254,10 +230,10 @@ export function stateLightbox() {
             this._fetchSamplesFailed = {};
 
             // ★ C11: fly-back — 必須在 generation++ / lightboxOpen = false 之前捕獲
-            // 56c-fix-v3: standalone clip-exit（similarExitVideo set，lightboxIndex 仍是進 clip 前舊值）
+            // 56c-fix-v3: standalone similar-exit（similarExitVideo set，lightboxIndex 仍是進 similar mode 前舊值）
             // → closingIndex 設 -1 跳過 fly-back，避免新影片封面飛回舊 alice 卡片
-            var isClipExitStandalone = !!this.similarExitVideo;
-            var closingIndex = isClipExitStandalone
+            var isSimilarExitStandalone = !!this.similarExitVideo;
+            var closingIndex = isSimilarExitStandalone
                 ? -1
                 : (this.showFavoriteActresses
                     ? this.actressLightboxIndex
@@ -311,7 +287,7 @@ export function stateLightbox() {
                 this.similarModeMobileOpen = false;
             }
 
-            // 56c-fix: standalone clip-exit mode — lightbox 關閉時清 similarExitVideo，
+            // 56c-fix: standalone similar-exit mode — lightbox 關閉時清 similarExitVideo，
             // 回到原 alice 搜尋結果不動（currentLightboxVideo 在 250ms timer 內由 _setLightboxIndex(-1) 清除）
             if (this.similarExitVideo) {
                 this.similarExitVideo = null;
@@ -456,7 +432,7 @@ export function stateLightbox() {
 
         // 44b-T4: Nav arrow visibility computed
         hasVisiblePrev() {
-            // 56c-fix: standalone clip-exit mode — 沒有 list context，暫禁 prev/next
+            // 56c-fix: standalone similar-exit mode — 沒有 list context，暫禁 prev/next
             if (this.similarExitVideo) return false;
             if (this.showFavoriteActresses) return this.actressLightboxIndex > 0;
             if (this.lightboxIndex === -1) return false;
@@ -467,7 +443,7 @@ export function stateLightbox() {
         },
 
         hasVisibleNext() {
-            // 56c-fix: standalone clip-exit mode — 沒有 list context，暫禁 prev/next
+            // 56c-fix: standalone similar-exit mode — 沒有 list context，暫禁 prev/next
             if (this.similarExitVideo) return false;
             if (this.showFavoriteActresses) return this.actressLightboxIndex < this.filteredActressCount - 1;
             if (this.lightboxIndex === -1) {
