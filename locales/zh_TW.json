@@ -478,6 +478,10 @@
         "body": "確定要刪除「{name}」的整筆 Tag 別名組嗎？此操作無法復原。",
         "cancel": "取消",
         "confirm": "確認刪除"
+      },
+      "ai_hint": {
+        "icon_title": "AI 整理建議",
+        "tooltip": "💡 讓 AI agent 透過 /api/capabilities 整理比較快"
       }
     },
     "dirty_modal": {

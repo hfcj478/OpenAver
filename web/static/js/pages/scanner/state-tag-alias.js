@@ -14,6 +14,9 @@ export function stateTagAlias() {
         addingTagAlias: {},             // { [primary_name]: 'input value' }
         addingTagAliasLoading: {},      // { [primary_name]: bool }
 
+        // ===== Tag Alias: AI Hint Popover =====
+        tagAliasAiHintOpen: false,
+
         // ===== Tag Alias: Delete Group Modal =====
         deleteTagAliasGroupModalOpen: false,
         _deleteTagAliasGroupLoading: false,
@@ -177,6 +180,11 @@ export function stateTagAlias() {
                 delete loading[primary];
                 this.addingTagAliasLoading = loading;
             }
+        },
+
+        // ===== Tag Alias: AI Hint Popover Toggle =====
+        toggleTagAliasAiHint() {
+            this.tagAliasAiHintOpen = !this.tagAliasAiHintOpen;
         },
 
         // ===== Tag Alias: Remove Alias from Group =====

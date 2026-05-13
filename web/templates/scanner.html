@@ -402,6 +402,24 @@
             <div class="title">
                 <i class="bi bi-tags"></i> <span>{{ t('scanner.tag_alias.section_title') }}</span>
             </div>
+            <!-- (?) AI hint icon + popover — @click.stop 避免觸發 collapse -->
+            <div class="tag-alias-ai-hint-wrap" @click.stop>
+                <button type="button"
+                        class="help-popover-btn"
+                        :title="window.t('scanner.tag_alias.ai_hint.icon_title')"
+                        :aria-label="window.t('scanner.tag_alias.ai_hint.icon_title')"
+                        @click.stop.prevent="toggleTagAliasAiHint()">
+                    <i class="bi bi-question-circle"></i>
+                </button>
+                <div class="help-popover tag-alias-ai-hint-popover"
+                     x-show="tagAliasAiHintOpen"
+                     x-transition.opacity
+                     @click.outside="tagAliasAiHintOpen = false"
+                     x-cloak>
+                    <p class="help-popover__body"
+                       x-text="window.t('scanner.tag_alias.ai_hint.tooltip')"></p>
+                </div>
+            </div>
             <span class="btn-collapse" aria-hidden="true">
                 <i class="bi" :class="tagAliasCardCollapsed ? 'bi-chevron-down' : 'bi-chevron-up'"></i>
             </span>

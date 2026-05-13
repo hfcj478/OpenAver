@@ -7112,6 +7112,23 @@ class TestScannerTagAliasGuard:
             "A3-3 違規：zh_TW.json scanner.tag_alias.section_title 不存在"
         )
 
+    def test_ai_hint_icon_exists(self):
+        """scanner.html 含 tag-alias-ai-hint-wrap（AI hint popover anchor）"""
+        content = self.SCANNER_HTML.read_text(encoding="utf-8")
+        assert "tag-alias-ai-hint-wrap" in content, (
+            "AI hint 違規：scanner.html 應含 tag-alias-ai-hint-wrap"
+        )
+
+    def test_ai_hint_tooltip_i18n_exists(self):
+        """zh_TW.json 含 scanner.tag_alias.ai_hint.tooltip key"""
+        data = json.loads(self.ZH_TW_JSON.read_text(encoding="utf-8"))
+        scanner = data.get("scanner", {})
+        tag_alias = scanner.get("tag_alias", {})
+        ai_hint = tag_alias.get("ai_hint", {})
+        assert "tooltip" in ai_hint, (
+            "AI hint 違規：zh_TW.json scanner.tag_alias.ai_hint.tooltip 不存在"
+        )
+
 
 class TestSampleGalleryTemplateGuard:
     """T8：Search Sample Gallery 模板守衛

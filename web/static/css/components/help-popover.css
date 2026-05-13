@@ -57,3 +57,25 @@
     overflow-x: auto;
     font-size: 0.75rem;
 }
+
+/* ── Tag Alias AI Hint Popover ─────────────────────────────────────────────── */
+
+/* 錨點容器：相對定位 + inline-flex 不撐滿整行 */
+.tag-alias-ai-hint-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    margin-left: 0.25rem;
+}
+
+/* 右側定位：從 icon 右方延伸，垂直置中對齊 icon */
+.tag-alias-ai-hint-popover {
+    top: 50%;
+    left: calc(100% + 0.5rem);
+    right: auto;
+    margin-top: 0;
+    transform: translateY(-50%);
+    width: max-content;
+    max-width: 22rem;    /* 避免單行太寬 */
+    white-space: normal; /* 仍可自動換行 */
+}
