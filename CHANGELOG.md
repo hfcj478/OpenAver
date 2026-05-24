@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tutorial auto-trigger pathname**：`/search` → `/scanner`（CD-59-3，`/` 保留作首頁 redirect）
 - **Help Hero CTA**：`/search?tutorial=restart` → `/scanner?tutorial=restart`（CD-59-5，i18n key 與 value 不動）
 - **Help 3 步卡 icon + 文案**：`bi-search` / `bi-list-ul` / `bi-collection-play` → `bi-folder-plus` / `bi-file-earmark-play` / `bi-magic`（i18n key 不動只改 value，CD-59-4）
+- **Capabilities `image_display` 升級為多 agent 結構**：原 `codex_app` 單一子物件改為 `agents` map，新增 **Antigravity 2.0 artifact 面板** 指引（artifact_dir hint + 絕對路徑/正斜線/`![]()` 三規則 + carousel 語法實測備註）與 `terminal_cli` fallback；同步 README 把 Google Antigravity 從 IDE 桶移到桌面 App 桶，推薦文案改為「Codex App（對話內嵌）/ Antigravity（artifact 面板）」雙選
 
 ### Internal
 
