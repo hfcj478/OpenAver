@@ -274,3 +274,44 @@ class TestCapabilitiesEndpoint:
         assert tool.get("side_effect") is True
         assert tool.get("confirmation_required") is True
         assert "可逆" in tool["description"] or "覆蓋" in tool["description"]
+
+
+class TestCapabilitiesSourceEnum:
+    """TASK-61a-4：4 處 source enum 由 get_source_enum() 生成（無硬編碼）"""
+
+    def _tools_by_name(self, client):
+        data = client.get("/api/capabilities").json()
+        return {t["name"]: t for t in data["tools"]}
+
+    def test_search_source_enum_matches_helper_without_auto(self, client):
+        """search 端點 source enum == get_source_enum(False)，且不含 auto"""
+        from core.source_config import get_source_enum
+        tool = self._tools_by_name(client)["search"]
+        enum = tool["input_schema"]["properties"]["source"]["enum"]
+        assert enum == get_source_enum(include_auto=False)
+        assert "auto" not in enum
+
+    def test_enrich_single_source_enum_matches_helper_with_auto(self, client):
+        """enrich_single source enum == get_source_enum(True)，且含 auto"""
+        from core.source_config import get_source_enum
+        tool = self._tools_by_name(client)["enrich_single"]
+        enum = tool["input_schema"]["properties"]["source"]["enum"]
+        assert enum == get_source_enum(include_auto=True)
+        assert "auto" in enum
+
+    def test_batch_enrich_default_source_enum_matches_helper_with_auto(self, client):
+        """batch_enrich 預設 source enum == get_source_enum(True)"""
+        from core.source_config import get_source_enum
+        tool = self._tools_by_name(client)["batch_enrich"]
+        enum = tool["input_schema"]["properties"]["source"]["enum"]
+        assert enum == get_source_enum(include_auto=True)
+        assert "auto" in enum
+
+    def test_batch_enrich_per_item_source_enum_matches_helper_with_auto(self, client):
+        """batch_enrich per-item source enum == get_source_enum(True)"""
+        from core.source_config import get_source_enum
+        tool = self._tools_by_name(client)["batch_enrich"]
+        item_props = tool["input_schema"]["properties"]["items"]["items"]["properties"]
+        enum = item_props["source"]["enum"]
+        assert enum == get_source_enum(include_auto=True)
+        assert "auto" in enum

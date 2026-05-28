@@ -109,6 +109,16 @@ def get_builtin_sources() -> list[SourceConfig]:
     ]
 
 
+def get_source_enum(include_auto: bool = False) -> list[str]:
+    """回傳 source enum 清單（單一真理來源，供 capabilities 等揭露使用）。
+
+    - 順序對齊 SOURCE_ORDER（dmm 開頭，see get_builtin_sources）。
+    - include_auto=True 時於最前加上 'auto'（auto 是 mode 不是 builtin source）。
+    """
+    ids = [s.id for s in get_builtin_sources()]
+    return ['auto', *ids] if include_auto else ids
+
+
 def validate_source_id(sid: str) -> bool:
     """驗證來源 id 是否合法（替代 core/scraper.py 的 VALID_SOURCES set）。
 

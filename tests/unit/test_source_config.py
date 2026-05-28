@@ -4,6 +4,7 @@ from core.source_config import (
     MAX_ENABLED_SOURCES,
     SourceConfig,
     get_builtin_sources,
+    get_source_enum,
     render_name,
     validate_source_id,
 )
@@ -181,3 +182,25 @@ def test_is_censored_metatube_invalid_censored_type_conservative():
         config={'censored_type': 'banana'},
     )
     assert s.is_censored is True
+
+
+# ---------------------------------------------------------------------------
+# get_source_enum（TASK-61a-4）
+# ---------------------------------------------------------------------------
+def test_get_source_enum_without_auto_matches_source_order():
+    assert get_source_enum() == list(SOURCE_ORDER)
+    assert get_source_enum(include_auto=False) == list(SOURCE_ORDER)
+
+
+def test_get_source_enum_without_auto_excludes_auto():
+    assert 'auto' not in get_source_enum(include_auto=False)
+
+
+def test_get_source_enum_with_auto_prepends_auto():
+    assert get_source_enum(include_auto=True) == ['auto', *SOURCE_ORDER]
+    assert get_source_enum(include_auto=True)[0] == 'auto'
+
+
+def test_get_source_enum_returns_list():
+    assert isinstance(get_source_enum(), list)
+    assert isinstance(get_source_enum(include_auto=True), list)

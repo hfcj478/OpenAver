@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 
 from core.version import __version__
 from core.logger import get_logger
+from core.source_config import get_source_enum
 
 logger = get_logger(__name__)
 
@@ -29,7 +30,7 @@ _TOOLS: list[dict] = [
                 },
                 "source": {
                     "type": "string",
-                    "enum": ["javbus", "jav321", "javdb", "fc2", "avsox", "dmm"],
+                    "enum": get_source_enum(include_auto=False),
                     "description": "指定來源（可選）",
                 },
                 "since": {
@@ -199,7 +200,7 @@ _TOOLS: list[dict] = [
                 },
                 "source": {
                     "type": "string",
-                    "enum": ["auto", "javbus", "dmm", "jav321", "javdb", "fc2", "avsox", "d2pass", "heyzo"],
+                    "enum": get_source_enum(include_auto=True),
                     "default": "auto",
                     "description": "刮削來源（auto=自動多源合併；指定單一來源時只打該站；dmm 需要 proxy 才能使用）",
                 },
@@ -273,7 +274,7 @@ _TOOLS: list[dict] = [
                             "number": {"type": "string", "description": "番號"},
                             "source": {
                                 "type": "string",
-                                "enum": ["auto", "javbus", "dmm", "jav321", "javdb", "fc2", "avsox", "d2pass", "heyzo"],
+                                "enum": get_source_enum(include_auto=True),
                                 "description": "per-item 刮削來源覆蓋（優先於 batch 預設）",
                             },
                             "javbus_lang": {
@@ -294,7 +295,7 @@ _TOOLS: list[dict] = [
                 },
                 "source": {
                     "type": "string",
-                    "enum": ["auto", "javbus", "dmm", "jav321", "javdb", "fc2", "avsox", "d2pass", "heyzo"],
+                    "enum": get_source_enum(include_auto=True),
                     "default": "auto",
                     "description": "batch 預設刮削來源（item.source 未指定時使用）",
                 },

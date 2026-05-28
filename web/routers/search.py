@@ -33,6 +33,7 @@ logger = get_logger(__name__)
 
 from core.database import VideoRepository, get_db_path, init_db
 from core.maker_mapping import load_prefix_mapping
+from core.source_config import validate_source_id
 from core.scraper import (
     search_jav, smart_search, is_partial_number, is_number_format,
     is_prefix_only, search_partial, search_actress, search_prefix,
@@ -166,10 +167,8 @@ def search(
             return JSONResponse(status_code=400, content={"success": False, "error": "since 參數格式錯誤，需為 YYYY-MM-DD"})
 
     # 驗證 source 參數
-    if source is not None:
-        valid_sources = {'auto', 'dmm', 'javbus', 'jav321', 'javdb', 'd2pass', 'heyzo', 'fc2', 'avsox'}
-        if source not in valid_sources:
-            return JSONResponse(status_code=400, content={"success": False, "error": f"未知來源: {source}"})
+    if source is not None and not validate_source_id(source):
+        return JSONResponse(status_code=400, content={"success": False, "error": f"未知來源: {source}"})
 
     # 如果指定了 variant_id，直接搜索該版本
     if variant_id:
