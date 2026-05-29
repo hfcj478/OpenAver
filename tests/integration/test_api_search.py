@@ -89,6 +89,41 @@ class TestSearchValidation:
         assert data['success'] is False
 
 
+class TestSearchSourceValidation:
+    """測試 source 參數驗證（TASK-61a-4：改用 validate_source_id）"""
+
+    def test_unknown_source_returns_400(self, client):
+        """未知 source → 400，格式逐字 {success: False, error: '未知來源: nope'}"""
+        response = client.get('/api/search', params={'q': 'SONE-103', 'source': 'nope'})
+        assert response.status_code == 400
+        data = response.json()
+        assert data == {"success": False, "error": "未知來源: nope"}
+
+    def test_known_source_not_400(self, client, mocker):
+        """已知 builtin source（javbus）+ exact mode → 非 400"""
+        mock_data = load_fixture('responses/javbus/SONE-103.json')
+        # search_jav_single_source 在函式內 local import，patch 原始模組符號
+        mocker.patch('core.scraper.search_jav_single_source', return_value=mock_data)
+
+        response = client.get('/api/search', params={
+            'q': 'SONE-103', 'mode': 'exact', 'source': 'javbus'
+        })
+        assert response.status_code != 400
+
+    def test_auto_source_not_400(self, client, mocker):
+        """source=auto → 非 400（auto 仍被接受，保留現狀）"""
+        mocker.patch('web.routers.search.smart_search', return_value=[])
+        response = client.get('/api/search', params={'q': 'SONE-103', 'source': 'auto'})
+        assert response.status_code != 400
+
+    def test_d2pass_and_heyzo_sources_not_400(self, client, mocker):
+        """d2pass / heyzo（capabilities 原缺、search 一直接受）→ 非 400"""
+        mocker.patch('web.routers.search.smart_search', return_value=[])
+        for src in ('d2pass', 'heyzo'):
+            response = client.get('/api/search', params={'q': 'SONE-103', 'source': src})
+            assert response.status_code != 400, f"source={src} should not be 400"
+
+
 class TestSearchModes:
     """測試不同搜尋模式"""
 

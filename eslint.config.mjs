@@ -80,6 +80,25 @@ export default [
     },
   },
 
+  // ── 全域禁止引入 Sortable / sortablejs（CD-61-4：拖曳用 HTML5 native）──
+  // no-restricted-imports rule key 不與既有 no-restricted-syntax 衝突（不同 rule key），
+  // 故獨立全域 block 安全。只擋 ESM import（本專案 JS 全 ESM）。
+  {
+    files: ["web/static/js/**/*.js"],
+    rules: {
+      "no-restricted-imports": ["error", {
+        paths: [{
+          name: "sortablejs",
+          message: "CD-61-4：拖曳用 HTML5 native，禁引入 Sortable.js。",
+        }],
+        patterns: [{
+          group: ["*sortablejs*", "*Sortable*"],
+          message: "CD-61-4：禁引入 Sortable / sortablejs。",
+        }],
+      }],
+    },
+  },
+
   // ── search 頁面禁 console.log（A-class: no-console）──────────
   {
     files: ["web/static/js/pages/search/**/*.js"],

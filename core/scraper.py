@@ -24,6 +24,9 @@ from core.scrapers import (
 )
 from core.scrapers.utils import extract_number as _new_extract_number
 from core.maker_mapping import get_maker_by_prefix
+from core.source_merger import merge_results
+from core.source_config import validate_source_id
+from core.source_settings import get_enabled_source_ids
 
 
 # ============ 全域設定 ============
@@ -32,6 +35,9 @@ MAX_WORKERS = 2
 REQUEST_DELAY = 0.3
 
 # 爬蟲優先順序
+# 角色降級（TASK-61a-3）：auto fan-out 已改讀 get_enabled_source_ids()，
+# explicit dispatch 已改用 SOURCE_TO_SCRAPER map。此常數目前已無呼叫者（dead），
+# 依 plan-61 61a-3 DoD 保留為 legacy/fallback 參照，不再是 search_jav() 的 routing 來源。
 SCRAPER_CLASSES: List[Type[BaseScraper]] = [
     JavBusScraper, JAV321Scraper, JavDBScraper,
     FC2Scraper, AVSOXScraper,
@@ -155,49 +161,52 @@ def search_jav(number: str, source: str = 'auto', proxy_url: str = '', primary_s
     # 標準化番號
     number = normalize_number(number)
 
-    VALID_SOURCES = {'auto', 'dmm', 'javbus', 'jav321', 'javdb', 'd2pass', 'heyzo', 'fc2', 'avsox'}
-    if source not in VALID_SOURCES:
+    # 來源 id 驗證（TASK-61a-3）：改用 validate_source_id() 取代舊 VALID_SOURCES set。
+    # 'auto' 與 8 個 builtin id 通過；其餘 → return None（保留「未知來源不 raise」契約）。
+    if not validate_source_id(source):
         logger.warning(f"[Search] 未知來源: {source}")
         return None
 
     # DMM 需要日本 IP（proxy 或 direct），有啟用才建立
     dmm_config = ScraperConfig(proxy_url=_dmm_proxy_url(proxy_url)) if _is_dmm_enabled(proxy_url) else None
 
+    # javbus_lang 校驗 + config fallback（auto 與 explicit javbus 共用）
+    if javbus_lang is not None and javbus_lang not in VALID_JAVBUS_LANGS:
+        logger.warning("[Search] 無效的 javbus_lang: %s，fallback 到 config", javbus_lang)
+        javbus_lang = None
+    _javbus_lang = javbus_lang if javbus_lang is not None else _get_javbus_lang()
+
+    # 來源 id → scraper factory（無參數 callable，回 scraper instance list）。
+    # DMM 與 JavBus 是攜帶 closure 參數的特例：
+    #   - dmm：proxy-gated，dmm_config 為 None（無 proxy）時回 []（不建立）。
+    #   - javbus：帶校驗後的 lang。
+    # explicit 指定來源與 auto fan-out 共用同一份定義。
+    source_to_scraper = {
+        'dmm': lambda: [DMMScraper(dmm_config)] if dmm_config else [],
+        'javbus': lambda: [JavBusScraper(lang=_javbus_lang)],
+        'jav321': lambda: [JAV321Scraper()],
+        'javdb': lambda: [JavDBScraper()],
+        'd2pass': lambda: [D2PassScraper()],
+        'heyzo': lambda: [HEYZOScraper()],
+        'fc2': lambda: [FC2Scraper()],
+        'avsox': lambda: [AVSOXScraper()],
+    }
+
     # 決定要跑哪些爬蟲
     scrapers = []
     if source == 'auto':
-        if javbus_lang is not None and javbus_lang not in VALID_JAVBUS_LANGS:
-            logger.warning("[Search] 無效的 javbus_lang: %s，fallback 到 config", javbus_lang)
-            javbus_lang = None
-        lang = javbus_lang if javbus_lang is not None else _get_javbus_lang()
-        base = [JavBusScraper(lang=lang) if cls is JavBusScraper else cls() for cls in SCRAPER_CLASSES]
-        if dmm_config:
-            scrapers = [DMMScraper(dmm_config)] + base
-        else:
-            scrapers = base
-    elif source == 'dmm':
-        scrapers = [DMMScraper(dmm_config)] if dmm_config else []
-    elif source == 'javbus':
-        if javbus_lang is not None and javbus_lang not in VALID_JAVBUS_LANGS:
-            logger.warning("[Search] 無效的 javbus_lang: %s，fallback 到 config", javbus_lang)
-            javbus_lang = None
-        lang = javbus_lang if javbus_lang is not None else _get_javbus_lang()
-        scrapers = [JavBusScraper(lang=lang)]
-    elif source == 'jav321':
-        scrapers = [JAV321Scraper()]
-    elif source == 'javdb':
-        scrapers = [JavDBScraper()]
-    elif source == 'd2pass':
-        scrapers = [D2PassScraper()]
-    elif source == 'heyzo':
-        scrapers = [HEYZOScraper()]
-    elif source == 'fc2':
-        scrapers = [FC2Scraper()]
-    elif source == 'avsox':
-        scrapers = [AVSOXScraper()]
+        # auto fan-out 改讀 Runtime Auto Pool（enabled=True AND manual_only=False，依 order）。
+        # DMM proxy guard 由 source_to_scraper['dmm'] 的 dmm_config 條件自然吸收：
+        # 即使 'dmm' 在 enabled list，無 proxy（dmm_config 為 None）時 factory 回 [] → 不加入。
+        for sid in get_enabled_source_ids():
+            factory = source_to_scraper.get(sid)
+            if factory:
+                scrapers.extend(factory())
     else:
-        # 安全 fallback — 理論上已被上方 VALID_SOURCES 攔截，不應執行到此
-        scrapers = [cls() for cls in SCRAPER_CLASSES]
+        # explicit 單一來源 dispatch。未知 id 理論上已被 validate_source_id 攔截，
+        # factory 缺失時回空 list（行為等同舊 dead-else fallback）。
+        factory = source_to_scraper.get(source)
+        scrapers = factory() if factory else []
 
     # 執行搜尋
     logger.info(f"[Search] {number} 使用來源: {source}")
@@ -217,54 +226,18 @@ def search_jav(number: str, source: str = 'auto', proxy_url: str = '', primary_s
         logger.info(f"[Search] {number} 無結果")
         return None
 
-    # 合併邏輯
-    main_video = None
-    if primary_source == 'dmm' and 'dmm' in all_data:
-        main_video = all_data['dmm']
-    elif 'javbus' in all_data:
-        main_video = all_data['javbus']
-    elif 'dmm' in all_data:
-        main_video = all_data['dmm']
-    elif 'jav321' in all_data:
-        main_video = all_data['jav321']
+    # 合併邏輯（TASK-61a-6 / CD-61-9）：
+    # - explicit 單一來源（source != 'auto'）：整包贏，不走 merger（語意顯式化）。
+    # - auto fan-out：呼叫 pure merger。封面走 merger 預設 cover_priority。
+    if source != 'auto':
+        # 單一來源直通：該來源資料原封不動
+        main_video = next(iter(all_data.values()))
     else:
-        main_video = list(all_data.values())[0]
-
-    # 用其他來源補全
-    for source_name, backup_video in all_data.items():
-        if backup_video == main_video:
-            continue
-        
-        # 使用 Pydantic 的 model_copy(update={}) 邏輯不好寫，
-        # 這裡為了方便，轉成 dict 處理後再說，或者直接修改 main_video 的屬性（如果是 mutable）
-        # 但 model 是 frozen 的。所以要用 model_copy。
-        
-        updates: Dict[str, Any] = {}
-        if not main_video.title and backup_video.title:
-            updates['title'] = backup_video.title
-        if not main_video.maker and backup_video.maker:
-            updates['maker'] = backup_video.maker
-        if not main_video.date and backup_video.date:
-            updates['date'] = backup_video.date
-        if not main_video.actresses and backup_video.actresses:
-            updates['actresses'] = backup_video.actresses
-        if not main_video.cover_url and backup_video.cover_url:
-            updates['cover_url'] = backup_video.cover_url
-        if not main_video.tags and backup_video.tags:
-            updates['tags'] = backup_video.tags
-        if not main_video.director and backup_video.director:
-            updates['director'] = backup_video.director
-        if main_video.duration is None and backup_video.duration is not None:
-            updates['duration'] = backup_video.duration
-        if not main_video.label and backup_video.label:
-            updates['label'] = backup_video.label
-        if not main_video.series and backup_video.series:
-            updates['series'] = backup_video.series
-        if not main_video.sample_images and backup_video.sample_images:
-            updates['sample_images'] = backup_video.sample_images
-
-        if updates:
-            main_video = main_video.model_copy(update=updates)
+        # auto path: merge follows Active Row drag-sort order (get_enabled_source_ids order);
+        # primary_source is deprecated (CD-61-14) and must NOT override the merge winner —
+        # DMM Top-1 privilege lives in smart_search Rule 4a, not here.
+        user_order = list(all_data.keys())  # already in get_enabled_source_ids() / drag order
+        main_video = merge_results(all_data, user_order)
 
     # 補全 maker
     if not main_video.maker:
@@ -697,19 +670,22 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
                 if status_callback: status_callback('done', 'found:1')
                 return [res]
 
-        if status_callback:
-            status_callback('javbus', 'searching')
+        # Rule 4b（CD-61-19）：JavBus variant probe 僅在 JavBus 在 Active Row 啟用時觸發。
+        # JavBus 停用 → 跳過 variant 探查 + 不發 javbus status（靜默降級），落一般 search_jav。
+        if 'javbus' in get_enabled_source_ids():
+            if status_callback:
+                status_callback('javbus', 'searching')
 
-        # 嘗試找變體
-        variant_ids = get_all_variant_ids(query)
-        if variant_ids:
-            first = variant_ids[0]
-            # 用 variant id 搜
-            res = search_by_variant_id(first, query)
-            if res:
-                res['_all_variant_ids'] = variant_ids
-                if status_callback: status_callback('done', 'found:1')
-                return [res]
+            # 嘗試找變體
+            variant_ids = get_all_variant_ids(query)
+            if variant_ids:
+                first = variant_ids[0]
+                # 用 variant id 搜
+                res = search_by_variant_id(first, query)
+                if res:
+                    res['_all_variant_ids'] = variant_ids
+                    if status_callback: status_callback('done', 'found:1')
+                    return [res]
 
         # 一般搜尋
         res = search_jav(query, proxy_url=proxy_url, primary_source=primary_source)

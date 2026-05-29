@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 
 from core.version import __version__
 from core.logger import get_logger
+from core.source_config import get_source_enum
 
 logger = get_logger(__name__)
 
@@ -29,7 +30,7 @@ _TOOLS: list[dict] = [
                 },
                 "source": {
                     "type": "string",
-                    "enum": ["javbus", "jav321", "javdb", "fc2", "avsox", "dmm"],
+                    "enum": get_source_enum(include_auto=False),
                     "description": "指定來源（可選）",
                 },
                 "since": {
@@ -199,7 +200,7 @@ _TOOLS: list[dict] = [
                 },
                 "source": {
                     "type": "string",
-                    "enum": ["auto", "javbus", "dmm", "jav321", "javdb", "fc2", "avsox", "d2pass", "heyzo"],
+                    "enum": get_source_enum(include_auto=True),
                     "default": "auto",
                     "description": "刮削來源（auto=自動多源合併；指定單一來源時只打該站；dmm 需要 proxy 才能使用）",
                 },
@@ -273,7 +274,7 @@ _TOOLS: list[dict] = [
                             "number": {"type": "string", "description": "番號"},
                             "source": {
                                 "type": "string",
-                                "enum": ["auto", "javbus", "dmm", "jav321", "javdb", "fc2", "avsox", "d2pass", "heyzo"],
+                                "enum": get_source_enum(include_auto=True),
                                 "description": "per-item 刮削來源覆蓋（優先於 batch 預設）",
                             },
                             "javbus_lang": {
@@ -294,7 +295,7 @@ _TOOLS: list[dict] = [
                 },
                 "source": {
                     "type": "string",
-                    "enum": ["auto", "javbus", "dmm", "jav321", "javdb", "fc2", "avsox", "d2pass", "heyzo"],
+                    "enum": get_source_enum(include_auto=True),
                     "default": "auto",
                     "description": "batch 預設刮削來源（item.source 未指定時使用）",
                 },
@@ -1163,6 +1164,31 @@ _TOOLS: list[dict] = [
         "confirmation_required": False,
         "retry_safe": True,
         "_example_template": "curl '{base}/api/tags/top?limit=50&min_count=2'",
+    },
+    {
+        "name": "scraper_sources_list",
+        "description": (
+            "查詢使用者目前啟用、會用於自動搜尋（auto 模式實際 fan-out）的來源清單，"
+            "協助 AI 判斷目前哪些來源 active。total_enabled 為已揭露的來源數。"
+            "不揭露：停用（enabled=false）、Parts Bin（未 promote 的 metatube）、"
+            "Manual-Only、BETA 來源都不會出現；也不揭露 metatube URL / token。"
+            "不修改任何資料"
+        ),
+        "side_effect": False,
+        "confirmation_required": False,
+        "method": "GET",
+        "path": "/api/scraper-sources",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        "output_schema": {
+            "sources": "array — 每筆 {id: string, display_name: string, type: string, enabled: boolean, order: integer, is_censored: boolean}，依 order 升冪",
+            "total_enabled": "integer — 已揭露（實際會 fan-out）的啟用來源數",
+        },
+        "retry_safe": True,
+        "_example_template": "curl '{base}/api/scraper-sources'",
     },
 ]
 

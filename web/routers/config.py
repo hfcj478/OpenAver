@@ -16,7 +16,7 @@
 - POST   /api/proxy/test                — 測試 Proxy 連線（透過 DMM 驗證）
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import httpx
 
@@ -35,6 +35,7 @@ from core.config import (
     load_config,
     save_config,
 )
+from core.source_config import MAX_ENABLED_SOURCES
 from core.translate_service import LANGUAGE_PROMPTS
 
 logger = get_logger(__name__)
@@ -57,6 +58,15 @@ async def get_config() -> dict:
 @router.put("/config")
 async def update_config(config: AppConfig) -> dict:
     """更新所有設定"""
+    # Cap 守衛（CD-61-16，endpoint-level；非 model_validator）：
+    # 同時啟用且非 manual_only 的來源數不得超過 MAX_ENABLED_SOURCES。
+    # 防止前端繞過 UI 直接 PUT。manual_only 不計入 cap basis（CD-61-17）。
+    cap_basis = sum(1 for s in config.sources if s.enabled and not s.manual_only)
+    if cap_basis > MAX_ENABLED_SOURCES:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "cap_exceeded", "max": MAX_ENABLED_SOURCES},
+        )
     try:
         save_config(config.model_dump())
         _reset_translate_service()  # 重置翻譯服務，讓新配置生效

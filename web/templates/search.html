@@ -264,7 +264,7 @@
 
     <!-- 搜尋框 -->
     <div class="search-bar">
-        <form id="searchForm" @submit.prevent="doSearch()">
+        <form id="searchForm" @submit.prevent="advancedLongPressSubmitGuard() || doSearch()">
             <div class="spotlight-search">
                 <i class="bi bi-search search-icon-left"></i>
                 <input type="text" id="searchQuery" name="q" placeholder="{{ t('search.placeholder.query') }}" autocomplete="off" x-model="searchQuery" x-ref="searchQuery" @keydown.enter="if ($event.isComposing) { $event.preventDefault(); return; }">
@@ -288,7 +288,14 @@
                     <button type="button" id="btnClear" class="btn-icon" x-show="hasContent" x-cloak @click="clearAll()" title="{{ t('search.action.clear') }}">
                         <i class="bi bi-x-lg"></i>
                     </button>
-                    <button type="submit" id="btnSubmit" class="btn-icon active" title="{{ t('search.action.search') }}">
+                    <button type="submit" id="btnSubmit" class="btn-icon active" title="{{ t('search.action.search') }}"
+                            @mousedown="advancedLongPressStart()"
+                            @mouseup="advancedLongPressEnd()"
+                            @mouseleave="advancedLongPressCancel()"
+                            @touchstart.passive="advancedLongPressStart()"
+                            @touchend="advancedLongPressEnd()"
+                            @touchcancel="advancedLongPressCancel()"
+                            @click="advancedLongPressClickGuard($event)">
                         <i class="bi bi-arrow-right"></i>
                     </button>
                 </div>
@@ -929,10 +936,87 @@
             </div>
         </div>
     </dialog>
+
+    <!-- TASK-61c-7: 進階搜尋 picker（B1 simple Alpine fluent-modal；B2 升級為完整 sourcePicker 元件） -->
+    <dialog class="modal fluent-modal"
+            id="advancedPickerModal"
+            :class="{ 'modal-open': advancedPickerOpen }"
+            @click.self="advancedPickerClose()"
+            @keydown.escape.window="advancedPickerOpen && advancedPickerClose()">
+        <div class="modal-box fluent-modal-box">
+            <h3 class="fluent-modal-title">
+                <i class="bi bi-sliders"></i> {{ t('settings.advanced_search.picker_title') }}
+            </h3>
+            <p class="fluent-modal-body">{{ t('settings.advanced_search.picker_subtitle') }}</p>
+
+            <div class="advanced-picker-groups">
+                <!-- 上組：內建 + javlibrary（type=builtin） -->
+                <div class="advanced-picker-group">
+                    <div class="advanced-picker-group-title">{{ t('settings.advanced_search.group_builtin') }}</div>
+                    <template x-for="src in advancedPickerBuiltinSources()" :key="src.id">
+                        <label class="advanced-picker-option"
+                               :class="{ 'is-disabled': !src.enabled }">
+                            <input type="radio" name="advancedSource"
+                                   :value="src.id"
+                                   x-model="advancedPickerSelected">
+                            <span class="advanced-picker-name"
+                                  :style="!src.enabled ? 'text-decoration: line-through;' : ''"
+                                  x-text="src.display_name_key || src.id"></span>
+                            <span class="badge badge-sm badge-outline" x-show="src.manual_only"
+                                  x-text="t('settings.advanced_search.manual_badge')"></span>
+                            <span class="advanced-picker-disabled-tag" x-show="!src.enabled"
+                                  x-text="t('settings.advanced_search.disabled_label')"></span>
+                        </label>
+                    </template>
+                </div>
+
+                <!-- 下組：Metatube（type=metatube；B1 階段為空，結構先就位） -->
+                <div class="advanced-picker-group">
+                    <div class="advanced-picker-group-title">{{ t('settings.advanced_search.group_metatube') }}</div>
+                    <template x-if="advancedPickerMetatubeSources().length === 0">
+                        <div class="advanced-picker-empty" x-text="t('settings.advanced_search.group_metatube_empty')"></div>
+                    </template>
+                    <template x-for="src in advancedPickerMetatubeSources()" :key="src.id">
+                        <label class="advanced-picker-option"
+                               :class="{ 'is-disabled': !src.enabled }">
+                            <input type="radio" name="advancedSource"
+                                   :value="src.id"
+                                   x-model="advancedPickerSelected">
+                            <span class="advanced-picker-name"
+                                  :style="!src.enabled ? 'text-decoration: line-through;' : ''"
+                                  x-text="src.display_name_raw || src.id"></span>
+                            <span class="badge badge-sm badge-outline" x-show="src.manual_only"
+                                  x-text="t('settings.advanced_search.manual_badge')"></span>
+                            <span class="advanced-picker-disabled-tag" x-show="!src.enabled"
+                                  x-text="t('settings.advanced_search.disabled_label')"></span>
+                        </label>
+                    </template>
+                </div>
+            </div>
+
+            <div class="modal-action fluent-modal-actions">
+                <button type="button" class="btn btn-ghost" @click="advancedPickerClose()">
+                    {{ t('settings.advanced_search.cancel') }}
+                </button>
+                <button type="button" class="btn btn-primary"
+                        :disabled="!advancedPickerSelected"
+                        @click="advancedPickerConfirm()">
+                    {{ t('settings.advanced_search.confirm') }}
+                </button>
+            </div>
+        </div>
+    </dialog>
 </div>
 {% endblock %}
 
 {% block pre_alpine_module %}
+<!-- TASK-61c-7: 進階搜尋 SSR 注入（enabled gate + sources 清單，避免新增 fetch 往返） -->
+<script>
+window.__ADVANCED_SEARCH__ = {
+    enabled: {{ config.advanced_search_enabled|default(false)|tojson|safe }},
+    sources: {{ (config.sources or [])|tojson|safe }}
+};
+</script>
 <script type="module" src="/static/js/pages/search/main.js"></script>
 {% endblock %}
 

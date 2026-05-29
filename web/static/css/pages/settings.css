@@ -63,10 +63,90 @@
 }
 
 
+/* ========== Settings Tab Nav (61b-2) ========== */
+/* Sticky top-tab bar mirroring 61b-1 POC (.smock-tabbar + .smock-anchor glass).
+   Tokens only — no hex; white = oklch(100% 0 0). */
+#settings-components .settings-tab-bar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin: 0 0 1.5rem;
+    padding: 0.5rem;
+    background: color-mix(in oklch, var(--surface-0) 80%, transparent);
+    backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--fluent-saturate));
+    -webkit-backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--fluent-saturate));
+    border: 1px solid var(--stroke-subtle);
+    border-radius: var(--fluent-radius-xl);
+    box-shadow: var(--fluent-shadow-2);
+}
+
+#settings-components .settings-tab {
+    flex: 1 1 auto;
+    min-width: 7.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    padding: 0.55rem 0.85rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    border: 1px solid transparent;
+    border-radius: var(--fluent-radius-md);
+    background: transparent;
+    cursor: pointer;
+    transition: all var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+#settings-components .settings-tab i {
+    font-size: 0.95rem;
+    opacity: 0.7;
+}
+
+#settings-components .settings-tab:hover:not(.active) {
+    color: var(--text-primary);
+    background: color-mix(in oklch, var(--surface-2) 70%, transparent);
+}
+
+#settings-components .settings-tab.active {
+    background: var(--surface-0);
+    color: var(--text-primary);
+    border-color: var(--stroke-default, var(--stroke-subtle));
+    box-shadow: var(--fluent-shadow-2);
+}
+
+#settings-components .settings-tab.active i {
+    opacity: 1;
+    color: var(--accent);
+}
+
+/* 61b-5: panel 進場 fade 由 GSAP 全權負責（state-ui.js _initActiveTab watch），
+   不用 CSS keyframe，避免 CSS animation 與 GSAP inline opacity 雙軌（gotchas C21）。 */
+
 /* ========== Responsive: 行動版（窄螢幕）RWD ========== */
 
 /* Tablet / Mobile: 768px 以下 */
 @media (max-width: 768px) {
+    /* Tab bar: horizontal scroll instead of wrap (mobile spec §4.4) */
+    #settings-components .settings-tab-bar {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+
+    #settings-components .settings-tab-bar::-webkit-scrollbar {
+        display: none;
+    }
+
+    #settings-components .settings-tab {
+        flex: 0 0 auto;
+    }
+
     /* 1. Settings Form Row - 垂直堆疊 */
     #settings-components .settings-form-row {
         flex-direction: column;
@@ -348,6 +428,593 @@
     user-select: none;
 }
 
+/* ========== 掃描來源 Active Row (Zone A) — 61c-1 structure ========== */
+/* Productionized from POC settings_mock.html .smock-* (commit 1b941dc). */
+
+/* ─── Batch operations bar ─── */
+#settings-components .settings-sources-batchbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding: 0.75rem 0.95rem;
+    margin-bottom: 1rem;
+    background: color-mix(in oklch, var(--surface-1) 55%, transparent);
+    border: 1px solid var(--stroke-subtle);
+    border-radius: var(--fluent-radius-lg);
+}
+
+#settings-components .settings-sources-batchbar-left {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+#settings-components .settings-sources-batchbar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* ─── Cap counter (tabular-nums prevents digit jitter on toggle) ─── */
+#settings-components .settings-sources-counter {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.3rem;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+#settings-components .settings-sources-counter strong {
+    color: var(--text-primary);
+    font-weight: 700;
+}
+
+#settings-components .settings-sources-counter .cap-divider {
+    color: var(--text-secondary);
+    opacity: 0.6;
+}
+
+#settings-components .settings-sources-counter .cap-value {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+#settings-components .settings-sources-counter .cap-tag {
+    margin-left: 0.4rem;
+    padding: 0.1rem 0.4rem;
+    font-size: 0.62rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    background: color-mix(in oklch, var(--surface-2) 60%, transparent);
+    border-radius: var(--fluent-radius-sm);
+}
+
+/* ─── 無碼模式 toggle placeholder (61c-3 wires uncensoredMode) ─── */
+#settings-components .settings-sources-uncensored-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.25rem 0.55rem 0.25rem 0.3rem;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    user-select: none;
+    transition: background var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+#settings-components .settings-sources-uncensored-toggle:hover {
+    background: color-mix(in oklch, var(--surface-2) 60%, transparent);
+}
+
+#settings-components .settings-sources-uncensored-toggle .track {
+    position: relative;
+    flex: 0 0 auto;
+    width: 38px;
+    height: 22px;
+    background: color-mix(in oklch, var(--text-secondary) 22%, transparent);
+    border: 1px solid var(--stroke-subtle);
+    border-radius: var(--radius-pill);
+    transition: background var(--fluent-duration-fast) var(--fluent-ease-standard),
+                border-color var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+#settings-components .settings-sources-uncensored-toggle .thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    background: var(--surface-0);
+    border-radius: var(--radius-pill);
+    box-shadow: var(--fluent-shadow-2);
+    transition: transform var(--fluent-duration-fast) var(--fluent-ease-decel);
+}
+
+#settings-components .settings-sources-uncensored-toggle.is-on .track {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+#settings-components .settings-sources-uncensored-toggle.is-on .thumb {
+    transform: translateX(16px);
+}
+
+#settings-components .settings-sources-uncensored-toggle .lbl {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* ─── 全開 mini button ─── */
+#settings-components .settings-sources-mini-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    background: var(--surface-0);
+    border: 1px solid var(--stroke-subtle);
+    border-radius: var(--fluent-radius-md);
+    cursor: pointer;
+    transition: background var(--fluent-duration-fast) var(--fluent-ease-standard),
+                color var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+#settings-components .settings-sources-mini-btn:hover {
+    color: var(--text-primary);
+    background: color-mix(in oklch, var(--surface-2) 70%, transparent);
+}
+
+/* ─── Flat pill row (flex-wrap → B3 30+ providers wrap) ─── */
+#settings-components .settings-sources-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 2.5rem;
+}
+
+/* ─── Source pill (slash-icon disabled signal; see ui-conventions §1) ─── */
+#settings-components .settings-sources-pill {
+    --pill-accent: var(--accent);
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.4rem 0.85rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    color: var(--text-primary);
+    background: color-mix(in oklch, var(--surface-2) 55%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 18%, transparent);
+    border-radius: var(--radius-pill);
+    cursor: grab;
+    user-select: none;
+    transition: color var(--fluent-duration-fast) var(--fluent-ease-standard),
+                background var(--fluent-duration-fast) var(--fluent-ease-standard),
+                border-color var(--fluent-duration-fast) var(--fluent-ease-standard),
+                transform var(--fluent-duration-fast) var(--fluent-ease-decel),
+                box-shadow var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+#settings-components .settings-sources-pill:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--fluent-shadow-2);
+}
+
+#settings-components .settings-sources-pill:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* ENABLED — canonical look */
+#settings-components .settings-sources-pill[data-enabled="true"] {
+    color: var(--text-primary);
+    background: color-mix(in oklch, var(--pill-accent) 10%, var(--surface-0));
+    border-color: color-mix(in oklch, var(--pill-accent) 45%, transparent);
+}
+
+/* Uncensored category accent (design §2.4; bind logic 61c-2) */
+#settings-components .settings-sources-pill--uncensored[data-enabled="true"] {
+    --pill-accent: var(--color-success);
+}
+
+/* DISABLED — slash icon + muted text + dashed border */
+#settings-components .settings-sources-pill[data-enabled="false"] {
+    color: color-mix(in oklch, var(--text-primary) 55%, transparent);
+    background: color-mix(in oklch, var(--surface-1) 60%, transparent);
+    border-color: color-mix(in oklch, var(--color-base-content) 22%, transparent);
+    border-style: dashed;
+}
+
+#settings-components .settings-sources-pill[data-enabled="false"]:hover {
+    color: color-mix(in oklch, var(--text-primary) 80%, transparent);
+    background: color-mix(in oklch, var(--surface-2) 70%, transparent);
+}
+
+#settings-components .settings-sources-pill .slash-icn {
+    display: none;
+    font-size: 0.95rem;
+}
+
+#settings-components .settings-sources-pill[data-enabled="false"] .slash-icn {
+    display: inline-block;
+    color: color-mix(in oklch, var(--text-secondary) 80%, transparent);
+}
+
+#settings-components .settings-sources-pill[data-enabled="false"] .pill-name {
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in oklch, var(--text-secondary) 35%, transparent);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+}
+
+/* Manual-only (JavLibrary BETA) — non-toggle pill */
+#settings-components .settings-sources-pill--manual-only {
+    cursor: default;
+    color: var(--text-secondary);
+    background: color-mix(in oklch, var(--surface-1) 45%, transparent);
+    border-style: dashed;
+    border-color: color-mix(in oklch, var(--accent) 28%, var(--stroke-subtle));
+    padding-right: 0.4rem;
+    gap: 0.55rem;
+}
+
+#settings-components .settings-sources-pill--manual-only:hover {
+    transform: none;
+    box-shadow: none;
+    background: color-mix(in oklch, var(--surface-1) 55%, transparent);
+}
+
+#settings-components .settings-sources-pill--manual-only .slash-icn {
+    display: none;
+}
+
+#settings-components .settings-sources-pill--manual-only .pill-name {
+    text-decoration: none;
+    color: var(--text-primary);
+}
+
+/* Inline pill badge (Manual-Only / future generic) */
+#settings-components .settings-sources-pill-badge {
+    padding: 0.18rem 0.5rem;
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    line-height: 1;
+    color: var(--accent);
+    background: color-mix(in oklch, var(--accent) 16%, transparent);
+    border: 1px solid color-mix(in oklch, var(--accent) 30%, transparent);
+    border-radius: var(--radius-pill);
+}
+
+/* ─── Drag-and-drop visual state (61c-2; HTML5 native, CD-61-4) ─── */
+/* Pill being dragged: dimmed + lifted shadow. */
+#settings-components .settings-sources-pill.dragging {
+    opacity: 0.5;
+    cursor: grabbing;
+    box-shadow: var(--fluent-shadow-4);
+}
+
+/* Drop target: accent ring indicates insertion point. */
+#settings-components .settings-sources-pill.drop-target {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in oklch, var(--accent) 45%, transparent);
+}
+
+/* Keyboard-grabbed pill (WAI-ARIA sortable): solid accent ring. */
+#settings-components .settings-sources-pill.is-grabbed {
+    border-style: solid;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in oklch, var(--accent) 55%, transparent);
+}
+
+/* ─── Disconnected metatube (B3; visual contract present, B1 unexercised) ─── */
+/* Reuse disabled look (gray + strikethrough via data-enabled=false) but no hover
+   lift + default cursor + an `m` corner badge to distinguish from a disabled builtin. */
+#settings-components .settings-sources-pill.is-disconnected {
+    cursor: default;
+}
+
+#settings-components .settings-sources-pill.is-disconnected:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+#settings-components .settings-sources-pill-mt-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.05rem;
+    height: 1.05rem;
+    font-size: 0.62rem;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--text-secondary);
+    background: color-mix(in oklch, var(--surface-2) 80%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 22%, transparent);
+    border-radius: var(--radius-pill);
+}
+
+/* ─── Cap-block alert ─── */
+#settings-components .settings-sources-cap-alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.7rem;
+    padding: 0.8rem 1rem;
+    margin-top: 0.85rem;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    line-height: 1.45;
+    background: color-mix(in oklch, var(--color-warning) 10%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-warning) 38%, transparent);
+    border-radius: var(--fluent-radius-md);
+}
+
+#settings-components .settings-sources-cap-alert > i {
+    flex: 0 0 auto;
+    margin-top: 1px;
+    font-size: 1.15rem;
+    color: var(--color-warning);
+}
+
+#settings-components .settings-sources-cap-alert strong {
+    display: block;
+    margin-bottom: 0.18rem;
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+
+#settings-components .settings-sources-cap-alert p {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+/* ─── Full-disabled warning ─── */
+#settings-components .settings-sources-warn {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.65rem 0.9rem;
+    margin-top: 0.9rem;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    color: var(--color-warning);
+    background: color-mix(in oklch, var(--color-warning) 12%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-warning) 35%, transparent);
+    border-radius: var(--fluent-radius-md);
+}
+
+#settings-components .settings-sources-warn i {
+    flex: 0 0 auto;
+    font-size: 1rem;
+}
+
+/* Disabled-sources footnote (F6 / CD-61-20) */
+#settings-components .settings-sources-footnote {
+    margin-top: 0.75rem;
+    font-size: var(--font-size-xs, 0.78rem);
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+
+/* ─── Section 3 wrapper (Zone B) — 61c-4 fills content ─── */
+#settings-components .settings-sources-section3 {
+    margin-top: 1.25rem;
+}
+
+/* idle: connection form (Server URL + Bearer Token + 連線) */
+#settings-components .settings-mt-connect-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    padding: 1rem 1.1rem;
+    background: color-mix(in oklch, var(--surface-1) 45%, transparent);
+    border: 1px dashed var(--stroke-subtle);
+    border-radius: var(--fluent-radius-lg);
+}
+
+#settings-components .settings-mt-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+#settings-components .settings-mt-field > span {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.01em;
+}
+
+#settings-components .settings-mt-field input {
+    font-size: 0.85rem;
+    padding: 0.55rem 0.75rem;
+    color: var(--text-primary);
+    background: var(--surface-0);
+    border: 1px solid var(--stroke-subtle);
+    border-radius: var(--fluent-radius-md);
+    transition: border-color var(--fluent-duration-fast) var(--fluent-ease-standard),
+                box-shadow var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+#settings-components .settings-mt-field input:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 22%, transparent);
+}
+
+#settings-components .settings-mt-connect-btn {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.5rem 1.1rem;
+    color: var(--text-on-accent, oklch(100% 0 0));
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    transition: box-shadow var(--fluent-duration-fast) var(--fluent-ease-standard),
+                transform var(--fluent-duration-fast) var(--fluent-ease-decel);
+}
+
+#settings-components .settings-mt-connect-btn:hover {
+    box-shadow: var(--fluent-shadow-4);
+    transform: translateY(-1px);
+}
+
+#settings-components .settings-mt-connect-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* connected: status row */
+#settings-components .settings-mt-connect-status {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    padding: 0.7rem 0.95rem;
+    margin-bottom: 0.85rem;
+    background: color-mix(in oklch, var(--color-success) 8%, var(--surface-1));
+    border: 1px solid color-mix(in oklch, var(--color-success) 30%, transparent);
+    border-radius: var(--fluent-radius-md);
+    font-size: 0.85rem;
+    color: var(--text-primary);
+}
+
+#settings-components .settings-mt-connect-status > i:first-child {
+    color: var(--color-success);
+    font-size: 1.1rem;
+    flex: 0 0 auto;
+}
+
+#settings-components .settings-mt-connect-status .status-text {
+    flex: 1 1 auto;
+}
+
+#settings-components .settings-mt-connect-status code {
+    font-size: 0.78rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: var(--fluent-radius-sm);
+    background: color-mix(in oklch, var(--surface-2) 60%, transparent);
+}
+
+/* connected: tier hint */
+#settings-components .settings-mt-tier-hint {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.55rem;
+    padding: 0.65rem 0.9rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    background: color-mix(in oklch, var(--accent) 7%, var(--surface-1));
+    border: 1px solid color-mix(in oklch, var(--accent) 22%, transparent);
+    border-radius: var(--fluent-radius-md);
+}
+
+#settings-components .settings-mt-tier-hint > i {
+    flex: 0 0 auto;
+    margin-top: 1px;
+    color: var(--accent);
+}
+
+/* connected: Parts Bin collapsible header */
+#settings-components .settings-mt-partsbin-head {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    width: 100%;
+    margin: 0.4rem 0 0.7rem;
+    padding: 0.5rem 0.6rem;
+    font-size: 0.83rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.01em;
+    background: transparent;
+    border: none;
+    border-radius: var(--fluent-radius-md);
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--fluent-duration-fast) var(--fluent-ease-standard),
+                color var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+#settings-components .settings-mt-partsbin-head > i:first-child {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    transition: transform var(--fluent-duration-fast) var(--fluent-ease-decel);
+}
+
+#settings-components .settings-mt-partsbin-head:hover {
+    background: color-mix(in oklch, var(--surface-2) 55%, transparent);
+    color: var(--text-primary);
+}
+
+#settings-components .settings-mt-partsbin-head:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+#settings-components .settings-mt-partsbin-count {
+    margin-left: auto;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    padding: 0.15rem 0.45rem;
+    border-radius: var(--radius-pill);
+    background: color-mix(in oklch, var(--surface-2) 60%, transparent);
+}
+
+/* connected: Parts Bin group head */
+#settings-components .settings-mt-group-head {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    margin: 0.5rem 0 0.65rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--text-secondary);
+}
+
+/* Parts Bin pill — disabled visual reuses [data-enabled="false"]; accent tint for metatube */
+#settings-components .settings-sources-pill.is-partsbin {
+    --pill-accent: color-mix(in oklch, var(--accent) 70%, var(--color-warning));
+}
+
+#settings-components .settings-sources-pill.is-partsbin .rec-star {
+    display: none;
+    font-size: 0.85rem;
+    color: var(--color-warning);
+}
+
+#settings-components .settings-sources-pill.is-partsbin[data-rec="true"] .rec-star {
+    display: inline-block;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #settings-components .settings-sources-pill,
+    #settings-components .settings-sources-uncensored-toggle .track,
+    #settings-components .settings-sources-uncensored-toggle .thumb {
+        transition: none !important;
+    }
+}
+
 /* ==================== Font Size Control ==================== */
 
 .font-size-control {
@@ -497,5 +1164,12 @@
     ::view-transition-old(root),
     ::view-transition-new(root) {
         animation: none;
+    }
+
+    /* 61b-2/61b-5: neutralize tab transitions.
+       panel fade 改由 GSAP 負責，其 reduced-motion guard（playEnter _shouldAnimate）
+       會直接跳過動畫，故不需 CSS panel 規則。 */
+    #settings-components .settings-tab {
+        transition: none !important;
     }
 }

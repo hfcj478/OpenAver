@@ -12,9 +12,10 @@ import json
 from pathlib import Path
 from typing import Literal, Optional, List
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.logger import get_logger
+from core.source_config import SourceConfig, get_builtin_sources
 from core.video_extensions import DEFAULT_VIDEO_EXTENSIONS
 
 logger = get_logger(__name__)
@@ -45,7 +46,7 @@ class ScraperConfig(BaseModel):
 
 class SearchConfig(BaseModel):
     search_filter: str = ""
-    uncensored_mode_enabled: bool = False  # 無碼模式 - 只搜尋 AVSOX / FC2
+    uncensored_mode_enabled: bool = False  # deprecated: read via core.source_settings.is_uncensored_mode_effective()
     favorite_folder: str = ""  # 我的最愛資料夾 - 空字串 = 使用系統下載資料夾
     proxy_url: str = ""
     primary_source: str = "javbus"  # 主要搜尋來源: "javbus" | "dmm"
@@ -131,6 +132,8 @@ class AppConfig(BaseModel):
     gallery: GalleryConfig = GalleryConfig()
     showcase: ShowcaseConfig = ShowcaseConfig()
     general: GeneralConfig = GeneralConfig()
+    sources: list[SourceConfig] = Field(default_factory=get_builtin_sources)
+    advanced_search_enabled: bool = False  # 進階搜尋 picker（TASK-61c-7）；Pydantic default 自動補缺漏
 
 
 # ============ 載入 / 儲存 ============
@@ -279,6 +282,66 @@ def load_config() -> dict:
         search_section = raw_config['search']
         if 'primary_source' not in search_section:
             search_section['primary_source'] = 'javbus'
+            need_save = True
+
+        # Migration: sources 段（TASK-61a-2）— US1-critical，fail-open
+        # 缺段 → 8 builtin 全 enabled（不讀 source_links，CD-61-6）；
+        # uncensored_mode_enabled=true 升級 → 4 有碼初始 disabled（CD-61-7）；
+        # 合法既有段 → 冪等不動；損壞 → 備份 sources_bak + 重設全 enabled + warning。
+        try:
+            from core.scrapers.utils import CENSORED_SOURCES
+
+            def _default_sources() -> list:
+                return [s.model_dump() for s in get_builtin_sources()]
+
+            def _is_valid_sources(value) -> bool:
+                if not isinstance(value, list) or not value:
+                    return False
+                for item in value:
+                    if not isinstance(item, dict):
+                        return False
+                    if not isinstance(item.get('id'), str):
+                        return False
+                    if not isinstance(item.get('enabled'), bool):
+                        return False
+                    # Full schema validation: catch any field-level corruption
+                    # (e.g. wrong types, missing required fields) that id/enabled
+                    # checks above cannot detect. On any error → treat segment as
+                    # corrupt → existing fallback regenerates 8 builtin + backs up.
+                    try:
+                        SourceConfig.model_validate(item)
+                    except Exception:
+                        return False
+                return True
+
+            if 'sources' not in raw_config:
+                # 缺段：生成 8 builtin 全 enabled
+                new_sources = _default_sources()
+                # uncensored 轉換（僅缺段升級時觸發，冪等）
+                if raw_config.get('search', {}).get('uncensored_mode_enabled') is True:
+                    for item in new_sources:
+                        if item.get('id') in CENSORED_SOURCES:
+                            item['enabled'] = False
+                raw_config['sources'] = new_sources
+                need_save = True
+            elif _is_valid_sources(raw_config.get('sources')):
+                # 合法既有段：冪等，不動
+                pass
+            else:
+                # 損壞：備份原值（不覆寫首次備份）+ 重設全 enabled
+                if 'sources_bak' not in raw_config:
+                    raw_config['sources_bak'] = raw_config.get('sources')
+                logger.warning(
+                    "[Config] sources 段格式不合法，已備份至 sources_bak 並重設為預設值"
+                )
+                raw_config['sources'] = _default_sources()
+                need_save = True
+        except Exception as exc:  # fail-open：絕不讓啟動失敗
+            logger.warning("[Config] sources migration 發生例外，套用安全預設：%s", exc)
+            try:
+                raw_config['sources'] = [s.model_dump() for s in get_builtin_sources()]
+            except Exception:
+                raw_config['sources'] = []
             need_save = True
 
         # Save migrated config

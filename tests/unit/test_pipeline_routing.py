@@ -12,6 +12,7 @@ from core.scrapers.heyzo import HEYZOScraper
 from core.scrapers.dmm import DMMScraper
 from core.scrapers.javbus import JavBusScraper
 from core.scrapers.models import Video
+from core.scrapers.utils import SOURCE_ORDER
 from core.scraper import search_jav, smart_search
 
 
@@ -46,6 +47,25 @@ def _make_video(source: str, number: str = "TEST-001") -> Video:
 
 class TestPipeline:
     """Pipeline routing 測試（mock scraper.search，驗證路由邏輯）"""
+
+    @pytest.fixture(autouse=True)
+    def _all_sources_enabled(self, monkeypatch):
+        """隔離 ambient web/config.json 的啟用來源集合。
+
+        TASK-61a-3 起 search_jav(source='auto') 改讀 get_enabled_source_ids()
+        →（讀 live web/config.json）決定 fan-out 來源。本檔的 merge-priority
+        測試假設 8 個 builtin 來源（含 dmm/javbus）全部啟用；若開發者把有碼來源
+        停用（例如開無碼模式），dmm/javbus 會被排除 → search_jav 回 None →
+        assertion 觸發 TypeError，測試變得 config-coupled 且不確定。
+
+        此 fixture 把 search_jav 實際呼叫的 core.scraper.get_enabled_source_ids
+        monkeypatch 成回傳全部 8 個 builtin id（canonical 順序），讓 merge
+        測試只驗證 MERGER 在所有來源可用時的行為，與環境 config 無關。
+        """
+        monkeypatch.setattr(
+            "core.scraper.get_enabled_source_ids",
+            lambda: list(SOURCE_ORDER),
+        )
 
     def test_uncensored_detection_d2pass(self):
         """日期_底線格式番號 → 自動走無碼路徑 → D2PassScraper 被呼叫"""
@@ -148,8 +168,15 @@ class TestPipeline:
         # Should still work via search_jav(auto)
         mock_sj.assert_called()
 
-    def test_merge_priority_dmm(self):
-        """primary_source='dmm' → DMM 為 main_video"""
+    def test_merge_winner_first_in_order_dmm(self, monkeypatch):
+        """merge text-winner = first successful source in drag-sort order (get_enabled_source_ids order).
+
+        Class fixture sets SOURCE_ORDER (dmm first) as the enabled order.
+        With dmm first in order + dmm returning data → winner _source == 'dmm'.
+        This is ORDER-driven, NOT primary_source-driven (CD-61-14: primary_source
+        no longer overrides merge winner; DMM Top-1 privilege lives in smart_search
+        Rule 4a, not in search_jav auto-merge).
+        """
         from core.scrapers.jav321 import JAV321Scraper
         from core.scrapers.javdb import JavDBScraper
         from core.scrapers.fc2 import FC2Scraper
@@ -157,6 +184,8 @@ class TestPipeline:
         dmm_video = _make_video("dmm", "SONE-205")
         javbus_video = _make_video("javbus", "SONE-205")
 
+        # Class autouse fixture already monkeypatches get_enabled_source_ids → SOURCE_ORDER
+        # (dmm is first in SOURCE_ORDER) — no override needed here.
         with patch.object(DMMScraper, 'search', return_value=dmm_video), \
              patch.object(JavBusScraper, 'search', return_value=javbus_video), \
              patch.object(JAV321Scraper, 'search', return_value=None), \
@@ -164,18 +193,32 @@ class TestPipeline:
              patch.object(FC2Scraper, 'search', return_value=None), \
              patch.object(AVSOXScraper, 'search', return_value=None), \
              patch('core.scrapers.dmm.rate_limit'):
-            result = search_jav("SONE-205", proxy_url="http://proxy:8080", primary_source="dmm")
+            result = search_jav("SONE-205", proxy_url="http://proxy:8080")
 
         assert result['_source'] == 'dmm'
 
-    def test_merge_priority_javbus(self):
-        """primary_source='javbus' → JavBus 為 main_video（即使 DMM 也有結果）"""
+    def test_merge_winner_first_in_order_javbus(self, monkeypatch):
+        """merge text-winner = first successful source in drag-sort order.
+
+        Override enabled order so javbus is FIRST (dmm absent / after javbus).
+        With javbus first in order + javbus returning data → winner _source == 'javbus',
+        even though dmm also returns data.
+        This proves drag-order determines the merge winner, NOT primary_source.
+        """
         from core.scrapers.jav321 import JAV321Scraper
         from core.scrapers.javdb import JavDBScraper
         from core.scrapers.fc2 import FC2Scraper
         from core.scrapers.avsox import AVSOXScraper
         dmm_video = _make_video("dmm", "SONE-205")
         javbus_video = _make_video("javbus", "SONE-205")
+
+        # Override the class fixture: javbus first, dmm SECOND (still fanned out + returns
+        # data) — proves first-in-order beats a later successful source, not just absence.
+        javbus_first_order = ['javbus', 'dmm', 'jav321', 'javdb', 'fc2', 'avsox', 'heyzo']
+        monkeypatch.setattr(
+            "core.scraper.get_enabled_source_ids",
+            lambda: javbus_first_order,
+        )
 
         with patch.object(DMMScraper, 'search', return_value=dmm_video), \
              patch.object(JavBusScraper, 'search', return_value=javbus_video), \
@@ -184,7 +227,7 @@ class TestPipeline:
              patch.object(FC2Scraper, 'search', return_value=None), \
              patch.object(AVSOXScraper, 'search', return_value=None), \
              patch('core.scrapers.dmm.rate_limit'):
-            result = search_jav("SONE-205", proxy_url="http://proxy:8080", primary_source="javbus")
+            result = search_jav("SONE-205", proxy_url="http://proxy:8080")
 
         assert result['_source'] == 'javbus'
 

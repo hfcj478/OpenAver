@@ -3678,6 +3678,15 @@ class TestSettingsESMGuard:
         content = self._read("web/static/js/pages/settings/state-ui.js")
         assert "export function stateUI" in content
 
+    def test_state_ui_has_active_tab_contract(self):
+        """61b-3：state-ui.js 含 activeTab 狀態 + settings_active_tab localStorage key
+        （跨檔 Alpine state contract，eslint 無法表達 — plan-61.md:561 授權）"""
+        content = self._read("web/static/js/pages/settings/state-ui.js")
+        assert "activeTab" in content, \
+            "state-ui.js 缺少 activeTab 狀態（61b-3 tab state contract）"
+        assert "settings_active_tab" in content, \
+            "state-ui.js 缺少 settings_active_tab localStorage key（CD-61-12）"
+
     def test_main_js_exists_and_has_alpine_init(self):
         content = self._read("web/static/js/pages/settings/main.js")
         assert "alpine:init" in content
@@ -7325,4 +7334,97 @@ class TestConstellationRealCovers:
         # callback 內呼叫 hook
         assert "options.onMainSwap" in content, (
             "56b-T4 違規：animations.js 應在 t=0.30 callback 呼叫 options.onMainSwap?.()"
+        )
+
+
+class TestSettingsPanelStructureGuard:
+    """61b-4: settings.html — form wraps all 6 panels + all form ids preserved.
+
+    Mixed task frontend-guard: protect against accidental id drop during the
+    big DOM reorg, and assert the structural invariant that <form id="settingsForm">
+    opens BEFORE the panels and </form> closes AFTER them (so every input stays
+    inside #settingsForm → :inert protection works).
+    """
+
+    def _settings(self):
+        return SETTINGS_HTML.read_text(encoding="utf-8")
+
+    def test_form_wraps_all_six_panels(self):
+        """<form id="settingsForm"> opens before the first .settings-panel and
+        </form> closes after the last one (form contains all 6 panels)."""
+        html = self._settings()
+        form_open = html.index('<form id="settingsForm"')
+        form_close = html.index("</form>")
+        first_panel = html.index('class="settings-panel"')
+        last_panel = html.rindex('class="settings-panel"')
+        assert form_open < first_panel, (
+            "61b-4 違規：<form id=\"settingsForm\"> 必須在第一個 .settings-panel 之前"
+        )
+        assert last_panel < form_close, (
+            "61b-4 違規：</form> 必須在最後一個 .settings-panel 之後（form 須包住全部 panel）"
+        )
+        # exactly 6 panels
+        assert html.count('class="settings-panel"') == 6, (
+            f"61b-4 違規：應有 6 個 .settings-panel，實得 {html.count('class=\"settings-panel\"')}"
+        )
+
+    def test_panels_use_x_show_not_x_if(self):
+        """Panels must use x-show (not x-if), each with x-cloak (no flash)."""
+        html = self._settings()
+        # 6 panels each carry x-show="activeTab === '...'" + x-cloak
+        for tab in ("display", "scraping", "sources", "organize", "translate", "advanced"):
+            needle = f"x-show=\"activeTab === '{tab}'\""
+            assert needle in html, f"61b-4 違規：缺少 panel x-show binding：{needle}"
+        # no x-if wrapping a settings-panel
+        assert 'x-if="activeTab' not in html, (
+            "61b-4 違規：panel 不可用 x-if（會反覆建毀斷掉 form binding），須用 x-show"
+        )
+
+    def test_all_form_ids_preserved(self):
+        """All control ids from the field→tab mapping must survive the reorg."""
+        html = self._settings()
+        required_ids = [
+            "settingsForm", "saveBtn",
+            # sources — 61c-3 removed #uncensoredModeEnabled checkbox (batch-bar button is sole control)
+            # translate
+            "translateEnabled", "translateProvider", "translateOptions",
+            "ollamaUrl", "ollamaModel", "geminiApiKey", "geminiModel",
+            "ollamaFields", "geminiFields", "openaiFields",
+            # advanced
+            "searchFavoriteFolder", "avlistOutputDir", "avlistOutputFilename",
+            "avlistMinSize", "defaultPage", "viewerPlayer",
+            # scraping
+            "createFolder", "folderLayer1", "folderLayer2", "folderLayer3",
+            "filenameFormat", "maxTitleLength", "maxFilenameLength", "videoExtensions",
+            # organize
+            "avlistMode", "avlistSort", "avlistOrder",
+            # display
+            "avlistItemsPerPage",
+        ]
+        for _id in required_ids:
+            assert f'id="{_id}"' in html, (
+                f"61b-4 違規：form id 在 DOM 重組後遺失：id=\"{_id}\""
+            )
+
+    def test_no_duplicate_ids(self):
+        """No duplicate id="..." in the document (display-tab mirror controls
+        must not reuse an existing id)."""
+        import re as _re
+        html = self._settings()
+        ids = _re.findall(r'\sid="([^"]+)"', html)
+        dupes = sorted({i for i in ids if ids.count(i) > 1})
+        assert not dupes, f"61b-4 違規：settings.html 含 duplicate id：{dupes}"
+
+    def test_primary_source_deprecated_marker(self):
+        """primarySource block kept in sources panel + deprecated comment marker.
+
+        [transient-guard] B2 進階 re-scrape source picker 接手後 primarySource 元素
+        會被徹底拔除（CD-61-14）→ 本守衛屆時失效，B2 milestone 刪除。
+        """
+        html = self._settings()
+        assert "CD-61-14: deprecated" in html, (
+            "61b-4 違規：sources panel 缺少 CD-61-14 deprecated 註解標記"
+        )
+        assert "form.primarySource" in html, (
+            "61b-4 違規：primarySource binding 不可刪（61c-1 接手前保留元素）"
         )

@@ -569,3 +569,222 @@ class TestMigrationOpenAI:
         openai = result["translate"]["openai"]
         assert openai["use_custom_model"] is True, \
             "use_custom_model=True 應能從 config 正確讀回，否則重載後 custom 模式丟失"
+
+
+# ============ test_migration_sources ============
+
+class TestMigrationSources:
+    """sources 段 migration（TASK-61a-2）：缺段生成 / 升級保留 / 冪等 / uncensored 轉換 / 損壞 fallback"""
+
+    def _enabled_map(self, sources: list) -> dict:
+        return {s["id"]: s["enabled"] for s in sources}
+
+    def test_fresh_config_gets_8_builtin_all_enabled(self, tmp_path, monkeypatch):
+        """config.json 無 sources key → load_config() 後補入 8 個 builtin 全 enabled=true"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"general": {"theme": "light"}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        sources = result["sources"]
+        assert isinstance(sources, list)
+        assert len(sources) == 8
+        assert all(s["enabled"] is True for s in sources)
+        ids = [s["id"] for s in sources]
+        assert ids == ["dmm", "javbus", "jav321", "javdb", "d2pass", "heyzo", "fc2", "avsox"]
+
+    def test_upgrade_preserves_existing_keys(self, tmp_path, monkeypatch):
+        """既有完整 config 但無 sources → 補 8 builtin 且所有既有 key/value 字面保留"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {
+            "translate": {
+                "enabled": False,
+                "provider": "ollama",
+                "batch_size": 10,
+                "ollama": {"url": "http://localhost:11434", "model": "qwen3:8b"},
+                "gemini": {"api_key": "", "model": "gemini-flash-lite-latest"},
+                "openai": {"base_url": "", "api_key": "", "model": "gpt-4o-mini"},
+            },
+            "scraper": {
+                "create_folder": True,
+                "folder_layers": ["{actor}"],
+                "folder_format": "{actor}",
+                "suffix_keywords": ["-cd1"],
+                "jellyfin_mode": False,
+                "download_sample_images": False,
+            },
+            "source_links": {
+                "dmm": True, "d2pass": True, "heyzo": True, "fc2": True,
+                "javbus": False, "jav321": False, "javdb": False, "avsox": False,
+            },
+            "general": {"theme": "dark", "locale": "ja"},
+        })
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        # sources 補齊
+        assert len(result["sources"]) == 8
+        assert all(s["enabled"] is True for s in result["sources"])
+        # 既有 key 字面保留
+        assert result["general"]["theme"] == "dark"
+        assert result["general"]["locale"] == "ja"
+        assert result["translate"]["enabled"] is False
+        assert result["scraper"]["suffix_keywords"] == ["-cd1"]
+        # source_links 的 False 值不被改動
+        assert result["source_links"]["javbus"] is False
+        assert result["source_links"]["javdb"] is False
+        assert result["source_links"]["dmm"] is True
+
+    def test_idempotent_valid_sources_unchanged(self, tmp_path, monkeypatch):
+        """已存在合法 sources（javbus disabled）→ 不重生、不覆寫"""
+        config_path = tmp_path / "config.json"
+        existing = [
+            {"id": "dmm", "type": "builtin", "display_name_key": "DMM", "enabled": True, "order": 0},
+            {"id": "javbus", "type": "builtin", "display_name_key": "JavBus", "enabled": False, "order": 1},
+            {"id": "jav321", "type": "builtin", "display_name_key": "Jav321", "enabled": True, "order": 2},
+        ]
+        _write_config(config_path, {"sources": existing})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert len(result["sources"]) == 3
+        emap = self._enabled_map(result["sources"])
+        assert emap["javbus"] is False
+        assert emap["dmm"] is True
+
+    def test_uncensored_mode_conversion_disables_censored(self, tmp_path, monkeypatch):
+        """uncensored_mode_enabled=true 升級無 sources → 4 有碼 disabled，4 無碼（含 d2pass）enabled"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {
+            "search": {"uncensored_mode_enabled": True, "primary_source": "javbus"},
+        })
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        emap = self._enabled_map(result["sources"])
+        # 4 有碼 disabled
+        assert emap["dmm"] is False
+        assert emap["javbus"] is False
+        assert emap["jav321"] is False
+        assert emap["javdb"] is False
+        # 4 無碼 enabled（d2pass 顯式斷言：是無碼不是有碼）
+        assert emap["d2pass"] is True
+        assert emap["heyzo"] is True
+        assert emap["fc2"] is True
+        assert emap["avsox"] is True
+
+    def test_uncensored_mode_does_not_convert_existing_sources(self, tmp_path, monkeypatch):
+        """uncensored_mode_enabled=true 但 sources 段已存在 → 冪等優先，不觸發轉換"""
+        config_path = tmp_path / "config.json"
+        existing = [
+            {"id": "dmm", "type": "builtin", "display_name_key": "DMM", "enabled": True, "order": 0},
+        ]
+        _write_config(config_path, {
+            "search": {"uncensored_mode_enabled": True},
+            "sources": existing,
+        })
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert len(result["sources"]) == 1
+        assert result["sources"][0]["enabled"] is True
+
+    def test_corrupt_sources_string_fallback(self, tmp_path, monkeypatch):
+        """sources 是字串（損壞）→ fallback 8 builtin 全 enabled + sources_bak 持有原值"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"sources": "broken"})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert isinstance(result["sources"], list)
+        assert len(result["sources"]) == 8
+        assert all(s["enabled"] is True for s in result["sources"])
+        assert result["sources_bak"] == "broken"
+
+    def test_corrupt_sources_missing_id_fallback(self, tmp_path, monkeypatch, caplog):
+        """sources 元素缺 id（損壞）→ fallback 8 builtin + sources_bak + warning"""
+        config_path = tmp_path / "config.json"
+        bad = [{"no_id": 1, "enabled": True}]
+        _write_config(config_path, {"sources": bad})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        import logging
+        with caplog.at_level(logging.WARNING):
+            result = load_config()
+
+        assert len(result["sources"]) == 8
+        assert all(s["enabled"] is True for s in result["sources"])
+        assert result["sources_bak"] == bad
+
+    def test_corrupt_then_valid_keeps_first_bak(self, tmp_path, monkeypatch):
+        """損壞修復後第二次啟動：sources 已合法 → sources_bak 保留不動"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"sources": "broken"})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        first = load_config()
+        assert first["sources_bak"] == "broken"
+        # config.json 已被 save_config 寫回合法 sources + sources_bak
+
+        second = load_config()
+        assert len(second["sources"]) == 8
+        assert second["sources_bak"] == "broken"  # 不被合法 sources 清掉
+
+
+# ============ config.default.json schema parity（Codex PR#45 P2 drift guard）============
+
+class TestConfigDefaultSchemaParity:
+    """config.default.json（fresh install 複製來源）必須與 AppConfig schema 對齊。
+
+    load_config() 對 fresh install 直接回傳複製來的 raw dict（不經 AppConfig 重建），
+    故 default 檔漏的欄位 / 來源漏的 is_censored 會直接出現在 /api/config，導致：
+      - 缺 top-level 欄位 → GET 契約不完整（如 advanced_search_enabled）
+      - sources 漏 is_censored → 前端 isUncensored() 把有碼來源誤判無碼（§2.4 配色）
+    此守衛防止 default 檔再次漂移出 AppConfig schema。
+    """
+
+    DEFAULT_PATH = Path(__file__).resolve().parents[2] / "web" / "config.default.json"
+    CENSORED = {"dmm", "javbus", "jav321", "javdb"}
+
+    def _default(self) -> dict:
+        return json.loads(self.DEFAULT_PATH.read_text(encoding="utf-8"))
+
+    def test_default_has_all_appconfig_toplevel_fields(self):
+        default = self._default()
+        schema = AppConfig().model_dump()
+        missing = set(schema) - set(default)
+        assert not missing, f"config.default.json 缺 top-level 欄位（fresh install /api/config 會漏）: {sorted(missing)}"
+
+    def test_default_advanced_search_enabled_present_and_false(self):
+        default = self._default()
+        assert default.get("advanced_search_enabled") is False
+
+    def test_default_sources_carry_is_censored(self):
+        default = self._default()
+        for s in default.get("sources", []):
+            assert "is_censored" in s, f"source {s.get('id')} 缺 is_censored（前端會誤判無碼）"
+
+    def test_default_sources_is_censored_values_correct(self):
+        default = self._default()
+        censored = {s["id"] for s in default["sources"] if s.get("is_censored")}
+        assert censored == self.CENSORED, f"config.default.json censored 集合錯誤: {sorted(censored)}"
+
+    def test_default_sources_match_appconfig_model_dump(self):
+        """default sources 與 get_builtin_sources() model_dump 完全一致（含 is_censored）。"""
+        default = self._default()
+        schema_sources = AppConfig().model_dump()["sources"]
+        assert default["sources"] == schema_sources

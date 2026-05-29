@@ -6,6 +6,7 @@ import { searchStateBatch }       from '@/search/state/batch.js';
 import { searchStateResultCard }  from '@/search/state/result-card.js';
 import { searchStateFileList }    from '@/search/state/file-list.js';
 import { searchStateGridMode }    from '@/search/state/grid-mode.js';
+import { searchStateAdvancedPicker } from '@/search/state/advanced-picker.js';
 
 function mergeState(...parts) {
     const target = {};
@@ -25,6 +26,7 @@ function searchPage() {
         searchStateResultCard(),
         searchStateFileList(),
         searchStateGridMode(),
+        searchStateAdvancedPicker(),
         {
             // ===== 頁面組裝層 lifecycle（從 state/index.js 搬移）=====
             _initDragEvents() {
