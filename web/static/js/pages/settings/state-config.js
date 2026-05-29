@@ -201,10 +201,12 @@ export function stateConfig() {
         // Zone A render 順序：builtin + enabled metatube 保留 GLOBAL 順序（一條 flat
         // orderable run）；manual_only（JavLibrary）永遠 append 末尾、固定不可拖。
         get activeRowSources() {
+            // manual_only 一律排除於一般 run（即使 type==='builtin'），只走 pinned-last，
+            // 否則 B4 javlibrary（manual_only=true）會在一般 run + 末尾各渲染一次（雙重渲染）。
             const inRow = this.sources.filter(
-                s => s.type === 'builtin' || (s.type === 'metatube' && s.enabled)
+                s => !s.manual_only && (s.type === 'builtin' || (s.type === 'metatube' && s.enabled))
             );
-            const manualOnly = this.sources.filter(s => s.type === 'manual_only');
+            const manualOnly = this.sources.filter(s => s.manual_only);
             return [...inRow, ...manualOnly];
         },
 
@@ -269,7 +271,7 @@ export function stateConfig() {
 
         // data-enabled="false"（刪除線/slash/dashed）視覺：manual_only → muted；斷線 → false。
         pillVisualEnabled(src) {
-            if (src.type === 'manual_only') return false;
+            if (src.manual_only) return false;
             if (this.isDisconnectedMetatube(src)) return false;
             return src.enabled;
         },
@@ -733,7 +735,7 @@ export function stateConfig() {
         // Dispatcher：依 type / 狀態分流。B1 只命中 builtin-toggle 分支。
         clickActiveRowPill(src) {
             if (!src) return;
-            if (src.type === 'manual_only') { this.clickJavLibrary(); return; }
+            if (src.manual_only) { this.clickJavLibrary(); return; }
             if (this.isDisconnectedMetatube(src)) {
                 this.clickDisconnectedMetatube(src.display_name);
                 return;
@@ -867,7 +869,7 @@ export function stateConfig() {
         // 拖曳池：builtin 任一狀態 + enabled metatube。JavLibrary / Parts Bin 不可拖。
         // ═══════════════════════════════════════════════════════════════
         isDraggable(src) {
-            if (!src || src.type === 'manual_only') return false;
+            if (!src || src.manual_only) return false;
             if (src.type === 'builtin') return true;
             return src.type === 'metatube' && src.enabled;
         },

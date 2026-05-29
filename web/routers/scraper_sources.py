@@ -44,6 +44,11 @@ async def get_scraper_sources() -> dict:
     # available；builtin 本就 bypass）。
     availability_map = None  # TODO(B3): inject MetatubeConnectionState availability map
 
+    # TODO(B3): B1 only routes the 8 builtin (SOURCE_TO_SCRAPER in core/scraper.py).
+    # When B3 adds metatube providers to config, the routing factory map MUST gain
+    # metatube entries so this capability's disclosed sources stay aligned with what
+    # is actually routable. Without that, /api/scraper-sources would expose metatube
+    # IDs that the search pipeline cannot dispatch to.
     ids = set(get_enabled_source_ids(availability_map))  # enabled + !manual_only + available gate
     config = load_config()
 

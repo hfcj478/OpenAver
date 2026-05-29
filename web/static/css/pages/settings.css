@@ -800,6 +800,14 @@
     font-size: 1rem;
 }
 
+/* Disabled-sources footnote (F6 / CD-61-20) */
+#settings-components .settings-sources-footnote {
+    margin-top: 0.75rem;
+    font-size: var(--font-size-xs, 0.78rem);
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+
 /* ─── Section 3 wrapper (Zone B) — 61c-4 fills content ─── */
 #settings-components .settings-sources-section3 {
     margin-top: 1.25rem;

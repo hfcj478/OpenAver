@@ -228,17 +228,15 @@ def search_jav(number: str, source: str = 'auto', proxy_url: str = '', primary_s
 
     # 合併邏輯（TASK-61a-6 / CD-61-9）：
     # - explicit 單一來源（source != 'auto'）：整包贏，不走 merger（語意顯式化）。
-    # - auto fan-out：呼叫 pure merger。primary_source 排到 user_order 第一位來
-    #   編碼偏好（merger 不認識 primary_source）；其餘維持 all_data 插入順序
-    #   （= enabled order）。封面走 merger 預設 cover_priority。
+    # - auto fan-out：呼叫 pure merger。封面走 merger 預設 cover_priority。
     if source != 'auto':
         # 單一來源直通：該來源資料原封不動
         main_video = next(iter(all_data.values()))
     else:
-        user_order = list(all_data.keys())
-        if primary_source in user_order:
-            user_order.remove(primary_source)
-            user_order.insert(0, primary_source)
+        # auto path: merge follows Active Row drag-sort order (get_enabled_source_ids order);
+        # primary_source is deprecated (CD-61-14) and must NOT override the merge winner —
+        # DMM Top-1 privilege lives in smart_search Rule 4a, not here.
+        user_order = list(all_data.keys())  # already in get_enabled_source_ids() / drag order
         main_video = merge_results(all_data, user_order)
 
     # 補全 maker

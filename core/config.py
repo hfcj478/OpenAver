@@ -304,6 +304,14 @@ def load_config() -> dict:
                         return False
                     if not isinstance(item.get('enabled'), bool):
                         return False
+                    # Full schema validation: catch any field-level corruption
+                    # (e.g. wrong types, missing required fields) that id/enabled
+                    # checks above cannot detect. On any error → treat segment as
+                    # corrupt → existing fallback regenerates 8 builtin + backs up.
+                    try:
+                        SourceConfig.model_validate(item)
+                    except Exception:
+                        return False
                 return True
 
             if 'sources' not in raw_config:

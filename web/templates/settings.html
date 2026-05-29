@@ -456,7 +456,7 @@
                                 <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
                                 <span class="pill-name" x-text="s.display_name"></span>
                                 <span class="settings-sources-pill-mt-badge"
-                                      x-show="isDisconnectedMetatube(s)"
+                                      x-show="s.type === 'metatube'"
                                       aria-hidden="true">m</span>
                                 <span class="settings-sources-pill-badge" x-show="s.manual_only">
                                     {{ t('settings.sources.manual_only_badge') }}
@@ -485,6 +485,9 @@
                         <i class="bi bi-exclamation-triangle-fill"></i>
                         <span>{{ t('settings.sources.warn_all_disabled') }}</span>
                     </div>
+
+                    <!-- Disabled-sources footnote (F6 / CD-61-20) — always visible, no Alpine cond -->
+                    <p class="settings-sources-footnote">{{ t('settings.sources.disabled_footnote') }}</p>
 
                     <!-- ===== Section 3 — Metatube Connection (Zone B) — 61c-1 guard wrapper ===== -->
                     <!-- B1: metatubeEnabled hardcoded false → 整段不渲染（disabled state）。
