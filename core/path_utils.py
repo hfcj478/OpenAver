@@ -245,6 +245,61 @@ def get_environment() -> str:
     return CURRENT_ENV
 
 
+def strip_verbatim_prefix(path: str) -> str:
+    r"""移除 Windows verbatim prefix（\\?\UNC\ 或 \\?\<drive>:\）。
+
+    Args:
+        path: Windows FS 路徑（backslash 或 forward-slash 均可）
+
+    Returns:
+        - ``\\?\UNC\server\share\...`` → ``\\server\share\...``
+        - ``\\?\C:\...``              → ``C:\...``
+        - 其他輸入（POSIX、普通 UNC、drive-letter）→ 原樣
+
+    Notes:
+        同時容忍 backslash (``\``) 與 forward-slash (``/``) 寫法，
+        例如 ``//?/UNC/server/share`` 也可正確處理。
+    """
+    if not path:
+        return path
+
+    # 統一以 forward-slash 做前綴偵測（不修改原 path，只看開頭）
+    fwd = path.replace('\\', '/')
+
+    # verbatim UNC: //?/UNC/server/... → //server/...
+    # Note: UNC prefix is always uppercase in practice; fwd.upper() is redundant but kept for safety
+    if fwd.upper().startswith('//?/UNC/'):
+        # strip 8 chars（\\?\UNC\ 或 //?/UNC/ 皆恰 8 字元），保留 server\share\...
+        # 再 prepend \\ 還原標準 UNC
+        rest = path[8:]   # skip len('\\\\?\\UNC\\') == 8 chars
+        return '\\\\' + rest
+
+    # verbatim local: //?/C:/... → C:/...
+    if fwd.startswith('//?/') and len(fwd) >= 7 and fwd[4].isalpha() and fwd[5] == ':':
+        return path[4:]  # skip \\?\
+
+    return path
+
+
+def _is_windows_style_uri(uri: str) -> bool:
+    """判斷 file:/// URI 是否為 Windows-style（UNC 或 drive-letter）。
+
+    Windows-style 判斷規則（依 to_file_uri 實際輸出）：
+    - UNC：``file://///`` 開頭（file:/// + //server/...）
+    - Drive-letter：``file:///[A-Za-z]:`` 開頭
+
+    Returns:
+        True 表示 Windows-style（比對時需 casefold），否則 POSIX（大小寫敏感）。
+    """
+    if uri.startswith('file://///'):
+        return True
+    # drive-letter：file:///X: — 需 uri[8]（字母）與 uri[9]（冒號）存在，下限 len 10
+    # （涵蓋 root-only 'file:///C:' len=10 / 'file:///C:/' len=11）
+    if len(uri) >= 10 and uri.startswith('file:///') and uri[8].isalpha() and uri[9] == ':':
+        return True
+    return False
+
+
 def to_file_uri(fs_path: str, path_mappings: dict = None) -> str:
     """
     將檔案系統路徑轉換為 file:/// URI
@@ -270,6 +325,10 @@ def to_file_uri(fs_path: str, path_mappings: dict = None) -> str:
         - trailing separator normalize（T7 P2 fix）：wsl_prefix 與 win_prefix 結尾的
           / 或 \\ 會被 rstrip('/\\\\') 清掉，避免拼接時缺斜線或雙斜線。
     """
+    # 0. 移除 verbatim prefix（\\?\UNC\ → \\；\\?\ → C:\）
+    #    必須在正規化斜線之前執行，因為 strip_verbatim_prefix 偵測 backslash 形式
+    fs_path = strip_verbatim_prefix(fs_path)
+
     # 統一使用正斜線
     abs_path = fs_path.replace(chr(92), '/')
 
@@ -398,10 +457,23 @@ def is_path_under_dir(path: str, dir_uri: str) -> bool:
 
     避免裸 startswith 前綴碰撞（如 E:/media 誤匹配 E:/media2）。
     要求 path 在 dir_uri 之後緊接 '/' 或完全相等。
+
+    Windows-style URI（UNC ``file://///`` 或 drive ``file:///X:``）做大小寫不敏感比對
+    （Windows 路徑不區分大小寫）；POSIX URI 維持大小寫敏感（Linux/Mac 路徑敏感）。
     """
+    # 判斷是否為 Windows-style URI（任一方為 Windows-style 即採用不敏感比對）
+    if _is_windows_style_uri(path) or _is_windows_style_uri(dir_uri):
+        # casefold 兩邊做大小寫不敏感比對
+        path_cf = path.casefold()
+        dir_cf = dir_uri.casefold()
+        if path_cf == dir_cf:
+            return True
+        prefix = dir_cf if dir_cf.endswith('/') else dir_cf + '/'
+        return path_cf.startswith(prefix)
+
+    # POSIX：原大小寫敏感邏輯
     if path == dir_uri:
         return True
-    # 確保 dir_uri 以 / 結尾再比對，避免前綴碰撞
     prefix = dir_uri if dir_uri.endswith('/') else dir_uri + '/'
     return path.startswith(prefix)
 

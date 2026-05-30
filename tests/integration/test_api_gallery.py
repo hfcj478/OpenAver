@@ -75,6 +75,41 @@ class TestImageProxy:
         assert response.headers['content-type'] == 'image/webp'
 
 
+class TestImageProxyUNCAllowlist:
+    """UNC NAS 路徑白名單 — 大小寫不敏感修正（TASK-62-NAS-UNC）"""
+
+    def test_unc_host_uppercase_allowed(self, client, mocker):
+        """realpath 回傳 host 大寫 UNC → 白名單命中 → 200"""
+        # 白名單設 \\DiskStation\usbshare1，realpath 回傳 \\DISKSTATION\usbshare1\a.jpg
+        mocker.patch('web.routers.scanner.load_config', return_value={
+            'gallery': {
+                'directories': [r'\\DiskStation\usbshare1'],
+                'path_mappings': {},
+            },
+        })
+        mocker.patch('os.path.realpath', return_value=r'\\DISKSTATION\usbshare1\a.jpg')
+        mocker.patch('os.path.exists', return_value=True)
+        mocker.patch('web.routers.scanner.FileResponse',
+                     return_value=__import__('starlette.responses', fromlist=['Response']).Response(status_code=200))
+
+        response = client.get('/api/gallery/image', params={'path': r'\\DiskStation\usbshare1\a.jpg'})
+        assert response.status_code == 200
+
+    def test_unc_outside_allowlist_still_403(self, client, mocker):
+        """realpath 回傳白名單外 UNC → 403（安全守衛不退化）"""
+        mocker.patch('web.routers.scanner.load_config', return_value={
+            'gallery': {
+                'directories': [r'\\DiskStation\usbshare1'],
+                'path_mappings': {},
+            },
+        })
+        mocker.patch('os.path.realpath', return_value=r'\\OtherServer\secret\a.jpg')
+        mocker.patch('os.path.exists', return_value=True)
+
+        response = client.get('/api/gallery/image', params={'path': r'\\OtherServer\secret\a.jpg'})
+        assert response.status_code == 403
+
+
 class TestImageProxyPathConversion:
     """測試圖片代理路徑轉換"""
 

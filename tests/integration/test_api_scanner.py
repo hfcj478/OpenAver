@@ -80,6 +80,53 @@ class TestScannerAPI:
         assert response.status_code == 403
         assert "不允許的檔案類型" in response.text
         
+    def test_get_video_unc_verbatim_prefix_allowed(self, client, monkeypatch):
+        """realpath 回傳 \\?\\UNC\\... verbatim 前綴 → strip 後命中白名單 → 200"""
+        from unittest.mock import patch
+        from urllib.parse import quote
+
+        test_config = {
+            'gallery': {
+                'directories': [r'\\DiskStation\usbshare1'],
+                'path_mappings': {},
+            },
+            'scraper': {'video_extensions': ['.mp4']},
+        }
+        monkeypatch.setattr('web.routers.scanner.load_config', lambda: test_config)
+
+        path_arg = to_file_uri(r'\\DiskStation\usbshare1\a.mp4')
+
+        with patch('os.path.realpath', return_value=r'\\?\UNC\DiskStation\usbshare1\a.mp4'), \
+             patch('os.path.exists', return_value=True), \
+             patch('os.path.getsize', return_value=1024), \
+             patch('web.routers.scanner.FileResponse',
+                   return_value=__import__('starlette.responses', fromlist=['Response']).Response(status_code=200)):
+            response = client.get(f'/api/gallery/video?path={quote(path_arg)}')
+
+        assert response.status_code == 200
+
+    def test_get_video_unc_outside_allowlist_still_403(self, client, monkeypatch):
+        """realpath 回傳白名單外 NAS → 403（安全守衛不退化）"""
+        from unittest.mock import patch
+        from urllib.parse import quote
+
+        test_config = {
+            'gallery': {
+                'directories': [r'\\DiskStation\usbshare1'],
+                'path_mappings': {},
+            },
+            'scraper': {'video_extensions': ['.mp4']},
+        }
+        monkeypatch.setattr('web.routers.scanner.load_config', lambda: test_config)
+
+        path_arg = to_file_uri(r'\\AnotherNAS\evil\a.mp4')
+
+        with patch('os.path.realpath', return_value=r'\\AnotherNAS\evil\a.mp4'), \
+             patch('os.path.exists', return_value=True):
+            response = client.get(f'/api/gallery/video?path={quote(path_arg)}')
+
+        assert response.status_code == 403
+
     def test_get_player_success(self, client):
         """測試 /api/gallery/player 回傳正確的 HTML"""
         video_path = to_file_uri("C:/videos/test.mp4")

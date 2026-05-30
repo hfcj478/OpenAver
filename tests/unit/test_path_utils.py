@@ -636,6 +636,140 @@ class TestIsPathUnderDir:
         # 路徑 file:///E:/other 不在 file:///E:/media 下
         assert is_path_under_dir("file:///E:/other/../escape", "file:///E:/media") is False
 
+    # ---- 新增：UNC 大小寫不敏感 cases ----
+
+    def test_unc_host_uppercase(self):
+        """UNC host 大寫：DISKSTATION vs DiskStation → True（Windows 不分大小寫）"""
+        from core.path_utils import is_path_under_dir, to_file_uri
+        path_uri = to_file_uri(r'\\DISKSTATION\usbshare1\a.jpg')
+        dir_uri = to_file_uri(r'\\DiskStation\usbshare1')
+        assert is_path_under_dir(path_uri, dir_uri) is True
+
+    def test_unc_share_uppercase(self):
+        """UNC share 大寫：USBShare1 vs usbshare1 → True（Windows 不分大小寫）"""
+        from core.path_utils import is_path_under_dir, to_file_uri
+        path_uri = to_file_uri(r'\\DiskStation\USBShare1\a.jpg')
+        dir_uri = to_file_uri(r'\\DiskStation\usbshare1')
+        assert is_path_under_dir(path_uri, dir_uri) is True
+
+    def test_unc_exact_case_match(self):
+        """UNC 原始大小寫（happy path A）→ True"""
+        from core.path_utils import is_path_under_dir, to_file_uri
+        path_uri = to_file_uri(r'\\DiskStation\usbshare1\a.jpg')
+        dir_uri = to_file_uri(r'\\DiskStation\usbshare1')
+        assert is_path_under_dir(path_uri, dir_uri) is True
+
+    def test_drive_letter_case_insensitive(self):
+        """Drive-letter 大小寫：C: vs c: → True（Windows 不分大小寫）"""
+        from core.path_utils import is_path_under_dir, to_file_uri
+        path_uri = to_file_uri(r'C:\media\a.jpg')
+        dir_uri = to_file_uri(r'c:\media')
+        assert is_path_under_dir(path_uri, dir_uri) is True
+
+    def test_posix_case_sensitive(self):
+        """POSIX 路徑大小寫敏感：/home/User ≠ /home/user → False"""
+        from core.path_utils import is_path_under_dir, to_file_uri
+        path_uri = to_file_uri('/home/User/a.jpg')
+        dir_uri = to_file_uri('/home/user')
+        assert is_path_under_dir(path_uri, dir_uri) is False
+
+    def test_prefix_collision_drive_not_regressed(self):
+        """E:/media vs E:/media2 boundary check 不回歸（大小寫不敏感改法不可破壞）"""
+        from core.path_utils import is_path_under_dir
+        assert is_path_under_dir("file:///E:/media2/video.mp4", "file:///E:/media") is False
+
+    def test_unc_forward_slash_case_insensitive(self):
+        """情境 E：forward-slash UNC（//DiskStation/...）大小寫不敏感 → True（DoD-E 明示守衛）"""
+        from core.path_utils import is_path_under_dir, to_file_uri
+        path_uri = to_file_uri('//DISKSTATION/usbshare1/a.jpg')
+        dir_uri = to_file_uri('//DiskStation/usbshare1')
+        assert is_path_under_dir(path_uri, dir_uri) is True
+
+    def test_unc_share_boundary_not_collide(self):
+        """UNC boundary：usbshare1 vs usbshare10 在大小寫不敏感下仍不誤命中 → False"""
+        from core.path_utils import is_path_under_dir, to_file_uri
+        path_uri = to_file_uri(r'\\DiskStation\USBShare10\a.jpg')
+        dir_uri = to_file_uri(r'\\DiskStation\usbshare1')
+        assert is_path_under_dir(path_uri, dir_uri) is False
+
+
+# ============ TestStripVerbatimPrefix ============
+
+class TestStripVerbatimPrefix:
+    r"""測試 strip_verbatim_prefix() — 移除 Windows verbatim \\?\ 前綴"""
+
+    def test_verbatim_unc(self):
+        r"""\\?\UNC\DiskStation\usbshare1\a.jpg → \\DiskStation\usbshare1\a.jpg"""
+        from core.path_utils import strip_verbatim_prefix
+        result = strip_verbatim_prefix(r'\\?\UNC\DiskStation\usbshare1\a.jpg')
+        assert result == r'\\DiskStation\usbshare1\a.jpg'
+
+    def test_verbatim_drive(self):
+        r"""\\?\C:\Videos\a.jpg → C:\Videos\a.jpg"""
+        from core.path_utils import strip_verbatim_prefix
+        result = strip_verbatim_prefix(r'\\?\C:\Videos\a.jpg')
+        assert result == r'C:\Videos\a.jpg'
+
+    def test_plain_unc_unchanged(self):
+        r"""普通 UNC \\DiskStation\share\a.jpg → 原樣"""
+        from core.path_utils import strip_verbatim_prefix
+        path = r'\\DiskStation\share\a.jpg'
+        assert strip_verbatim_prefix(path) == path
+
+    def test_drive_letter_unchanged(self):
+        r"""drive C:\Videos\a.jpg → 原樣"""
+        from core.path_utils import strip_verbatim_prefix
+        path = r'C:\Videos\a.jpg'
+        assert strip_verbatim_prefix(path) == path
+
+    def test_posix_unchanged(self):
+        """/home/user/a.jpg → 原樣"""
+        from core.path_utils import strip_verbatim_prefix
+        path = '/home/user/a.jpg'
+        assert strip_verbatim_prefix(path) == path
+
+    def test_forward_slash_unc_unchanged(self):
+        """forward-slash UNC //DiskStation/share/a.jpg → 原樣"""
+        from core.path_utils import strip_verbatim_prefix
+        path = '//DiskStation/share/a.jpg'
+        assert strip_verbatim_prefix(path) == path
+
+    def test_to_file_uri_verbatim_equals_plain_unc(self):
+        r"""to_file_uri(\\?\UNC\DiskStation\...) == to_file_uri(\\DiskStation\...)（strip 生效）"""
+        from core.path_utils import to_file_uri
+        verbatim = to_file_uri(r'\\?\UNC\DiskStation\usbshare1\a.jpg')
+        plain = to_file_uri(r'\\DiskStation\usbshare1\a.jpg')
+        assert verbatim == plain
+
+
+# ============ TestIsWindowsStyleUri ============
+
+class TestIsWindowsStyleUri:
+    """測試 _is_windows_style_uri() — Windows-style URI 偵測（drive-root 邊界）"""
+
+    def test_unc_uri(self):
+        from core.path_utils import _is_windows_style_uri
+        assert _is_windows_style_uri('file://///DiskStation/usbshare1/a.jpg') is True
+
+    def test_drive_uri(self):
+        from core.path_utils import _is_windows_style_uri
+        assert _is_windows_style_uri('file:///C:/media/a.jpg') is True
+
+    def test_drive_root_only(self):
+        """drive root 'file:///C:'(len10) / 'file:///C:/'(len11) 仍須判 True（len>=10 修正）"""
+        from core.path_utils import _is_windows_style_uri
+        assert _is_windows_style_uri('file:///C:') is True
+        assert _is_windows_style_uri('file:///C:/') is True
+
+    def test_posix_uri_false(self):
+        from core.path_utils import _is_windows_style_uri
+        assert _is_windows_style_uri('file:////home/user/a.jpg') is False
+
+    def test_short_uri_no_indexerror(self):
+        """短 URI 'file:///' 不可 IndexError，回 False"""
+        from core.path_utils import _is_windows_style_uri
+        assert _is_windows_style_uri('file:///') is False
+
 
 # ============ TestUriToFsPath ============
 
