@@ -183,6 +183,9 @@ export function rescrapeState() {
             this.rescrapePreview = null;
             this.rescrapeNotFound = false;
             this.rescrapeLoadingSource = null;
+            // Codex 二輪 P3：清長壓殘留旗標，涵蓋鍵盤 / 輔助技術 click 啟用（無 mousedown 前導）
+            // 繞過 longPressStart top reset 的情況。optional-chain：search 入口（62c）才合併 longPressState。
+            this.longPressReset?.();
         },
     };
 }

@@ -292,6 +292,10 @@ class TestCapabilitiesEndpoint:
                     "overwrite_existing", "write_nfo", "write_cover"]:
             assert key in props, f"missing input property: {key}"
         assert props["overwrite_existing"]["default"] is True
+        # Codex P1：mode/overwrite_existing 必須 required，否則最小合法呼叫會落回端點預設
+        # （fill_missing / overwrite=false）而非重刮覆蓋語意，silently 不覆蓋。
+        required = tool["input_schema"]["required"]
+        assert "mode" in required and "overwrite_existing" in required
 
 
 class TestCapabilitiesSourceEnum:

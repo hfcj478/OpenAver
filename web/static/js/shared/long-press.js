@@ -33,6 +33,11 @@ export function longPressState() {
          * @param {Function} [enabledFn] — gate：回 false 則不啟 timer（如 () => rescrapeEnabled()）
          */
         longPressStart(cb, enabledFn) {
+            // 【load-bearing invariant — 勿移到 gate 之下】每次新長壓在自己的 click-guard 求值前先清旗標，
+            // 中和「長壓開了 modal、放開的 click 落在 backdrop → 旗標卡在 true」（Codex P2）造成下一次
+            // pointer/touch tap-enrich 被吞的疑慮：下一次互動的 mousedown/touchstart 必先進此處重置，click 才求值。
+            // ⚠️ 鍵盤 / 輔助技術以 click 啟用（無 mousedown 前導）不經此處 → 改由 modal 關閉時 longPressReset() 兜底
+            //    （Codex 二輪 P3：旗標只在 modal 關閉、enrich 鈕重新可點後才有害，closeRescrape 此時清乾淨）。
             this._lpFired = false;
             if (enabledFn && !enabledFn()) return;   // gate off → no-op（toggle OFF 時只剩 tap）
             if (this._lpTimer !== null) {
@@ -55,6 +60,17 @@ export function longPressState() {
 
         // 移開 / 取消（@mouseleave / @touchcancel）→ 清 timer
         longPressCancel() {
+            if (this._lpTimer !== null) {
+                clearTimeout(this._lpTimer);
+                this._lpTimer = null;
+            }
+        },
+
+        // 兜底清旗標（modal 關閉時呼叫，如 closeRescrape）：涵蓋鍵盤 / 輔助技術以 click 啟用
+        // （無 mousedown 前導，繞過 longPressStart 的 top reset）造成的長壓殘留旗標。modal 開著時
+        // enrich 鈕被遮無法點，旗標無害；關閉後鈕重新可點，此處清乾淨防吞下一次 keyboard quick-enrich。
+        longPressReset() {
+            this._lpFired = false;
             if (this._lpTimer !== null) {
                 clearTimeout(this._lpTimer);
                 this._lpTimer = null;

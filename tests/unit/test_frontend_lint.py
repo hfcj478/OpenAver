@@ -7800,6 +7800,15 @@ class TestRescrapeStateGuard:
         assert re.search(r"rescrapeNumber\s*=.*video\s*&&\s*video\.number", src), \
             "openRescrape 必須將 rescrapeNumber 預填自 video.number（前端 prefill 連結，62b-2 #6）"
 
+    def test_close_rescrape_clears_longpress_flag(self):
+        """Codex 二輪 P3：closeRescrape 必須清長壓殘留旗標（longPressReset），涵蓋鍵盤 / 輔助技術
+        以 click 啟用（無 mousedown 前導）繞過 longPressStart top reset 的卡旗標路徑。
+        若 refactor 拿掉此清理，長壓開 modal 後關閉、下次 keyboard quick-enrich 會被吞 → RED。
+        """
+        src = self._src()
+        assert "longPressReset" in src, \
+            "closeRescrape 必須呼叫 longPressReset()（清長壓旗標，鍵盤/AT 兜底，Codex 二輪 P3）"
+
 
 class TestRescrapeEntryGuard:
     """62b-1: 守衛三個 Showcase 進階重刮入口接線 contract（lightbox ⚙ + grid 長壓 + lightbox 🔍 長壓）。
@@ -7966,7 +7975,8 @@ class TestRescrapeEntryGuard:
         src = self.LONG_PRESS_JS.read_text(encoding="utf-8")
         assert re.search(r"export\s+function\s+longPressState\s*\(", src), \
             "long-press.js missing: export function longPressState()"
-        for method in ("longPressStart", "longPressEnd", "longPressCancel", "longPressClickGuard"):
+        for method in ("longPressStart", "longPressEnd", "longPressCancel",
+                       "longPressClickGuard", "longPressReset"):
             assert method in src, f"long-press.js missing method: {method}"
         # 700ms 長壓常數（與 advanced-picker.js 對齊）
         assert "700" in src, "long-press.js missing LONG_PRESS_MS = 700"
