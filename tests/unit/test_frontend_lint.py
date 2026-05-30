@@ -7544,3 +7544,160 @@ class TestSourcePillSharedComponentGuard:
         assert "settings-sources-pill" not in stripped, (
             "62a-0 違規：settings.html 仍含 settings-sources-pill class（應 rename 為 source-pill）"
         )
+
+
+# ── TASK-62a-2: 進階重刮彈窗 partial + source-pill action/loading modifier + i18n ──
+RESCRAPE_MODAL_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "_rescrape_modal.html"
+RESCRAPE_MODAL_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "components" / "rescrape-modal.css"
+
+
+class TestRescrapeModalGuard:
+    """TASK-62a-2: 進階重刮彈窗 partial（pick/preview 換頁）+ source-pill action/loading
+    modifier + zh_TW i18n 的靜態結構守衛。鏡射 TestSourcePillSharedComponentGuard。
+
+    僅鎖靜態結構 / contract glue（partial 存在、兩步、fluent-modal 開關、proxy-image、
+    confirm 圓鈕、include 點、css modifier、i18n key、無硬編碼 token）。
+    視覺對齊 mockup 走 Manual checklist。Alpine 行為是 62a-3。
+    """
+
+    def _modal_html(self):
+        return RESCRAPE_MODAL_HTML.read_text(encoding="utf-8")
+
+    def _modal_css(self):
+        return RESCRAPE_MODAL_CSS.read_text(encoding="utf-8")
+
+    def _source_pill_css(self):
+        return SOURCE_PILL_CSS.read_text(encoding="utf-8")
+
+    def _showcase_html(self):
+        return SHOWCASE_HTML.read_text(encoding="utf-8")
+
+    def _base_html(self):
+        return BASE_HTML.read_text(encoding="utf-8")
+
+    def _zh_tw(self):
+        return json.loads((LOCALES_ROOT / "zh_TW.json").read_text(encoding="utf-8"))
+
+    def test_partial_exists(self):
+        """_rescrape_modal.html 存在。"""
+        assert RESCRAPE_MODAL_HTML.exists(), (
+            "62a-2 違規：缺少 web/templates/_rescrape_modal.html"
+        )
+
+    def test_partial_two_step_structure(self):
+        """partial 含 pick / preview 兩步換頁。"""
+        html = self._modal_html()
+        assert "rescrapeStep === 'pick'" in html, "62a-2 違規：partial 缺少 pick step"
+        assert "rescrapeStep === 'preview'" in html, "62a-2 違規：partial 缺少 preview step"
+
+    def test_partial_uses_fluent_modal_pattern(self):
+        """沿用 fluent-modal + :class modal-open（非 showModal）。"""
+        html = self._modal_html()
+        assert "class=\"modal fluent-modal" in html, (
+            "62a-2 違規：partial 未沿用 'modal fluent-modal' class"
+        )
+        assert "{ 'modal-open': rescrapeOpen }" in html, (
+            "62a-2 違規：partial 未用 :class=\"{ 'modal-open': rescrapeOpen }\" 開關"
+        )
+        assert ".showModal()" not in html, (
+            "62a-2 違規：partial 不應使用原生 .showModal()"
+        )
+
+    def test_partial_uses_source_pill_action_class(self):
+        """pill 用 source-pill + source-pill--action（點擊變體）。"""
+        html = self._modal_html()
+        assert "source-pill source-pill--action" in html, (
+            "62a-2 違規：partial pill 未使用 source-pill--action 點擊變體"
+        )
+
+    def test_preview_img_uses_proxy_image(self):
+        """preview cover 走 /api/proxy-image?url= + encodeURIComponent，禁用 gallery/image。"""
+        html = self._modal_html()
+        assert "/api/proxy-image?url=" in html, (
+            "62a-2 違規（CD-62-14 #8）：preview img 未走 /api/proxy-image?url="
+        )
+        assert "encodeURIComponent" in html, (
+            "62a-2 違規（CD-62-14 #8）：preview img URL 未 encodeURIComponent"
+        )
+        assert "/api/gallery/image" not in html, (
+            "62a-2 違規（CD-62-14 #8）：preview img 禁用 /api/gallery/image（那條給 DB file:///）"
+        )
+
+    def test_confirm_row_has_cancel_and_confirm_buttons(self):
+        """✗/✓ 兩圓鈕：rescrape-confirm-btn cancel + rescrape-confirm-btn confirm。"""
+        html = self._modal_html()
+        assert "rescrape-confirm-btn cancel" in html, (
+            "62a-2 違規：缺少 rescrape-confirm-btn cancel（✗ 鈕）"
+        )
+        assert "rescrape-confirm-btn confirm" in html, (
+            "62a-2 違規：缺少 rescrape-confirm-btn confirm（✓ 鈕）"
+        )
+
+    def test_showcase_includes_partial(self):
+        """showcase.html include _rescrape_modal.html。"""
+        assert "{% include '_rescrape_modal.html' %}" in self._showcase_html(), (
+            "62a-2 違規：showcase.html 未 include _rescrape_modal.html"
+        )
+
+    def test_source_pill_css_has_action_loading_modifiers(self):
+        """source-pill.css 新增 action / loading / spinner modifier。"""
+        css = self._source_pill_css()
+        for sel in [".source-pill--action", ".source-pill.is-loading", ".pill-spin"]:
+            assert sel in css, f"62a-2 違規：source-pill.css 缺少 {sel!r} modifier"
+        assert ".source-pill:disabled" in css, (
+            "62a-2 違規：source-pill.css 缺少 .source-pill:disabled（loading 期間其餘禁用）"
+        )
+
+    def test_source_pill_base_drag_rules_untouched(self):
+        """base .source-pill 仍是 cursor: grab（未回歸 settings 拖曳）。"""
+        css = self._source_pill_css()
+        assert "cursor: grab" in css, (
+            "62a-2 違規：source-pill.css base drag 規則（cursor: grab）遭破壞"
+        )
+
+    def test_rescrape_modal_css_exists(self):
+        """rescrape-modal.css 存在，含彈窗專屬 class。"""
+        assert RESCRAPE_MODAL_CSS.exists(), (
+            "62a-2 違規：缺少 web/static/css/components/rescrape-modal.css"
+        )
+        css = self._modal_css()
+        for sel in [
+            ".rescrape-modal-box",
+            ".rescrape-x",
+            ".rescrape-num-input",
+            ".rescrape-preview",
+            ".rescrape-confirm-btn",
+        ]:
+            assert sel in css, f"62a-2 違規：rescrape-modal.css 缺少 {sel!r}"
+
+    def test_base_html_links_rescrape_modal_css(self):
+        """base.html <link> rescrape-modal.css。"""
+        assert "/static/css/components/rescrape-modal.css" in self._base_html(), (
+            "62a-2 違規：base.html 未 <link> rescrape-modal.css"
+        )
+
+    def test_rescrape_modal_css_no_hardcoded_tokens(self):
+        """rescrape-modal.css 無硬編碼 hex 色（白名單 #fff）/ px radius（白名單 999px）。"""
+        css = self._modal_css()
+        # hex 色：允許 #fff（confirm 鈕白前景，與既有按鈕慣例一致）
+        hexes = re.findall(r"#[0-9a-fA-F]{3,8}\b", css)
+        bad_hex = [h for h in hexes if h.lower() not in ("#fff", "#ffffff")]
+        assert not bad_hex, (
+            f"62a-2 違規：rescrape-modal.css 含硬編碼 hex 色 {bad_hex}（僅 #fff 白名單）"
+        )
+        # border-radius 不得用 px 字面（用 --fluent-radius-* token；pill 999px 走 source-pill）
+        radius_px = re.findall(r"border-radius:\s*\d+px", css)
+        assert not radius_px, (
+            f"62a-2 違規：rescrape-modal.css border-radius 用 px 字面 {radius_px}（應用 --fluent-radius-* token）"
+        )
+
+    def test_zh_tw_has_rescrape_keys(self):
+        """zh_TW.json 含 showcase.rescrape.* key。"""
+        data = self._zh_tw()
+        rescrape = data.get("showcase", {}).get("rescrape", {})
+        for key in [
+            "modal_title", "number_label", "filename_hint", "source_question",
+            "auto_source", "not_found", "overwrite_warning", "confirm",
+            "back_to_pick", "success", "fail",
+        ]:
+            assert key in rescrape, f"62a-2 違規：zh_TW.json 缺少 showcase.rescrape.{key}"

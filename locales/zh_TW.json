@@ -677,6 +677,21 @@
   },
   "showcase": {
     "page_title": "影片瀏覽",
+    "rescrape": {
+      "modal_title": "進階重新刮削",
+      "number_label": "番號",
+      "filename_hint": "原檔名",
+      "source_question": "用哪個來源？",
+      "auto_source": "自動",
+      "searching": "搜尋中…",
+      "not_found": "找不到，換個番號或來源再試。",
+      "overwrite_warning": "覆蓋既有封面 + NFO（不可逆）",
+      "confirm": "覆蓋寫入",
+      "back_to_pick": "換來源",
+      "close": "關閉",
+      "success": "已覆蓋寫入（封面 + NFO）",
+      "fail": "重新刮削失敗，請稍後再試。"
+    },
     "placeholder": {
       "search": "搜尋番號、女優、標題..."
     },

@@ -188,8 +188,54 @@
     display: inline-block;
 }
 
+/* ─── Action / loading modifiers (62a-2; click-to-rescrape pill, NOT drag) ───
+ * Settings pill = drag (base cursor: grab). Rescrape-modal pill = click action.
+ * `--action` flips the cursor to pointer + guards the lift against disabled/loading;
+ * `:disabled` dims the *other* pills while one source is being fetched; the loading
+ * pill itself stays at full opacity and shows a spinner. Base drag rules untouched. */
+.source-pill--action {
+    cursor: pointer;
+}
+
+.source-pill:disabled {
+    cursor: default;
+    opacity: 0.45;
+}
+
+/* Loading pill keeps full opacity (it's the active one, others go disabled). */
+.source-pill.is-loading {
+    opacity: 1;
+}
+
+/* Disabled / loading action pills do not lift on hover. */
+.source-pill--action:disabled:hover,
+.source-pill--action.is-loading:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+.source-pill .pill-spin {
+    width: 0.85rem;
+    height: 0.85rem;
+    border: 2px solid color-mix(in oklch, var(--pill-accent) 35%, transparent);
+    border-top-color: var(--pill-accent);
+    border-radius: 50%;
+    animation: source-pill-spin 0.6s linear infinite;
+}
+
+@keyframes source-pill-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
     .source-pill {
         transition: none !important;
+    }
+
+    /* Spinner is a loading indicator — keep it spinning (mockup:263-266). */
+    .source-pill .pill-spin {
+        animation: source-pill-spin 0.6s linear infinite;
     }
 }
