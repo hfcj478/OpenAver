@@ -16,6 +16,7 @@ from fastapi import APIRouter
 
 from core.config import load_config
 from core.logger import get_logger
+from core.metatube.state import metatube_state
 from core.source_config import SourceConfig, render_name
 from core.source_settings import get_enabled_source_ids
 
@@ -40,15 +41,11 @@ async def get_scraper_sources() -> dict:
           "total_enabled": int  # = 已揭露（實際回傳）的來源數
         }
     """
-    # B1：尚無 MetatubeConnectionState singleton → 不 gate（metatube 也視為
-    # available；builtin 本就 bypass）。
-    availability_map = None  # TODO(B3): inject MetatubeConnectionState availability map
+    # 63c-2：注入 MetatubeConnectionState availability map（CD-63c-7）。斷線 / probe-failed
+    # 的 metatube provider → 不在 map（或值 False）→ get_enabled_source_ids gate 排除，
+    # 與 63c-1 routing factory 對齊（揭露的來源 == 實際可 fan-out 的來源）。builtin bypass gate。
+    availability_map = metatube_state.availability_map()
 
-    # TODO(B3): B1 only routes the 8 builtin (SOURCE_TO_SCRAPER in core/scraper.py).
-    # When B3 adds metatube providers to config, the routing factory map MUST gain
-    # metatube entries so this capability's disclosed sources stay aligned with what
-    # is actually routable. Without that, /api/scraper-sources would expose metatube
-    # IDs that the search pipeline cannot dispatch to.
     ids = set(get_enabled_source_ids(availability_map))  # enabled + !manual_only + available gate
     config = load_config()
 
