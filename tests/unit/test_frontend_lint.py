@@ -9202,3 +9202,36 @@ class TestDmmProxyRequiredGuard:
         assert "transform" in hover_body, (
             "63c-6 違規：:hover rule 缺 transform: none（防 lift）"
         )
+
+
+# ─── 63c-7: i18n zh_TW（DMM proxy hint + Help metatube SQLite hint）───
+class TestMetatube63c7I18nGuard:
+    """63c-7: 63c 新 UI 文字 zh_TW key 存在 + help.html 引用（其他 3 locale 待 milestone）。
+
+    本 branch 只交付 zh_TW（對齊 62/63b i18n 慣例）。不驗 zh_CN/ja/en parity。
+    """
+
+    ZH_TW = LOCALES_ROOT / "zh_TW.json"
+    HELP_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "help.html"
+
+    def _zh(self):
+        return json.loads(self.ZH_TW.read_text(encoding="utf-8"))
+
+    def test_dmm_proxy_required_hint_exists(self):
+        """63c-6 toast 引用的 key 存在且非空（state-config.js / _rescrape_modal.html）。"""
+        v = self._zh().get("settings", {}).get("sources", {}).get("dmm_proxy_required_hint")
+        assert v, "63c-7 違規：缺 settings.sources.dmm_proxy_required_hint"
+
+    def test_help_metatube_sqlite_keys_exist(self):
+        """Help §7.6 SQLite 寫鎖 hint（h6 + 內文）存在且非空。"""
+        scraper = self._zh().get("help", {}).get("scraper", {})
+        assert scraper.get("h6_metatube"), "63c-7 違規：缺 help.scraper.h6_metatube"
+        assert scraper.get("metatube_sqlite_hint"), "63c-7 違規：缺 help.scraper.metatube_sqlite_hint"
+
+    def test_help_html_references_metatube_hint(self):
+        """help.html 引用 h6_metatube + metatube_sqlite_hint（非孤兒 key）。"""
+        html = self.HELP_HTML.read_text(encoding="utf-8")
+        assert "help.scraper.h6_metatube" in html, "63c-7 違規：help.html 未引用 h6_metatube"
+        assert "help.scraper.metatube_sqlite_hint" in html, (
+            "63c-7 違規：help.html 未引用 metatube_sqlite_hint"
+        )
