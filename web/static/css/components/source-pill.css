@@ -5,7 +5,7 @@
  *
  * - 純文字搬遷 + class rename（.settings-sources-pill* → .source-pill*），token / 數值零變更。
  * - --radius-pill (999px) 落 ui-conventions §1 pill 白名單（掃描來源 source pill，類 6）。
- * - 子元素 class（.slash-icn / .pill-name / .rec-star）無 settings-sources- 前綴，保持原樣。
+ * - 子元素 class（.slash-icn / .pill-name）無 settings-sources- 前綴，保持原樣。
  * - layout 容器 .settings-sources-pills 為 settings 排序 UI 專屬，留在 settings.css，不抽。
  */
 
@@ -176,16 +176,6 @@
 /* Parts Bin pill — disabled visual reuses [data-enabled="false"]; accent tint for metatube */
 .source-pill.is-partsbin {
     --pill-accent: color-mix(in oklch, var(--accent) 70%, var(--color-warning));
-}
-
-.source-pill.is-partsbin .rec-star {
-    display: none;
-    font-size: 0.85rem;
-    color: var(--color-warning);
-}
-
-.source-pill.is-partsbin[data-rec="true"] .rec-star {
-    display: inline-block;
 }
 
 /* Probe-failed Parts Bin pill (CD-63b-4 US9): dimmed but still clickable (promote-with-warning).

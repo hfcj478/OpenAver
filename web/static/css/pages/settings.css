@@ -819,18 +819,6 @@
     background: color-mix(in oklch, var(--surface-2) 60%, transparent);
 }
 
-/* connected: Parts Bin group head */
-#settings-components .settings-mt-group-head {
-    display: flex;
-    align-items: center;
-    gap: 0.55rem;
-    margin: 0.5rem 0 0.65rem;
-    font-size: 0.85rem;
-    font-weight: 600;
-    letter-spacing: 0.01em;
-    color: var(--text-secondary);
-}
-
 /* connected: probe progress line — shown while probe is running (CD-63b-4 C1).
    Mirrors .settings-mt-tier-hint: same font-size, muted color, flex row with gap. */
 #settings-components .settings-mt-probe-progress {

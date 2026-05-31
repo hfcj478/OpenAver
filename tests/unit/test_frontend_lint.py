@@ -8860,3 +8860,66 @@ class TestMetatubeB4Guard:
         assert "mt_promote_unavailable_warning" in js, (
             "CD-63b-4 違規：state-config.js 缺少 mt_promote_unavailable_warning toast key"
         )
+
+
+class TestMetatubeB5RecommendedRemoved:
+    """CD-63b-7: 守衛靜態 Recommended 群組殘留已徹底拔除（含 settings_mock.html）。
+
+    「廢棄 feature 拔除要徹底」memory：不留殭屍命名 / 群組頭 / 星標 / i18n key。
+    """
+
+    SETTINGS_JS = PROJECT_ROOT / "web" / "static" / "js" / "pages" / "settings" / "state-config.js"
+    SETTINGS_HTML = PROJECT_ROOT / "web" / "templates" / "settings.html"
+    SETTINGS_MOCK_HTML = PROJECT_ROOT / "web" / "templates" / "settings_mock.html"
+    SOURCE_PILL_CSS = PROJECT_ROOT / "web" / "static" / "css" / "components" / "source-pill.css"
+    SETTINGS_CSS = PROJECT_ROOT / "web" / "static" / "css" / "pages" / "settings.css"
+    ZH_TW = PROJECT_ROOT / "locales" / "zh_TW.json"
+
+    def test_settings_html_no_recommended_filter(self):
+        html = self.SETTINGS_HTML.read_text(encoding="utf-8")
+        assert "s.recommended" not in html, (
+            "CD-63b-7 違規：settings.html 仍含 s.recommended（Recommended filter 應已拔除，flat loop 取代）"
+        )
+
+    def test_settings_html_no_recommended_i18n_keys(self):
+        html = self.SETTINGS_HTML.read_text(encoding="utf-8")
+        assert "mt_recommended_label" not in html and "mt_other_label" not in html, (
+            "CD-63b-7 違規：settings.html 仍含 mt_recommended_label / mt_other_label（群組頭已拔）"
+        )
+
+    def test_settings_html_no_group_head_class(self):
+        html = self.SETTINGS_HTML.read_text(encoding="utf-8")
+        assert "settings-mt-group-head" not in html, (
+            "CD-63b-7 違規：settings.html 仍含 settings-mt-group-head（群組頭 class 已拔）"
+        )
+
+    def test_state_config_no_recommended_mock_field(self):
+        js = self.SETTINGS_JS.read_text(encoding="utf-8")
+        assert "recommended:" not in js and "recommended: i < 4" not in js, (
+            "CD-63b-7 違規：state-config.js mock 仍含 recommended 欄位"
+        )
+
+    def test_source_pill_css_no_rec_star(self):
+        css = self.SOURCE_PILL_CSS.read_text(encoding="utf-8")
+        assert ".rec-star" not in css, (
+            "CD-63b-7 違規：source-pill.css 仍含 .rec-star 規則（星標已拔）"
+        )
+
+    def test_settings_css_no_group_head(self):
+        css = self.SETTINGS_CSS.read_text(encoding="utf-8")
+        assert "settings-mt-group-head" not in css, (
+            "CD-63b-7 違規：settings.css 仍含 .settings-mt-group-head 規則（用途消失應移除）"
+        )
+
+    def test_zh_tw_no_recommended_label_keys(self):
+        data = json.loads(self.ZH_TW.read_text(encoding="utf-8"))
+        sources = data.get("settings", {}).get("sources", {})
+        assert "mt_recommended_label" not in sources and "mt_other_label" not in sources, (
+            "CD-63b-7 違規：zh_TW.json settings.sources 仍含 mt_recommended_label / mt_other_label"
+        )
+
+    def test_settings_mock_no_recommended(self):
+        html = self.SETTINGS_MOCK_HTML.read_text(encoding="utf-8")
+        assert "s.recommended" not in html and "rec-star" not in html and "smock-group-head" not in html, (
+            "CD-63b-7 違規：settings_mock.html 仍含 recommended/rec-star/smock-group-head 殘留"
+        )

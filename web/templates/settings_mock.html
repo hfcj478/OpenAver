@@ -319,13 +319,6 @@
     .smock-mini-btn.ghost:hover { opacity: 1; }
 
     /* ─── Group header ────────────────────────────────────────────────── */
-    .smock-group-head {
-        display: flex; align-items: center; gap: 0.55rem;
-        margin: 0.5rem 0 0.65rem;
-        font-size: 0.85rem; color: var(--text-secondary);
-        font-weight: 600; letter-spacing: 0.01em;
-    }
-    .smock-group-head .chev { transition: transform var(--fluent-duration-fast) var(--fluent-ease-standard); }
     .smock-group-count {
         margin-left: auto;
         font-family: 'Space Grotesk', monospace;
@@ -680,20 +673,6 @@
         background: color-mix(in oklch, var(--accent) 16%, transparent);
         color: var(--accent);
         border: 1px solid color-mix(in oklch, var(--accent) 30%, transparent);
-    }
-
-    /* ─── Recommended star (inline before pill-name; only when not enabled) ─── */
-    .smock-pill .rec-star {
-        display: none;
-        color: color-mix(in oklch, var(--color-warning, #f59e0b) 92%, transparent);
-        font-size: 0.78rem;
-        line-height: 1;
-    }
-    .smock-pill[data-rec="true"][data-enabled="false"] .rec-star {
-        display: inline-block;
-    }
-    .smock-pill[data-rec="true"][data-enabled="false"] {
-        border-color: color-mix(in oklch, var(--color-warning, #f59e0b) 35%, var(--stroke-subtle));
     }
 
     /* ─── Cap-block inline alert ──────────────────────────────────────── */
@@ -1196,55 +1175,24 @@
                     </button>
 
                     <div x-show="partsBinExpanded" x-transition.opacity.duration.200ms>
-                        <!-- Recommended group -->
-                        <template x-if="partsBinSources.filter(s => s.recommended).length > 0">
-                            <div>
-                                <div class="smock-group-head">{{ t('settings.mock.mt_recommended_group_label') }}</div>
-                                <div class="smock-pills" role="listbox" aria-label="Recommended providers">
-                                    <template x-for="src in partsBinSources.filter(s => s.recommended)" :key="src.id">
-                                        <div class="smock-pill is-mt"
-                                             data-enabled="false"
-                                             data-rec="true"
-                                             role="option"
-                                             :aria-selected="false"
-                                             :aria-label="`${src.name} — {{ t('settings.mock.mt_promote_hint') }}`"
-                                             :title="'{{ t('settings.mock.mt_promote_hint') }}'"
-                                             tabindex="0"
-                                             @click="promoteMetatube(src.id)"
-                                             @keydown.enter.prevent="promoteMetatube(src.id)"
-                                             @keydown.space.prevent="promoteMetatube(src.id)">
-                                            <i class="bi bi-star-fill rec-star" aria-hidden="true"></i>
-                                            <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
-                                            <span class="pill-name" x-text="src.name"></span>
-                                        </div>
-                                    </template>
+                        <!-- flat pill loop (no Recommended group, B3 §7.5) -->
+                        <div class="smock-pills" role="listbox" aria-label="Provider list">
+                            <template x-for="src in partsBinSources" :key="src.id">
+                                <div class="smock-pill is-mt"
+                                     data-enabled="false"
+                                     role="option"
+                                     :aria-selected="false"
+                                     :aria-label="`${src.name} — {{ t('settings.mock.mt_promote_hint') }}`"
+                                     :title="'{{ t('settings.mock.mt_promote_hint') }}'"
+                                     tabindex="0"
+                                     @click="promoteMetatube(src.id)"
+                                     @keydown.enter.prevent="promoteMetatube(src.id)"
+                                     @keydown.space.prevent="promoteMetatube(src.id)">
+                                    <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
+                                    <span class="pill-name" x-text="src.name"></span>
                                 </div>
-                            </div>
-                        </template>
-
-                        <!-- Other group -->
-                        <template x-if="partsBinSources.filter(s => !s.recommended).length > 0">
-                            <div>
-                                <div class="smock-group-head">{{ t('settings.mock.mt_other_group_label') }}</div>
-                                <div class="smock-pills" role="listbox" aria-label="Other providers">
-                                    <template x-for="src in partsBinSources.filter(s => !s.recommended)" :key="src.id">
-                                        <div class="smock-pill is-mt"
-                                             data-enabled="false"
-                                             role="option"
-                                             :aria-selected="false"
-                                             :aria-label="`${src.name} — {{ t('settings.mock.mt_promote_hint') }}`"
-                                             :title="'{{ t('settings.mock.mt_promote_hint') }}'"
-                                             tabindex="0"
-                                             @click="promoteMetatube(src.id)"
-                                             @keydown.enter.prevent="promoteMetatube(src.id)"
-                                             @keydown.space.prevent="promoteMetatube(src.id)">
-                                            <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
-                                            <span class="pill-name" x-text="src.name"></span>
-                                        </div>
-                                    </template>
-                                </div>
-                            </div>
-                        </template>
+                            </template>
+                        </div>
                     </div>
                 </div>
             </div>

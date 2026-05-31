@@ -932,7 +932,6 @@ export function stateConfig() {
         // 30-pill 渲染不爆版 + Recommended group 排序。production 不自動呼叫（metatubeEnabled
         // 維持 false）。B3 由真實 /v1/providers 列舉取代。
         _injectMetatubeMockProviders(n = 30) {
-            const recommended = new Set(['fanza', 'mgs', 'duga', 'sod']);
             const baseOrder = this.sources.length;
             const mock = Array.from({ length: n }, (_, i) => {
                 const id = `mt_mock_${i + 1}`;
@@ -947,8 +946,7 @@ export function stateConfig() {
                     is_censored: false,
                     config: {},
                     display_name_key: '',
-                    display_name: i < 4 ? [...recommended][i].toUpperCase() : `Provider ${i + 1}`,
-                    recommended: i < 4,
+                    display_name: `Provider ${i + 1}`,
                 };
             });
             this.sources = [...this.sources, ...mock];

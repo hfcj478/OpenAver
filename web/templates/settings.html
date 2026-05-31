@@ -585,59 +585,26 @@
                                 <span class="settings-mt-partsbin-count" x-text="partsBinSources.length"></span>
                             </button>
 
-                            <!-- Parts Bin body — Parts Bin pills (NOT draggable). Recommended group first. -->
+                            <!-- Parts Bin body — flat pill loop (NOT draggable; no Recommended group, B3 §7.5). -->
                             <div class="settings-mt-partsbin-body" x-show="partsBinExpanded">
-                                <!-- Recommended group -->
-                                <template x-if="partsBinSources.filter(s => s.recommended).length > 0">
-                                    <div>
-                                        <div class="settings-mt-group-head">{{ t('settings.sources.mt_recommended_label') }}</div>
-                                        <div class="settings-sources-pills" role="listbox" aria-label="Recommended providers">
-                                            <template x-for="src in partsBinSources.filter(s => s.recommended)" :key="src.id">
-                                                <div class="source-pill is-partsbin"
-                                                     data-enabled="false"
-                                                     data-rec="true"
-                                                     :data-available="src.available"
-                                                     role="option"
-                                                     :aria-selected="false"
-                                                     :aria-label="`${src.display_name} — {{ t('settings.sources.mt_promote_hint') }}`"
-                                                     :title="'{{ t('settings.sources.mt_promote_hint') }}'"
-                                                     tabindex="0"
-                                                     @click="promoteMetatube(src.id)"
-                                                     @keydown.enter.prevent="promoteMetatube(src.id)"
-                                                     @keydown.space.prevent="promoteMetatube(src.id)">
-                                                    <i class="bi bi-star-fill rec-star" aria-hidden="true"></i>
-                                                    <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
-                                                    <span class="pill-name" x-text="src.display_name"></span>
-                                                </div>
-                                            </template>
+                                <div class="settings-sources-pills" role="listbox" aria-label="Provider list">
+                                    <template x-for="src in partsBinSources" :key="src.id">
+                                        <div class="source-pill is-partsbin"
+                                             data-enabled="false"
+                                             :data-available="src.available"
+                                             role="option"
+                                             :aria-selected="false"
+                                             :aria-label="`${src.display_name} — {{ t('settings.sources.mt_promote_hint') }}`"
+                                             :title="'{{ t('settings.sources.mt_promote_hint') }}'"
+                                             tabindex="0"
+                                             @click="promoteMetatube(src.id)"
+                                             @keydown.enter.prevent="promoteMetatube(src.id)"
+                                             @keydown.space.prevent="promoteMetatube(src.id)">
+                                            <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
+                                            <span class="pill-name" x-text="src.display_name"></span>
                                         </div>
-                                    </div>
-                                </template>
-
-                                <!-- Other group -->
-                                <template x-if="partsBinSources.filter(s => !s.recommended).length > 0">
-                                    <div>
-                                        <div class="settings-mt-group-head">{{ t('settings.sources.mt_other_label') }}</div>
-                                        <div class="settings-sources-pills" role="listbox" aria-label="Other providers">
-                                            <template x-for="src in partsBinSources.filter(s => !s.recommended)" :key="src.id">
-                                                <div class="source-pill is-partsbin"
-                                                     data-enabled="false"
-                                                     :data-available="src.available"
-                                                     role="option"
-                                                     :aria-selected="false"
-                                                     :aria-label="`${src.display_name} — {{ t('settings.sources.mt_promote_hint') }}`"
-                                                     :title="'{{ t('settings.sources.mt_promote_hint') }}'"
-                                                     tabindex="0"
-                                                     @click="promoteMetatube(src.id)"
-                                                     @keydown.enter.prevent="promoteMetatube(src.id)"
-                                                     @keydown.space.prevent="promoteMetatube(src.id)">
-                                                    <i class="bi bi-slash-circle slash-icn" aria-hidden="true"></i>
-                                                    <span class="pill-name" x-text="src.display_name"></span>
-                                                </div>
-                                            </template>
-                                        </div>
-                                    </div>
-                                </template>
+                                    </template>
+                                </div>
                             </div>
                         </div>
                     </div>
