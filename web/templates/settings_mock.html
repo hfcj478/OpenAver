@@ -168,24 +168,24 @@
         </h4>
 
         <!-- Quick-jump (icon-only; text reveals on hover / when active) -->
-        <nav class="smock-jump" role="tablist" aria-label="{{ t('settings.header.title') }}">
-            <button type="button" class="smock-jump-btn" role="tab"
+        <nav class="smock-jump" aria-label="{{ t('settings.header.title') }}">
+            <button type="button" class="smock-jump-btn"
                     :class="{ active: activeSection === 'sec-search' }"
-                    :aria-selected="activeSection === 'sec-search'"
+                    :aria-current="activeSection === 'sec-search' ? 'page' : 'false'"
                     :title="'{{ t('settings.mock.nav_search_scrape') }}'"
                     @click="scrollToSection('sec-search')">
                 <i class="bi bi-search"></i><span>{{ t('settings.mock.nav_search_scrape') }}</span>
             </button>
-            <button type="button" class="smock-jump-btn" role="tab"
+            <button type="button" class="smock-jump-btn"
                     :class="{ active: activeSection === 'sec-gallery' }"
-                    :aria-selected="activeSection === 'sec-gallery'"
+                    :aria-current="activeSection === 'sec-gallery' ? 'page' : 'false'"
                     :title="'{{ t('settings.mock.nav_gallery') }}'"
                     @click="scrollToSection('sec-gallery')">
                 <i class="bi bi-list-ul"></i><span>{{ t('settings.mock.nav_gallery') }}</span>
             </button>
-            <button type="button" class="smock-jump-btn" role="tab"
+            <button type="button" class="smock-jump-btn"
                     :class="{ active: activeSection === 'sec-system' }"
-                    :aria-selected="activeSection === 'sec-system'"
+                    :aria-current="activeSection === 'sec-system' ? 'page' : 'false'"
                     :title="'{{ t('settings.mock.nav_system') }}'"
                     @click="scrollToSection('sec-system')">
                 <i class="bi bi-sliders"></i><span>{{ t('settings.mock.nav_system') }}</span>
@@ -275,6 +275,7 @@
                                  'drop-target': dropTargetId === s.id,
                              }"
                              :data-enabled="s.enabled ? 'true' : 'false'"
+                             :data-proxy-required="(s.requires_proxy && !proxyConfigured) ? 'true' : 'false'"
                              role="option" :aria-selected="s.enabled ? 'true' : 'false'"
                              tabindex="0"
                              :draggable="isDraggable(s) ? 'true' : 'false'"
@@ -523,7 +524,7 @@
                                 <small class="settings-hint">{{ t('settings.mock.proxy_hint') }}</small>
                             </label>
                             <div class="variable-input-group">
-                                <input type="text" class="input input-bordered input-sm flex-1" placeholder="http://127.0.0.1:7890">
+                                <input type="text" class="input input-bordered input-sm flex-1" placeholder="http://127.0.0.1:7890" x-model="proxyUrl">
                                 <button class="btn btn-sm btn-outline" type="button">{{ t('settings.action.test') }}</button>
                             </div>
                         </div>
@@ -648,6 +649,7 @@
 const SMOCK_BUILTIN  = {{ mock_builtin_sources|tojson }};
 const SMOCK_METATUBE = {{ mock_metatube_sources|tojson }};
 const JAVBUS_TOOLTIP = '{{ t('settings.mock.javbus_tooltip') }}';
+const DMM_PROXY_HINT = '{{ t('settings.mock.dmm_proxy_hint') }}';
 
 // settingsMockPage — single-column Settings IA POC (feature/64 Phase B).
 // Reuses real settings.css / source-pill.css classes; bindings drive mock state.
@@ -661,6 +663,9 @@ function settingsMockPage() {
         fontSize: 'md',
         translateEnabled: true,
         translateProvider: 'ollama',
+
+        // proxy state — drives DMM greyed/not-allowed in Active Row
+        proxyUrl: '',
 
         // source registry
         sources: [
@@ -716,11 +721,18 @@ function settingsMockPage() {
             const uncens = this.sources.filter(s => s.type === 'builtin' && !s.is_censored);
             return censored.length > 0 && censored.every(s => !s.enabled) && uncens.some(s => s.enabled);
         },
-        srcTooltip(s) { return s && s.id === 'javbus' ? JAVBUS_TOOLTIP : ''; },
+        get proxyConfigured() { return !!(this.proxyUrl && this.proxyUrl.trim()); },
+        srcTooltip(s) {
+            if (!s) return '';
+            if (s.requires_proxy && !this.proxyConfigured) return DMM_PROXY_HINT;
+            if (s.id === 'javbus') return JAVBUS_TOOLTIP;
+            return '';
+        },
 
         // Active Row clicks
         clickActiveRowPill(s) {
             if (!s) return;
+            if (s.requires_proxy && !this.proxyConfigured) return;
             if (s.type === 'builtin') { this.toggleBuiltin(s.id); return; }
             if (s.type === 'metatube') { this.demoteMetatube(s.id); return; }
         },
@@ -780,6 +792,7 @@ function settingsMockPage() {
 
         // drag-and-drop (Active Row reorder)
         isDraggable(s) {
+            if (s.requires_proxy && !this.proxyConfigured) return false;
             if (s.type === 'builtin') return true;
             return s.type === 'metatube' && s.enabled;
         },
