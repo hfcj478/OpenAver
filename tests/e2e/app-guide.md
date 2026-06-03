@@ -112,7 +112,7 @@ document.querySelectorAll('.info-row').forEach(row => {
 - 切換後立即生效，設定持久化
 
 ### 搜尋來源
-- 預設搜尋來源 badge 列表（DMM、JavBus、Jav321、JavDB 等）
+- 掃描來源 Active Row badge 列表（DMM、JavBus、Jav321、JavDB 等），可拖曳調整搜尋順序
 - 點擊 badge 切換啟用/停用，綠色邊框 = 啟用
 - DMM 需要 Proxy 設定才能使用
 

@@ -38,7 +38,6 @@ source venv/bin/activate && uvicorn web.app:app --host 0.0.0.0 --port 8000
 - Dev server 已啟動於 `http://localhost:8000`
 - DB 已有至少 10 部影片（US3–US7 需要）
 - 4 locale 翻譯檔齊全（US6 需要）
-- Settings 已有預設搜尋來源（US7 需要）
 
 每個 US 在 Setup 段列獨立重置指令；US 之間 state 殘留處置見 plan-59c §7 Risk-3。
 
@@ -454,12 +453,12 @@ N/A — locale 切換、Dark/Light mode、tutorial 文案驗收均為 browser-on
 ### Setup
 
 - Dev server 已啟動於 `http://localhost:8000`
-- DB 有至少 1 部影片，且有一部**尚未刮削**的本地 MP4 fixture（US7 step 4 需要）
+- DB 有至少 1 部影片，且有一部**尚未刮削**的本地 MP4 fixture（US7 step 3 需要）
 - Settings 已有預設命名格式（`[{num}][{maker}] {title}`）；若不確定可先呼：
   ```bash
   curl http://localhost:8000/api/config | python3 -c "import sys,json; print(json.load(sys.stdin).get('organize',{}).get('filename_format',''))"
   ```
-- 清 Tag Alias（避免 step 5 衝突）：
+- 清 Tag Alias（避免 step 4 衝突）：
   ```bash
   # 可選：確認現有 tag alias 不含測試用 primary name「アクション」
   curl http://localhost:8000/api/tag-aliases
@@ -474,16 +473,7 @@ N/A — locale 切換、Dark/Light mode、tutorial 文案驗收均為 browser-on
    - `browser_click` → `#saveBtn`（settings.html:762；`@submit.prevent="saveConfig"`）
    - `browser_wait_for` `.toast.toast-end` 可見 timeout=3s（settings.html:823；`_toast.visible`）
    - **驗**：toast `alert` 含 class `alert-success`（非 `alert-error`）
-2. **切換預設搜尋來源**（primary source 切換）：
-   - 在 Settings 頁找 `.source-badges-row`（settings.html:88）
-   - `browser_snapshot` 觀察目前 `form.primarySource`（`●` 標記的來源）
-   - 若目前為 `javbus`：先 `browser_wait_for` `.source-badges-row` 內 Alpine x-text 渲染完成（timeout=2s，避免 headless 啟動慢命中 raw template）；再 `browser_click` 含 `Jav321` 文字的 badge（或 `.source-badges-row` 內 nth-child(2)）
-   - **驗**：`browser_evaluate` `document.querySelector('.source-badges-row').innerText` 確認 `●` 已換到目標來源
-   - `browser_click` → `#saveBtn`；`browser_wait_for` toast 出現 timeout=3s；**驗** `alert-success`
-   - `browser_navigate` 重新整理 `http://localhost:8000/settings`
-   - `browser_wait_for` `.source-badges-row` 可見 timeout=3s
-   - **驗**：`●` 標記仍在剛切換的來源（設定保留）
-3. **翻譯開關切換**：
+2. **翻譯開關切換**：
    - `browser_wait_for` `#translateEnabled` 可見（settings.html:198）timeout=3s
    - `browser_evaluate` 取目前狀態：`document.getElementById('translateEnabled').checked`（記下初始值 `true`/`false`）
    - `browser_click` → `#translateEnabled`（toggle checkbox）
@@ -493,7 +483,7 @@ N/A — locale 切換、Dark/Light mode、tutorial 文案驗收均為 browser-on
    - `browser_wait_for` `#translateEnabled` 可見 timeout=3s
    - **驗**：`#translateEnabled` checked 狀態與切換後一致（設定保留）
    - （測試完還原：再 toggle 一次回原始狀態 + save）
-4. **刮削一片驗自訂命名格式**：兩種路徑擇一執行：
+3. **刮削一片驗自訂命名格式**：兩種路徑擇一執行：
    - **路徑 A（UI flow）**：`browser_navigate` → `http://localhost:8000/search`；用 favorite-folder / tracked dir 載入 fixture（PyWebView picker 例外），依 US2 step 5 的 file-list 三段（searchAll → 等 #batchProgress → scrapeAll → 等 #scrapeProgress）走完
    - **路徑 B（API curl，最短驗收）**：`POST /api/scrape-single`（`web/routers/scraper.py:50`，會呼 `organize_file()` 真實搬移 + 改名；對比之下 `/api/enrich-single` 只補 metadata 不改檔名，不適用）：
      ```bash
@@ -509,7 +499,7 @@ N/A — locale 切換、Dark/Light mode、tutorial 文案驗收均為 browser-on
      // 預期 exists: true
      ```
      或 path B response 的 `new_filename` 字串符合 Settings 設定的 `filenameFormat` template
-5. **Tag Alias 新增**：`browser_navigate` → `http://localhost:8000/scanner`
+4. **Tag Alias 新增**：`browser_navigate` → `http://localhost:8000/scanner`
    - `browser_wait_for` `#tagAliasCard` 可見（scanner.html:394）timeout=3s
    - 若 `#tagAliasCard` 卡片折疊（`.tagAliasCardCollapsed === true`）：`browser_click` → `#tagAliasCard .card-title`（點 header 展開；scanner.html:397）
    - `browser_wait_for` `.tag-alias-wall`（scanner.html:461）或 `.actress-alias-body`（scanner.html:430）可見
@@ -517,7 +507,7 @@ N/A — locale 切換、Dark/Light mode、tutorial 文案驗收均為 browser-on
    - `browser_click` → `.actress-alias-body button[\\@click="addTagAliasGroup()"]`（scanner.html:440）
    - `browser_wait_for` `.tag-alias-wall` 出現新 chip timeout=3s
    - **驗**：`.tag-alias-wall` 內含 `アクション` 文字的 alias chip 出現
-6. **Help curl 複製**：`browser_navigate` → `http://localhost:8000/help`
+5. **Help curl 複製**：`browser_navigate` → `http://localhost:8000/help`
    - `browser_wait_for` `.terminal-copy-btn` 可見（help.html:71）timeout=3s
    - `browser_click` → `.terminal-copy-btn`（`@click="copyCurlCommand()"`）
    - **驗**：`browser_evaluate` 取剪貼簿內容：
@@ -529,23 +519,22 @@ N/A — locale 切換、Dark/Light mode、tutorial 文案驗收均為 browser-on
 
 ### 完成後 state
 
-- `#filenameFormat` 在 Settings 仍顯示 `[{num}] {title}`（除非 step 3 還原動作覆蓋）
+- `#filenameFormat` 在 Settings 仍顯示 `[{num}] {title}`（除非 step 2 還原動作覆蓋）
 - 翻譯開關 `#translateEnabled` 已還原到初始狀態
 - Tag alias `アクション` group 存在於 DB：`GET /api/tag-aliases` 回傳含 `primary_name: "アクション"` 的 group
 - Help curl 按鈕可點擊且剪貼簿含 `/api/capabilities`
 
 ### PyWebView 例外
 
-- Settings 頁「最愛資料夾」picker（`selectFavoriteFolder()`）為 PyWebView-only；本 US 不點 picker，只改命名格式與搜尋來源等文字設定，無影響。
-- step 4 整理（scrape）流程若依賴 PyWebView picker 選檔 → 用 Setup 預先放好的 tracked fixture 繞過；不點 `#btnSelectFolder`。
+- Settings 頁「最愛資料夾」picker（`selectFavoriteFolder()`）為 PyWebView-only；本 US 不點 picker，只改命名格式與翻譯開關等文字設定，無影響。
+- step 3 整理（scrape）流程若依賴 PyWebView picker 選檔 → 用 Setup 預先放好的 tracked fixture 繞過；不點 `#btnSelectFolder`。
 
 ### Regression 偵測點
 
 - 自訂命名格式 API 沒 validate → 儲存時 `alert-error` toast（如含非法字元）；觀察：step 1 save 後 toast class 為 `alert-error`
-- 翻譯開關重載後沒保留 → `saveConfig` 沒把 `translateEnabled` 寫入後端；觀察：step 3 重整後 `#translateEnabled` checked 狀態回到 opposite
+- 翻譯開關重載後沒保留 → `saveConfig` 沒把 `translateEnabled` 寫入後端；觀察：step 2 重整後 `#translateEnabled` checked 狀態回到 opposite
 - Tag alias CRUD 後 Showcase filter 沒吃到新 alias → `tag_alias` store reload 沒觸發；用 US4 驗收 `女僕` → `アクション` 的 alias 展開（若兩者 alias 有連結）
 - Help curl 按鈕複製到的 URL 不含 `/api/capabilities` → `copyCurlCommand()` 函數 hardcode 的 URL 錯誤；或剪貼簿 API 在 headless 瀏覽器被 block（需 CDP attach 模式）
-- source badge 切換後重載 `●` 跑掉 → `form.primarySource` 沒從 `/api/config` 正確反序列化
 
 ---
 

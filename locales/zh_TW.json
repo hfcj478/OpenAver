@@ -266,7 +266,6 @@
     },
     "search": {
       "uncensored_mode": "無碼模式",
-      "default_source_hint": "預設搜尋來源",
       "proxy_dmm_hint": "DMM 需要日本 IP",
       "proxy_placeholder": "http://帳號:密碼@主機:埠號 — 已有日本 IP 可輸入 direct",
       "favorite_folder_label": "我的最愛資料夾",
@@ -1012,6 +1011,7 @@
       "uncensored_avsox": "<strong>AVSOX</strong>：無碼通用來源",
       "default_source_set": "在「<strong>掃描來源</strong>」拖曳調整順序，系統依序使用最前面可用的來源",
       "default_source_effect": "關閉特定來源的 toggle，可暫時停用該來源而不刪除設定",
+      "fuzzy_always_on": "<strong>模糊搜尋例外</strong>：用女優名／關鍵字做模糊搜尋時，即使來源在「掃描來源」被停用，仍會照排序被用到（停用只影響番號精準搜尋）",
       "dmm_fuzzy_trigger": "在搜尋框輸入日文女優名或片商名時，會同時觸發 DMM 模糊搜尋",
       "dmm_fuzzy_prereq": "前提：DMM 已啟用（需設定 Proxy 或使用 <code>direct</code> 模式）",
       "proxy_direct_vpn": "如果您已連接日本 VPN 或本身位於日本，不需要另外設定 Proxy",
