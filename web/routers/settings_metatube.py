@@ -131,7 +131,7 @@ def _disconnect_sync() -> None:
 # Sync: startup reconnect — TASK-63e-1
 # ---------------------------------------------------------------------------
 
-def startup_reconnect(config: dict) -> list[str] | None:
+def startup_reconnect(config: dict) -> tuple[list[str], int] | None:
     """Re-establish metatube connection from persisted config at startup.
 
     Reads the metatube section of *config* (a raw dict as returned by
@@ -139,8 +139,13 @@ def startup_reconnect(config: dict) -> list[str] | None:
     token via canary, then calls state.connect().
 
     Returns:
-        list[str]  — provider names if successfully reconnected.
-        None       — if reconnect was skipped or failed (state stays disconnected).
+        tuple[list[str], int]  — (provider names, generation set by state.connect)
+                                  if successfully reconnected. The generation is
+                                  captured under state's lock and carried back so
+                                  the caller never re-reads state.generation after
+                                  the await/executor boundary (CD-66b-2).
+        None                   — if reconnect was skipped or failed (state stays
+                                  disconnected).
 
     This function is intentionally synchronous so it can be called from
     lifespan via loop.run_in_executor() without any async context dependency.
@@ -165,32 +170,37 @@ def startup_reconnect(config: dict) -> list[str] | None:
         logger.warning("startup_reconnect: SSRF blocked for stored URL: %s", err)
         return None
 
-    # Fetch provider list
-    try:
-        providers = MetatubeHttpClient(url, token).list_providers()
-    except MetatubeError:
-        logger.warning("startup_reconnect: list_providers failed for url=%r", url)
-        return None
+    # Connect-critical section — serialised via _connect_lock (CD-66b-4), shared
+    # with _connect_sync / _disconnect_sync so startup cannot interleave with an
+    # early-arriving /connect (test env). Held across HTTP I/O on the executor
+    # thread — blocks the threadpool thread, not the event loop.
+    with _connect_lock:
+        # Fetch provider list
+        try:
+            providers = MetatubeHttpClient(url, token).list_providers()
+        except MetatubeError:
+            logger.warning("startup_reconnect: list_providers failed for url=%r", url)
+            return None
 
-    # Token canary (Codex P1) — same semantics as connect endpoint
-    try:
-        _verify_token_canary(url, token, providers)
-    except MetatubeAuthError:
-        logger.warning(
-            "startup_reconnect: token rejected (401) — not reconnecting"
-        )
-        return None
-    except MetatubeError:
-        # Non-401: transient / canary issue — log and continue (same as connect)
-        logger.info(
-            "startup_reconnect: canary non-401 error, continuing with reconnect"
-        )
+        # Token canary (Codex P1) — same semantics as connect endpoint
+        try:
+            _verify_token_canary(url, token, providers)
+        except MetatubeAuthError:
+            logger.warning(
+                "startup_reconnect: token rejected (401) — not reconnecting"
+            )
+            return None
+        except MetatubeError:
+            # Non-401: transient / canary issue — log and continue (same as connect)
+            logger.info(
+                "startup_reconnect: canary non-401 error, continuing with reconnect"
+            )
 
-    # Reconnect runtime state
-    names = list(providers.keys())
-    state.connect(url, token, names)
-    logger.info("startup_reconnect: reconnected to %r with %d providers", url, len(names))
-    return names
+        # Reconnect runtime state — capture the generation set under state's lock
+        names = list(providers.keys())
+        gen = state.connect(url, token, names)
+        logger.info("startup_reconnect: reconnected to %r with %d providers", url, len(names))
+        return names, gen
 
 
 # ---------------------------------------------------------------------------

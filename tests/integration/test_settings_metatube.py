@@ -833,8 +833,10 @@ class TestStartupReconnect:
             result = startup_reconnect(cfg)
 
         assert state.is_connected is True
-        assert isinstance(result, list)
-        assert len(result) > 0
+        names, gen = result
+        assert isinstance(names, list)
+        assert len(names) > 0
+        assert isinstance(gen, int)
 
     # ------------------------------------------------------------------
     # (a-5) list_providers raises MetatubeError → no connect
@@ -898,7 +900,8 @@ class TestStartupReconnect:
 
         assert state.is_connected is True
         assert result is not None
-        assert isinstance(result, list)
+        names, gen = result
+        assert isinstance(names, list)
 
     # ------------------------------------------------------------------
     # (a-8) happy path (public URL) → connected + list returned
@@ -922,8 +925,8 @@ class TestStartupReconnect:
         assert state.is_connected is True
         avail = state.availability_map()
         assert len(avail) > 0
-        assert isinstance(result, list)
-        assert set(result) == {"FANZA", "HEYZO", "MGS"}
+        names, gen = result
+        assert set(names) == {"FANZA", "HEYZO", "MGS"}
 
     # ------------------------------------------------------------------
     # (a-9) config has no 'metatube' key → walks enabled=False path
@@ -940,9 +943,9 @@ class TestStartupReconnect:
         MockClient.assert_not_called()
 
     # ------------------------------------------------------------------
-    # (a-10) return value is list[str]
+    # (a-10) return value is tuple[list[str], int]
     # ------------------------------------------------------------------
-    def test_return_value_is_list_of_str(self, reset_state):
+    def test_return_value_is_tuple_of_names_and_gen(self, reset_state):
         from web.routers.settings_metatube import startup_reconnect
 
         cfg = _startup_config()
@@ -957,8 +960,65 @@ class TestStartupReconnect:
 
             result = startup_reconnect(cfg)
 
-        assert isinstance(result, list)
-        assert all(isinstance(n, str) for n in result)
+        names, gen = result
+        assert isinstance(names, list)
+        assert all(isinstance(n, str) for n in names)
+        assert isinstance(gen, int)
+
+    # ------------------------------------------------------------------
+    # (a-11) returned generation == the gen state.connect set (B1, CD-66b-2)
+    # ------------------------------------------------------------------
+    def test_returns_generation(self, reset_state):
+        from web.routers.settings_metatube import startup_reconnect
+
+        cfg = _startup_config()
+        with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient:
+            mock_instance = MagicMock()
+            mock_instance.list_providers.return_value = {
+                "FANZA": _PUBLIC_URL,
+                "HEYZO": _PUBLIC_URL,
+            }
+            mock_instance.search.return_value = []
+            MockClient.return_value = mock_instance
+
+            result = startup_reconnect(cfg)
+
+        assert result is not None
+        names, gen = result
+        # The carried-back generation matches what state.connect set.
+        assert gen == state.generation
+
+    # ------------------------------------------------------------------
+    # (a-12) connect-critical section runs while _connect_lock is held (B3)
+    # ------------------------------------------------------------------
+    def test_holds_connect_lock_during_connect(self, reset_state):
+        from web.routers import settings_metatube
+        from web.routers.settings_metatube import startup_reconnect
+
+        names = ["FANZA", "HEYZO"]
+        observed = {}
+
+        def _fake_connect(url, token, provider_names):
+            # state.connect is called inside the connect-critical section,
+            # which must be holding _connect_lock.
+            observed["locked"] = settings_metatube._connect_lock.locked()
+            return 7
+
+        cfg = _startup_config()
+        with patch("web.routers.settings_metatube.MetatubeHttpClient") as MockClient, \
+             patch.object(settings_metatube.state, "connect", side_effect=_fake_connect) as mock_connect:
+            mock_instance = MagicMock()
+            mock_instance.list_providers.return_value = {n: _PUBLIC_URL for n in names}
+            mock_instance.search.return_value = []
+            MockClient.return_value = mock_instance
+
+            result = startup_reconnect(cfg)
+
+        mock_connect.assert_called_once()
+        assert observed.get("locked") is True
+        assert result == (names, 7)
+        # Lock released after the function returns.
+        assert settings_metatube._connect_lock.locked() is False
 
     # ------------------------------------------------------------------
     # (b) Lifespan glue layer — TestClient context manager triggers lifespan
@@ -989,7 +1049,7 @@ class TestStartupReconnect:
              patch("web.app._fire_probe") as mock_probe:
 
             mock_load.return_value = _startup_config()
-            mock_sr.return_value = names
+            mock_sr.return_value = (names, 1)
 
             with TestClient(app):
                 pass
@@ -1009,6 +1069,24 @@ class TestStartupReconnect:
                 pass
 
         mock_probe.assert_not_called()
+
+    def test_lifespan_uses_returned_generation(self, reset_state):
+        """lifespan passes the generation RETURNED by startup_reconnect to
+        _fire_probe — it does NOT re-read state.generation (CD-66b-2 / B1)."""
+        with patch("web.app.load_config") as mock_load, \
+             patch("web.app.startup_reconnect") as mock_sr, \
+             patch("web.app._fire_probe") as mock_probe:
+
+            mock_load.return_value = _startup_config()
+            # state.generation here is unrelated (0); the returned 42 must win.
+            mock_sr.return_value = (["FANZA"], 42)
+
+            with TestClient(app):
+                pass
+
+        mock_probe.assert_called_once()
+        # generation is the last positional arg of _fire_probe(base, token, names, gen)
+        assert mock_probe.call_args.args[-1] == 42
 
     # ------------------------------------------------------------------
     # (c) connect dedup persist — allow_lan updated in config after dedup hit

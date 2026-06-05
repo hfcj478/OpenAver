@@ -45,9 +45,15 @@ async def lifespan(app: FastAPI):
         import asyncio as _asyncio
         _config = load_config()
         _loop = _asyncio.get_event_loop()
-        _names = await _loop.run_in_executor(None, lambda: startup_reconnect(_config))
-        if _names:
-            _gen = _mt_startup_state.generation
+        _res = await _loop.run_in_executor(None, lambda: startup_reconnect(_config))
+        if _res:
+            # Use the generation returned by startup_reconnect (captured under
+            # state's lock at connect time) — never re-read state.generation
+            # after the await/executor boundary (CD-66b-2). base_url/token are
+            # still read from state; a concurrent connect that advanced the
+            # generation makes this probe's writes stale, which the
+            # mark_available/failed generation guard drops harmlessly.
+            _names, _gen = _res
             _fire_probe(_mt_startup_state.base_url, _mt_startup_state.token, _names, _gen)
     except Exception:
         logger.warning("lifespan: startup_reconnect failed unexpectedly", exc_info=True)
