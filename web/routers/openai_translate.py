@@ -12,6 +12,7 @@ from core.translate_service import LANGUAGE_PROMPTS
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+import asyncio
 import httpx
 from typing import List, Optional
 
@@ -127,7 +128,7 @@ async def test_openai_translate(request: TestTranslateRequest):
     # 使用安全的測試標題（與 gemini.py 行 191 相同）
     test_title = "新人女優デビュー"
 
-    config = load_config()
+    config = await asyncio.to_thread(load_config)
     locale = config.get("general", {}).get("locale", "zh-TW")
 
     # F2: ja short-circuit — 與 translate_service.py 的行為保持一致

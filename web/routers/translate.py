@@ -9,6 +9,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from typing import Optional, List
+import asyncio
 import httpx
 
 from core.config import load_config
@@ -68,7 +69,7 @@ async def translate_title(request: TranslateRequest) -> dict:
     """翻譯或優化標題（支援 Ollama/Gemini）"""
     import re
 
-    config = load_config()
+    config = await asyncio.to_thread(load_config)
     translate_config = config.get("translate", {})
 
     if not translate_config.get("enabled", False):
@@ -215,7 +216,7 @@ async def translate_batch(request: BatchTranslateRequest):
         translate_service = get_translate_service()
 
         # 獲取配置的批次大小（預留：可從 config 讀取默認值）
-        config = load_config()
+        config = await asyncio.to_thread(load_config)
         default_batch_size = config.get("translate", {}).get("batch_size", 10)
 
         # 限制批次大小（防止超時），優先使用請求參數

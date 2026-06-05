@@ -11,6 +11,7 @@ from core.translate_service import LANGUAGE_PROMPTS
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+import asyncio
 import httpx
 from typing import List
 
@@ -162,7 +163,7 @@ async def test_gemini_translate(request: TestTranslateRequest):
     # 使用安全的測試標題（不會觸發內容過濾）
     test_title = "新人女優デビュー"
 
-    config = load_config()
+    config = await asyncio.to_thread(load_config)
     locale = config.get("general", {}).get("locale", "zh-TW")
     lang_config = LANGUAGE_PROMPTS.get(locale, LANGUAGE_PROMPTS["zh-TW"])
     lang_name = lang_config["name"]

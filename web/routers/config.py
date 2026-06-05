@@ -18,6 +18,7 @@
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+import asyncio
 import httpx
 
 from core.logger import get_logger
@@ -208,7 +209,7 @@ async def test_ollama_model(request: OllamaTestRequest) -> dict:
     try:
         url = request.url.rstrip('/')
 
-        config = load_config()
+        config = await asyncio.to_thread(load_config)
         locale = config.get("general", {}).get("locale", "zh-TW")
         lang_config = LANGUAGE_PROMPTS.get(locale, LANGUAGE_PROMPTS["zh-TW"])
         lang_name = lang_config["name"]
