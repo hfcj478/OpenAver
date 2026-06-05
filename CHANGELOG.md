@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.6] - 2026-06-06
+
+本版單一主軸：**封面載入體感優化（Cover Loading UX）+ Showcase Console 清零**，純前端、零後端、零新依賴。兩條正交軌。**Track A**：封面在 NAS(HDD) 上一頁 90 張陸續慢慢冒，過去圖沒到是空白、到了「啪」一下出現；本版讓每張 grid 卡片與 Hero card 在等待時顯示 skeleton/shimmer、圖到淡入、抓不到顯示業界標準破圖 icon——把 HDD 喚醒/seek 的等待填上「正在載入」的視覺。**不縮短實際載入**（那是縮圖快取的事），只解「等待時看到什麼」。**Track B**：清掉 `/showcase` 開 F12 固定噴的 4 條 console 紅字——SVG namespace 下誤放 `<template x-for>`（3 條）+ 過時的 `unload` 事件（1 條，site-wide）；修好 SVG bug 後相似探索的連接線也恢復顯示（原被 bug 壓住從未畫出）。
+
+*This release has one theme: **Cover Loading UX + Showcase console cleanup** — pure frontend, zero backend, zero new deps, two orthogonal tracks. **Track A**: covers on a NAS HDD trickle in (≈90/page); previously the wait was blank then a hard "pop". Now each grid card and the Hero card shows a skeleton/shimmer while waiting, fades the cover in on load, and shows an industry-standard broken-image icon when there's no cover — filling the HDD spin-up/seek wait with a "loading" visual. It does not speed up actual loading (that's the thumbnail cache's job); it only fixes "what you see while waiting." **Track B**: clears the 4 console errors on `/showcase` — a `<template x-for>` mistakenly placed inside an SVG namespace (3) + a deprecated site-wide `unload` listener (1); fixing the SVG bug also restores the similar-explore connector lines (previously never drawn, suppressed by the bug).*
+
+### Added
+#### 🎴 封面三態（grid + Hero）/ Cover three-state
+- **Showcase grid 每張卡片**：載入中 skeleton + shimmer → `@load` 淡入封面 → 無封面/抓不到顯破圖 icon。首屏前 8 張封面 `loading=eager` + `fetchpriority=high`（最先看到的先到），其餘維持 `lazy`。
+- **Hero card**（最愛女優精準命中時最上方那張大圖）：補齊到與 grid 一致的三態（獨立旗標，因 Hero 是女優照片非影片封面）。
+- 卡片以 `aspect-ratio` 佔位，圖到不位移（無 layout shift）；尊重系統「減少動態」（shimmer/淡入退化為靜態）。
+
+#### 🔇 Showcase console 清零 / Console cleanup
+- 相似探索的 rail/sweep 連接線從「永遠畫不出來」恢復為正常渲染（修好 SVG bug 的附帶效果）。
+
+### Changed
+- 相似探索 stage 的 SVG 連接線由 Alpine `<template x-for>` 動態產生改為 12 組靜態 `<line>`（鏡射 motion-lab 既有無錯寫法），根除 SVG namespace 下 `<template>` 無 `.content` 的 console error。
+- 頁面卸載 cleanup 由 `unload` 事件改用 bfcache-safe 的 `pagehide`（新版 Chrome 以 Permissions-Policy 封鎖 `unload`）。
+
+### Fixed
+- **搜尋頁/設計系統頁封面隱形回歸（Codex 二次審核發現）**：封面淡入的 `opacity:0` 預設規則因共用 scope 洩漏到同樣載入 showcase.css 的 `/search` 與 `/design-system`（兩頁的卡片 img 無淡入機制），會讓搜尋結果封面與元件展示 demo 整片隱形；改用 compound `.showcase-container` scope 收斂，只命中 showcase 頁。
+- **Hero 無女優照片時的空白框**：最愛女優若無照片，`<img src="">` 不觸發 load/error 而顯空白；改為無照片直接顯破圖 icon（與 grid 一致）。
+
+### Added（守衛 / Guards）
+- `tests/unit/test_frontend_lint.py::TestCoverLoadingUx67Guard`：HTML/CSS 三態契約守衛（SVG 無 `<template>`、12 組靜態 rail/sweep id、grid/hero `@load` 綁定、淡入不掛 GSAP 專屬容器、reduced-motion 退化、淡入 scope 收斂於 `.showcase-container`）；`eslint.config.mjs` 加 `addEventListener('unload')` 禁令。
+  - 註：HTML/CSS 守衛走 pytest 而非 eslint/stylelint，因 eslint 不解析 Jinja `.html`、選擇器歸屬無法用 stylelint 表達（CD-67-8 既定例外）；可 eslint 化的 `unload` 禁令已在 eslint。屬永久守衛（HTML binding / 架構契約），非 transient。
+
+### Non-Goals（明確不做）
+- 不縮短實際載入時間（縮圖快取押後）、不做伺服端 HDD 狀態偵測、不導 HTMX、不重做 Search 頁、不做 Lightbox 大圖載入態（同封面 URL 已快取、秒開無等待）。
+
+### 測試
+- 全套 pytest **3538 passed, 2 skipped**（unit + integration，排除 smoke/e2e）+ `npm run lint`（eslint + stylelint）綠。
+- CDP 終驗（含生產環境 NAS HDD 實機）：`/showcase` console 0 error、相似探索 rail+sweep 24 條渲染、grid 三態（skeleton 淡入實況）、首屏 eager+high、`/search` 與 `/design-system` 封面可見。
+
 ## [0.9.5] - 2026-06-06
 
 本版單一主軸：**把所有「在 `async def` 路由裡裸跑、會打慢 I/O（NAS 檔案 stat / HDD 上的 sqlite / config 檔 / 同步 HTTP）的同步呼叫」移出 event loop**，讓載圖／播放／切頁／任一慢請求不再互相凍住整個 app。純後端技術收斂，**無新 UI、無新設定、無新端點、零新依賴、零 ZIP 影響**；既有功能行為與輸出 byte 級不變。根因：FastAPI 對 `def` 路由會自動丟 threadpool，但 `async def` 路由的函式體直接跑在 event loop 上——裡面任何同步阻塞呼叫都會卡住整個 loop，連帶讓別的請求（含切到新頁的 HTML/API）排不進 loop，畫面就凍住。手段二選一：body 無 `await` → 直接改宣告為 `def`（最便宜，Starlette 自動 threadpool）；body 必須保留 `await` → 把阻塞段包進 `await asyncio.to_thread(...)`。逐處人工確認、不全域 sed。新增 AST 回歸守衛永久防止新路由再犯。
