@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.5] - 2026-06-05
+## [0.9.5] - 2026-06-06
 
 本版單一主軸：**把所有「在 `async def` 路由裡裸跑、會打慢 I/O（NAS 檔案 stat / HDD 上的 sqlite / config 檔 / 同步 HTTP）的同步呼叫」移出 event loop**，讓載圖／播放／切頁／任一慢請求不再互相凍住整個 app。純後端技術收斂，**無新 UI、無新設定、無新端點、零新依賴、零 ZIP 影響**；既有功能行為與輸出 byte 級不變。根因：FastAPI 對 `def` 路由會自動丟 threadpool，但 `async def` 路由的函式體直接跑在 event loop 上——裡面任何同步阻塞呼叫都會卡住整個 loop，連帶讓別的請求（含切到新頁的 HTML/API）排不進 loop，畫面就凍住。手段二選一：body 無 `await` → 直接改宣告為 `def`（最便宜，Starlette 自動 threadpool）；body 必須保留 `await` → 把阻塞段包進 `await asyncio.to_thread(...)`。逐處人工確認、不全域 sed。新增 AST 回歸守衛永久防止新路由再犯。
 
@@ -31,12 +31,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **守衛強化**：下潛巢狀 async generator（跑在 loop 上）、per-file 推斷「含阻塞 I/O 的 sync helper」並抓其裸呼叫、排除 generator function（呼叫只建物件、body 由 threadpool 迭代）
 - `jellyfin_image_check` 的 `get_db_path`（含 mkdir I/O）一併折進 helper，該路由 body 全乾淨
 
+#### 🔒 並發硬化（plan-66b 後續收斂）— 補回 offload 拆掉的隱式序列化
+async-offload 把 `async def`（無 await）改 `def`（Starlette threadpool ~40 並發）/ 加 `to_thread` 後，**拆掉了 event loop 對 handler 的隱式互斥**；凡「pre-branch 靠 loop 序列化才安全」的共享可變資源（config.json RMW / metatube runtime state / cold-start 單例 / 非-config 檔案寫入），offload 後變真並發 → lost-update / TOCTOU。全庫 5-subagent 稽核 + Codex review 後逐處補回協調機制：
+- **config.json 寫入序列化 + 原子寫（T1，最大）**：`core/config.py` 加 process-wide `threading.Lock`（非 asyncio.Lock——def 路由跑 threadpool thread），public-locked + private-unlocked 分層 + 原子寫（`tempfile.mkstemp`+`os.replace`）；新增 `mutate_config(mutator)` 把整個 load→改→save 收進單一 critical section。修掉「並切 theme+font（150ms debounce）靜默 lost-update」（每用戶會中）；config 三 RMW 路由 + metatube `_connect_sync`/`_persist_allow_lan` + `get_common_context` locale 首寫全遷移至 `mutate_config`，delete 走 `reset_config_file`（消 exists/unlink TOCTOU）
+- **metatube startup generation 帶回（T2）**：lifespan 不再於 `await` 後重讀 `state.generation`（與已修的 `/connect` race 同型 TOCTOU），`startup_reconnect` 回傳 `(names, gen)`；連線臨界段共用 `_connect_lock`
+- **metatube `/test` 原子 snapshot（T3）**：新增 `state.probe_snapshot()` 單鎖內取 `(names, gen, base_url, token)`，消「分 4 次讀夾出不一致組合」（names 仍沿用 `_availability` keys，行為不變）
+- **translate 單例 init 鎖（T4）**：`get_translate_service` double-checked locking，消 threadpool 並發冷啟動 double-init
+- **actress photo 檔寫競態（T4b）**：`_write_actress_photo` 改 `unlink(missing_ok=True)` + temp/`os.replace` 原子寫，消同 actress 並發 local_crop 的 glob/unlink TOCTOU（500）與 torn 檔
+- **守衛擴充（T5）**：`test_async_offload_guard.py` 新增 AST 守衛——`web/routers/*.py` + `web/app.py` 禁裸呼 `save_config`（唯一白名單 = `config.py::update_config` full-replace），新路由再犯即報錯
+
+*Concurrency hardening (plan-66b): the offload removed the event loop's implicit serialization, so shared mutable resources that were "safe only because the loop serialized them" became truly concurrent. Re-added coordination per path: a process-wide `threading.Lock` + atomic write + `mutate_config()` RMW helper in `core/config.py` (fixes the silent theme+font lost-update every user hits); metatube startup generation carry-back + shared `_connect_lock`; an atomic `/test` `probe_snapshot()`; a double-checked translate-singleton lock; lock-free atomic actress-photo write (`unlink(missing_ok)` + `os.replace`); and an AST guard banning bare `save_config` outside the `update_config` whitelist across routers + `web/app.py`. Pure backend, zero new deps, byte-identical behavior aside from the added coordination.*
+
 ### Non-Goals（明確不做）
 - 不導 HTMX（卡死根源在後端 loop，非前端換頁）、不做縮圖/WebP/快取（thumbnail-cache 押後）、不解單請求自身慢（HDD 喚醒/seek 的單張延遲）、不換 aiosqlite、不調 threadpool limiter
 
 ### 測試
-- 全套 pytest **3496 passed, 2 skipped**（unit + integration，排除 smoke / e2e）+ `npm run lint`（eslint + stylelint）綠
+- 全套 pytest **3523 passed, 2 skipped**（unit + integration，排除 smoke / e2e）+ `npm run lint`（eslint + stylelint）綠
 - 守衛 RED→GREEN 驗證 + 5 種 control（bare-helper / sync-generator / async-gen 內阻塞 / to_thread 包裝 / async-gen 內 bare-helper）全對
+- 並發硬化（plan-66b）每處皆**確定性測試**（`threading.Barrier`/`Event`/`lock.locked()` 斷言，非真 race flaky）：no-lost-update / atomic-no-temp-leftover / migration-no-deadlock / startup-generation-carry-back / probe-snapshot / singleton-init-once / actress-photo-atomic / save_config 守衛 RED-check
 
 ## [0.9.4] - 2026-06-04
 
