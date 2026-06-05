@@ -9494,3 +9494,165 @@ class TestSettingsDmmProxyContract:
         metatube_toggle_pos = html.index('id="metatubeEnableToggle"')
         assert sec_search_pos < proxy_model_pos < metatube_toggle_pos, \
             "64e-3 違規：proxy row 應在 id=\"sec-search\" 之後、id=\"metatubeEnableToggle\" 之前（搬至 metatube toggle 正上方）"
+
+
+SHOWCASE_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "showcase.css"
+PAGE_LIFECYCLE_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "components" / "page-lifecycle.js"
+
+
+class TestCoverLoadingUx67Guard:
+    """67 Cover Loading UX + Showcase Console 清零 守衛（HTML/CSS contract；JS 字串守衛走 eslint，CD-67-8）。
+
+    全部依 G5：先 regex 抽出目標 tag/區塊再斷言其內容，不整檔裸 grep（showcase.html 別處仍有
+    合法 <template x-for> 與多個 <img>）。每條皆可 RED→GREEN（破壞 contract 跑 RED、還原 GREEN）。
+    """
+
+    def _html(self):
+        return SHOWCASE_HTML.read_text(encoding="utf-8")
+
+    def _css(self):
+        return SHOWCASE_CSS.read_text(encoding="utf-8")
+
+    def _grid_img(self):
+        """抽出 grid 卡片封面 <img>（唯一含 :src="video.cover_url" 的 img tag）"""
+        html = self._html()
+        m = re.search(r'<img :src="video\.cover_url".*?>', html, re.S)
+        assert m, "showcase.html: grid 封面 <img :src=\"video.cover_url\"> 不存在"
+        return m.group(0)
+
+    def _hero_img(self):
+        """抽出 hero 卡片 <img>（含 _matchedActress?.photo_url 的 img tag）"""
+        html = self._html()
+        m = re.search(r"<img :src=\"_matchedActress\?\.photo_url \|\| ''\".*?>", html, re.S)
+        assert m, "showcase.html: hero <img :src=\"_matchedActress?.photo_url || ''\"> 不存在"
+        return m.group(0)
+
+    def _rails_svg(self):
+        """抽出相似 stage rails <svg class=\"similar-stage-rails\">…</svg> 區塊"""
+        html = self._html()
+        m = re.search(r'<svg class="similar-stage-rails".*?</svg>', html, re.S)
+        assert m, "showcase.html: <svg class=\"similar-stage-rails\"> 區塊不存在"
+        return m.group(0)
+
+    # ---- Track B: SVG 靜態化（B1）----
+
+    def test_rails_svg_has_no_template(self):
+        """B-2: rails <svg> 內不得有 <template>（SVG namespace 下無 .content → Alpine x-for 丟錯）"""
+        block = self._rails_svg()
+        assert "<template" not in block, \
+            "showcase.html rails <svg class=\"similar-stage-rails\"> 內仍有 <template>（SVG x-for bug 回退；改靜態 <line>）"
+
+    def test_rails_svg_has_12_static_rail_and_sweep_ids(self):
+        """B-2/B-3: rails <svg> 含 12 組靜態 similar-rail-NN + similar-sweep-NN（防漏組/補錯位數）"""
+        block = self._rails_svg()
+        for nn in range(1, 13):
+            rail = f'id="similar-rail-{nn:02d}"'
+            sweep = f'id="similar-sweep-{nn:02d}"'
+            assert rail in block, f"showcase.html rails <svg> 缺靜態 {rail}"
+            assert sweep in block, f"showcase.html rails <svg> 缺靜態 {sweep}"
+
+    # ---- Track A: grid 卡片三態（A2）----
+
+    def test_grid_img_has_load_and_imgloaded_fade(self):
+        """A2/DoD A-1: grid <img> 含 @load 旗標 + .cover-loaded 淡入 class（綁在 img 上）"""
+        img = self._grid_img()
+        assert '@load="video._imgLoaded = true"' in img, \
+            "grid <img> 缺 @load=\"video._imgLoaded = true\"（三態的 loaded 觸發）"
+        assert ":class=\"{ 'cover-loaded': video._imgLoaded }\"" in img, \
+            "grid <img> 缺 :class 淡入綁定（.cover-loaded by _imgLoaded）"
+
+    def test_grid_img_first_screen_fetchpriority(self):
+        """A2/DoD A-5: grid <img> 首屏前 8 張 eager+high（不可 lazy+high 並存）"""
+        img = self._grid_img()
+        assert ":loading=\"index < 8 ? 'eager' : 'lazy'\"" in img, \
+            "grid <img> 缺首屏 :loading 綁定（index<8 eager 其餘 lazy）"
+        assert ":fetchpriority=\"index < 8 ? 'high' : 'auto'\"" in img, \
+            "grid <img> 缺 :fetchpriority 綁定（index<8 high 其餘 auto）"
+        assert 'loading="lazy"' not in img, \
+            "grid <img> 仍有寫死 loading=\"lazy\"（應改 :loading 綁定）"
+
+    def test_grid_has_no_cover_div(self):
+        """A2/CD-67-3 (a): grid 含 no-cover div x-show=\"!video.cover_url\"（DB 缺封面空白 img）"""
+        html = self._html()
+        assert 'x-show="!video.cover_url"' in html, \
+            "showcase.html grid 缺 no-cover div（x-show=\"!video.cover_url\"，DB 缺封面 fallback）"
+
+    # ---- Track A: hero 卡片三態（A3）----
+
+    def test_hero_img_has_load_and_heroloaded_fade(self):
+        """A3/CD-67-4: hero <img> 含 @load=_heroCardImageLoaded（獨立旗標，不混 video _imgLoaded）"""
+        img = self._hero_img()
+        assert '@load="_heroCardImageLoaded = true"' in img, \
+            "hero <img> 缺 @load=\"_heroCardImageLoaded = true\""
+        assert ":class=\"{ 'cover-loaded': _heroCardImageLoaded }\"" in img, \
+            "hero <img> 缺 :class 淡入綁定（.cover-loaded by _heroCardImageLoaded）"
+        assert 'fetchpriority="high"' in img and 'loading="eager"' in img, \
+            "hero <img> 缺首屏 eager+high（CD-67-5）"
+
+    def test_actress_js_declares_and_resets_heroloaded(self):
+        """A3/CD-67-4: state-actress.js 宣告 _heroCardImageLoaded + 兩處 lifecycle 重置"""
+        src = SHOWCASE_ACTRESS_JS.read_text(encoding="utf-8")
+        assert "_heroCardImageLoaded: false" in src, \
+            "state-actress.js 缺 _heroCardImageLoaded 宣告"
+        n = src.count("this._heroCardImageLoaded = false")
+        assert n >= 2, \
+            f"state-actress.js _heroCardImageLoaded 重置須 ≥2 處（_clearPreciseMatch + _checkPreciseActressMatch），實際 {n}"
+
+    # ---- Track A: JS 旗標初始化/重置（A2）----
+
+    def test_imgloaded_initialized_in_fetchvideos(self):
+        """A2: state-videos.js fetchVideos 初始化 _imgLoaded（唯一來源，涵蓋所有 grid render）"""
+        src = SHOWCASE_VIDEOS_JS.read_text(encoding="utf-8")
+        assert "_imgLoaded === undefined" in src and "_imgLoaded = false" in src, \
+            "state-videos.js fetchVideos 缺 _imgLoaded:false 初始化"
+
+    def test_refreshvideodata_resets_imgloaded_before_assign(self):
+        """A2/CD-67-3b: refreshVideoData 在 Object.assign 前 reset _imgLoaded（補封面重走三態）"""
+        src = SHOWCASE_LIGHTBOX_JS.read_text(encoding="utf-8")
+        m = re.search(r"video\._imgLoaded = false;.*?Object\.assign\(video, data\.video\)", src, re.S)
+        assert m, \
+            "state-lightbox.js refreshVideoData 須在 Object.assign(video, data.video) 前 reset video._imgLoaded=false"
+
+    # ---- Track A: CSS 淡入歸屬 + PRM 退化（A1，DoD A-3/A-4）----
+
+    def test_fade_not_on_card_preview_container(self):
+        """A1/DoD A-3: per-image 淡入 opacity transition 不得掛 .av-card-preview 容器（GSAP playEntry 專屬）。
+
+        負向：任何 bare `.av-card-preview {…}` 規則 body 不得同時含 transition + opacity。
+        （`.av-card-preview-img …` 因後接 `-img` 不符 `\\.av-card-preview\\s*\\{`，不誤判。）"""
+        css = self._css()
+        for m in re.finditer(r'\.av-card-preview\s*\{([^}]*)\}', css):
+            body = m.group(1)
+            assert not ("transition" in body and "opacity" in body), \
+                "DoD A-3 違規：.av-card-preview 容器帶 opacity transition；淡入須掛 .av-card-preview-img img（GSAP playEntry 動容器 opacity，不可共存 CSS transition）"
+
+    def test_fade_rule_on_img_layer_default_hidden(self):
+        """A1/DoD A-3: 存在 .av-card-preview-img img 的淡入規則（opacity:0 預設 + transition）"""
+        css = self._css()
+        rules = re.findall(r'\.av-card-preview-img img\s*\{([^}]*)\}', css)
+        assert any("opacity: 0" in b and "transition" in b and "opacity" in b for b in rules), \
+            "showcase.css 缺 .av-card-preview-img img 淡入規則（opacity:0 預設 + opacity transition）"
+
+    def test_prm_degrades_shimmer_and_fade(self):
+        """A1/DoD A-4: reduced-motion 下 shimmer animation:none + 淡入 transition:none/opacity:1 皆退化"""
+        css = self._css()
+        assert "prefers-reduced-motion: reduce" in css, \
+            "showcase.css 缺 @media (prefers-reduced-motion: reduce) guard"
+        shimmer_rules = re.findall(r'(?<![\w-])\.shimmer\s*\{([^}]*)\}', css)
+        assert any("animation: shimmer" in b for b in shimmer_rules), \
+            "showcase.css 缺 .shimmer 基礎 animation"
+        assert any("animation: none" in b for b in shimmer_rules), \
+            "showcase.css PRM 缺 .shimmer { animation: none }（DoD A-4）"
+        fade_rules = re.findall(r'\.av-card-preview-img img\s*\{([^}]*)\}', css)
+        assert any("transition: none" in b and "opacity: 1" in b for b in fade_rules), \
+            "showcase.css PRM 缺淡入退化（.av-card-preview-img img { transition: none; opacity: 1 }，DoD A-4）"
+
+    # ---- Track B: unload 已遷 pagehide（B2，eslint 也擋；此處正向確認 pagehide 在位）----
+
+    def test_page_lifecycle_uses_pagehide_not_unload(self):
+        """B-4/CD-67-7: page-lifecycle.js 用 pagehide、無 unload listener（eslint SEL_NO_UNLOAD_LISTENER 同擋）"""
+        src = PAGE_LIFECYCLE_JS.read_text(encoding="utf-8")
+        assert "addEventListener('pagehide'" in src, \
+            "page-lifecycle.js 缺 addEventListener('pagehide')"
+        assert "addEventListener('unload'" not in src, \
+            "page-lifecycle.js 仍有 addEventListener('unload')（應改 pagehide）"

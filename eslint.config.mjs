@@ -60,6 +60,18 @@ const SEL_FILTER_BRIGHTNESS = {
     "filter: brightness() 在 56c-T4fix7 後禁用，hover dim 改用 --slot-dim-opacity CSS var tween（v0.8.6 取代 TestClipStageGuard pytest 守衛遷移到 eslint）。",
 };
 
+// ── 67-B2 (CD-67-7) unload listener ban（共用，所有 JS 檔案）────
+// 新版 Chrome 以 Permissions-Policy 預設封鎖 'unload' → listener 靜默不註冊 + console 報錯。
+// 一律改用 bfcache-safe 的 'pagehide'（page-lifecycle.js 已遷移）。與 SEL_WINDOW_CONFIRM 同為
+// universal ban：flat config 同 rule 後者整段 replace 不 merge，故須加進每個 group 的清單（不能用
+// 獨立 global block，會覆蓋各 group 的完整 selector）。
+const SEL_NO_UNLOAD_LISTENER = {
+  selector:
+    "CallExpression[callee.property.name='addEventListener'][arguments.0.value='unload']",
+  message:
+    "addEventListener('unload', …) 已禁用（67-B2/CD-67-7）：新版 Chrome 以 Permissions-Policy 封鎖 'unload'，listener 靜默不註冊 + console 報錯。改用 bfcache-safe 的 'pagehide'（page-lifecycle.js 的 _doCleanup 有 _cleanedUp one-shot guard，pagehide + leavePage 雙觸發安全）。",
+};
+
 export default [
   // ── 全域基礎設定 ──────────────────────────────────────────────
   {
@@ -129,6 +141,7 @@ export default [
         SEL_CREATE_ELEMENT,
         SEL_SHOW_MODAL,
         SEL_WINDOW_CONFIRM,
+        SEL_NO_UNLOAD_LISTENER,
         SEL_BREATHING_MANAGER_NEW,
         SEL_STARSETTLE_LITERAL,
       ],
@@ -146,6 +159,7 @@ export default [
         "error",
         SEL_CREATE_ELEMENT,
         SEL_WINDOW_CONFIRM,
+        SEL_NO_UNLOAD_LISTENER,
         SEL_BREATHING_MANAGER_NEW,
         SEL_STARSETTLE_LITERAL,
         {
@@ -169,7 +183,7 @@ export default [
     files: ["web/static/js/**/*.js"],
     ignores: ["web/static/js/pages/**/state/**/*.js"],
     rules: {
-      "no-restricted-syntax": ["error", SEL_WINDOW_CONFIRM],
+      "no-restricted-syntax": ["error", SEL_WINDOW_CONFIRM, SEL_NO_UNLOAD_LISTENER],
     },
   },
 
@@ -185,6 +199,7 @@ export default [
       "no-restricted-syntax": [
         "error",
         SEL_WINDOW_CONFIRM,
+        SEL_NO_UNLOAD_LISTENER,
         SEL_BREATHING_MANAGER_NEW,
         {
           selector:
@@ -224,6 +239,7 @@ export default [
       "no-restricted-syntax": [
         "error",
         SEL_WINDOW_CONFIRM,
+        SEL_NO_UNLOAD_LISTENER,
         {
           selector: "Property[key.name='drawSVG']",
           message:
@@ -306,6 +322,7 @@ export default [
       "no-restricted-syntax": [
         "error",
         SEL_WINDOW_CONFIRM,
+        SEL_NO_UNLOAD_LISTENER,
         SEL_STARSETTLE_LITERAL,
         // 56c-T4fix7：filter: brightness() ban（host 內 hover dim 改 CSS var tween）
         SEL_FILTER_BRIGHTNESS,
@@ -337,6 +354,7 @@ export default [
       "no-restricted-syntax": [
         "error",
         SEL_WINDOW_CONFIRM,
+        SEL_NO_UNLOAD_LISTENER,
         SEL_BREATHING_MANAGER_NEW,
         SEL_STARSETTLE_LITERAL,
         {
@@ -379,6 +397,7 @@ export default [
       "no-restricted-syntax": [
         "error",
         SEL_WINDOW_CONFIRM,
+        SEL_NO_UNLOAD_LISTENER,
         SEL_BREATHING_MANAGER_NEW,
         SEL_STARSETTLE_LITERAL,
         {
