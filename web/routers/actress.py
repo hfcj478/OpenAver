@@ -12,8 +12,10 @@
 
 import asyncio
 import json
+import os
 import random
 import re
+import tempfile
 import time
 from typing import Optional, List
 from urllib.parse import quote
@@ -488,12 +490,28 @@ def _get_actress_videos(name: str) -> list:
 
 
 def _write_actress_photo(name: str, crop_bytes: bytes) -> None:
-    """Threadpool helper: write crop_bytes to GFRIENDS_DIR, replacing old files."""
+    """Threadpool helper: atomically write crop_bytes to GFRIENDS_DIR, replacing old files.
+
+    Lock-free: same-actress concurrent writers are last-writer-wins (acceptable).
+    unlink(missing_ok=True) avoids the glob/unlink TOCTOU 500; temp+os.replace
+    avoids torn reads (66b-T4b).
+    """
     safe = sanitize_filename(name)
     GFRIENDS_DIR.mkdir(parents=True, exist_ok=True)
     for old in GFRIENDS_DIR.glob(f"{safe}.*"):
-        old.unlink()
-    (GFRIENDS_DIR / f"{safe}.jpg").write_bytes(crop_bytes)
+        old.unlink(missing_ok=True)
+    dest = GFRIENDS_DIR / f"{safe}.jpg"
+    fd, tmp = tempfile.mkstemp(dir=GFRIENDS_DIR, suffix=".jpg")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(crop_bytes)
+        os.replace(tmp, dest)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 @router.get("/actress-crop")

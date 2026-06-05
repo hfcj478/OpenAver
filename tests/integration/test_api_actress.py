@@ -562,12 +562,10 @@ class TestSetActressPhoto:
         video_uri = f"file://{video_path}"
         fake_jpeg = b"\xff\xd8\xff\xe0FAKE_CROP_JPEG"
 
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
         with patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg), \
-             patch("web.routers.actress.GFRIENDS_DIR") as mock_dir:
-            # mock GFRIENDS_DIR to write into tmp_path
-            mock_dir.__truediv__ = lambda self, other: tmp_path / other
-            mock_dir.mkdir = lambda **kw: None
-            mock_dir.glob = lambda pattern: []
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends):
             resp = client.post(
                 f"/api/actresses/{ACTRESS_NAME}/photo",
                 json={"source": "local_crop", "video_path": video_uri},
@@ -577,6 +575,10 @@ class TestSetActressPhoto:
         data = resp.json()
         assert data["photo_source"] == "local_crop"
         assert "?t=" in data["photo_url"]
+        # file was actually written
+        written = list(gfriends.glob("*.jpg"))
+        assert len(written) == 1
+        assert written[0].read_bytes() == fake_jpeg
 
     # ---- 錯誤處理 ----
 
@@ -760,11 +762,10 @@ class TestSetActressPhoto:
             VideoRepository().upsert(vid)
             video_uri = f"file://{video_path}"
 
+            gfriends = Path(td) / "gfriends"
+            gfriends.mkdir()
             with patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg), \
-                 patch("web.routers.actress.GFRIENDS_DIR") as mock_dir:
-                mock_dir.__truediv__ = lambda self, other: Path(td) / other
-                mock_dir.mkdir = lambda **kw: None
-                mock_dir.glob = lambda pattern: []
+                 patch("web.routers.actress.GFRIENDS_DIR", gfriends):
                 resp2 = client.post(
                     f"/api/actresses/{ACTRESS_NAME}/photo",
                     json={"source": "local_crop", "video_path": video_uri},
@@ -854,11 +855,10 @@ class TestSetActressPhoto:
         video_uri, cover_uri, video_path, cover_path = self._save_video_with_uri_path(tmp_path)
         fake_jpeg = b"\xff\xd8\xff\xe0FAKE_URI_CROP"
 
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
         with patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg), \
-             patch("web.routers.actress.GFRIENDS_DIR") as mock_dir:
-            mock_dir.__truediv__ = lambda self, other: tmp_path / other
-            mock_dir.mkdir = lambda **kw: None
-            mock_dir.glob = lambda pattern: []
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends):
             resp = client.post(
                 f"/api/actresses/{ACTRESS_NAME}/photo",
                 json={"source": "local_crop", "video_path": video_uri},
@@ -868,3 +868,66 @@ class TestSetActressPhoto:
         data = resp.json()
         assert data["photo_source"] == "local_crop"
         assert "?t=" in data["photo_url"]
+
+
+# ---------------------------------------------------------------------------
+# _write_actress_photo — lock-free atomic write (66b-T4b)
+# ---------------------------------------------------------------------------
+
+
+class TestWriteActressPhoto:
+    """確定性測試 _write_actress_photo 的 lock-free 原子寫語意（不需真並發）。"""
+
+    def test_write_actress_photo_atomic_last_wins(self, tmp_path):
+        """序列兩次同 actress 寫入 → 終態 = 後者 bytes，且只剩一個 jpg（舊檔已取代）。"""
+        from web.routers.actress import _write_actress_photo
+        from core.organizer import sanitize_filename
+
+        gfriends = tmp_path / "gfriends"
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends):
+            _write_actress_photo("Some Name", b"AAA")
+            _write_actress_photo("Some Name", b"BBB")
+
+            safe = sanitize_filename("Some Name")
+            dest = gfriends / f"{safe}.jpg"
+            assert dest.exists()
+            assert dest.read_bytes() == b"BBB"
+            # 只剩一個此 actress 的 jpg（無 temp 殘留、舊檔已取代）
+            assert list(gfriends.glob(f"{safe}.*")) == [dest]
+            assert list(gfriends.glob("tmp*")) == []
+
+    def test_write_actress_photo_unlink_race_missing_ok(self, tmp_path):
+        """模擬 unlink race：glob 回傳一個已被刪除的舊檔 → unlink(missing_ok=True) 不拋。"""
+        from web.routers.actress import _write_actress_photo
+        from core.organizer import sanitize_filename
+
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
+        safe = sanitize_filename("Race Name")
+
+        # 先寫一個舊檔再刪掉，模擬「另一 writer 已 unlink 同檔」的競態
+        stale = gfriends / f"{safe}.png"
+        stale.write_bytes(b"OLD")
+        stale.unlink()  # 已不存在
+
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch.object(type(gfriends), "glob", lambda self, pat: [stale]):
+            # glob 回傳已刪除的 stale → 不應拋 FileNotFoundError
+            _write_actress_photo("Race Name", b"NEW")
+
+        dest = gfriends / f"{safe}.jpg"
+        assert dest.exists()
+        assert dest.read_bytes() == b"NEW"
+
+    def test_write_actress_photo_no_temp_leftover_on_error(self, tmp_path):
+        """os.replace 拋 OSError → 重新拋出，且不留 tmp* 殘檔。"""
+        from web.routers.actress import _write_actress_photo
+
+        gfriends = tmp_path / "gfriends"
+        with patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("web.routers.actress.os.replace", side_effect=OSError("boom")):
+            with pytest.raises(OSError):
+                _write_actress_photo("Err Name", b"DATA")
+
+        # 例外後不留 temp 殘檔
+        assert list(gfriends.glob("tmp*")) == []
