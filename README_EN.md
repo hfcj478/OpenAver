@@ -148,7 +148,7 @@ On first launch, a built-in setup wizard walks you through folder configuration 
 - **Multi-Language UI**: Traditional Chinese, Simplified Chinese, Japanese, English — instant switch.
 - **Path & Naming Rules**: Flexible output path configuration with `{suffix}` variable support.
 - **Favorites Folders**: Save frequently used folders for one-click batch loading.
-- **Jellyfin Image Mode**: Auto-generates `poster` and `fanart` in the format Jellyfin / Emby expects.
+- **Jellyfin / Emby Image Mode**: Auto-generates a `poster` + NFO (read by both Jellyfin and Emby), plus a Jellyfin `fanart` (Emby doesn't support this fanart filename).
 - **Static HTML Export**: Generates a standalone HTML index file — viewable offline without a server.
 
 ### 🔌 Scrape-Source Expansion: Metatube Federation (advanced, optional)

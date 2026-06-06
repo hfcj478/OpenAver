@@ -7,14 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-本版單一修正：**`/static` 靜態資源現在一律回傳 `Cache-Control: no-cache`**，根治瀏覽器 heuristic caching 導致「重新部署後同檔名仍吃舊 JS/CSS」的問題。純後端、零新依賴、不觸碰任何模板或 ESM import map。
+本版兩處小修正：**(1) `/static` 靜態資源現在一律回傳 `Cache-Control: no-cache`**，根治瀏覽器 heuristic caching 導致「重新部署後同檔名仍吃舊 JS/CSS」的問題（純後端、零新依賴、不觸碰任何模板或 ESM import map）；**(2)「Jellyfin 圖片模式」正名為「Jellyfin / Emby 圖片模式」**並把 hint 寫清楚：poster 與 NFO 兩家通吃、fanart 僅 Jellyfin 讀取（Emby 不支援 `{stem}-fanart.jpg` 命名）——純 i18n 文字 + README，不動 `jellyfin_mode` 配置欄位、零行為變化。
 
-*Single-fix patch: `/static` now always sends `Cache-Control: no-cache`, eliminating browser heuristic caching that served stale JS/CSS after redeploy when filenames didn't change.*
+*Two small fixes: (1) `/static` now always sends `Cache-Control: no-cache`, eliminating browser heuristic caching that served stale JS/CSS after redeploy when filenames didn't change; (2) "Jellyfin Image Mode" renamed to "Jellyfin / Emby Image Mode" with the hint clarified — poster and NFO work with both Jellyfin and Emby, fanart is Jellyfin-only (Emby doesn't read the `{stem}-fanart.jpg` naming) — pure i18n text + README, no change to the `jellyfin_mode` config field or behavior.*
 
 ### Fixed
 - **`/static` heuristic stale cache**：以 `NoCacheStaticFiles(StaticFiles)` 子類替換 `web/app.py:75` 的原生 `StaticFiles` mount。override `file_response`，在 `super().file_response()` 回傳後對已建好的 response 物件做 post-construction headers mutation（`response.headers["Cache-Control"] = "no-cache"`），200 `FileResponse` 與 304 `NotModifiedResponse` 兩條路徑均有效。ETag / Last-Modified / 304 機制完整保留（同檔案未變回 304 空 body，有變才回 200 新版，免 hard-reload）。封面圖代理的 24h 強快取（`scanner.py get_image`）與影片 Range streaming 完全不受影響（不經此 mount）。
   - **桌面端（PyWebView）零副作用**：`webview.start()` 預設 `private_mode=True, storage_path=None`（pywebview ≥ 6.0 的 `start()` 參數，非 `create_window()` 參數）→ 非持久 WebView2 profile，每次啟動空快取；`no-cache` 對它只是 in-session localhost 多一次可忽略的重驗（< 1ms）。
   - **真正受益者**：`feature/epic-synology.md` 的 Server / NAS(.spk) / Docker 模式——client 端持久瀏覽器快取在 server 更新（換檔 + 重啟）後本不清除，此修正確保下次載入必重驗並取到新版。
+
+### Changed
+- **「Jellyfin 圖片模式」→「Jellyfin / Emby 圖片模式」**：label 與 hint 文案修正（`settings.scraper.jellyfin_mode_{label,hint}`，4 語系 zh_TW/zh_CN/en/ja）+ README / README_EN feature 條目。澄清相容性事實——`{stem}-poster.jpg` 與 Kodi-style NFO 兩者 Emby 與 Jellyfin 皆可讀（親核 Emby 官方 `Movie-Naming.md` 確認支援 `{name}-poster.ext`），`{stem}-fanart.jpg` 僅 Jellyfin 讀取（Emby backdrop/fanart 不支援 `{name}-` 前綴命名，只認 standalone `fanart.jpg`）。**刻意不**額外產生 standalone `fanart.jpg`：用戶若關閉資料夾模式（多片同目錄）會撞檔。配置欄位 `jellyfin_mode` 維持不變、無 migration、無行為變化。
 
 ### 測試
 - 新增 `tests/integration/test_static_cache_headers.py`：兩條契約測試（200 帶 `cache-control: no-cache` + `etag`；304 仍帶 `cache-control: no-cache`）。

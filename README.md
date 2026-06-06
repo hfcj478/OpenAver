@@ -148,7 +148,7 @@ irm https://raw.githubusercontent.com/slive777/OpenAver/main/install.ps1 | iex
 - **多語系 UI**：繁中 / 简中 / 日文 / 英文，即時切換。
 - **路徑管理**：靈活設定輸出路徑與檔案命名規則，支援 `{suffix}` 格式變數。
 - **我的最愛資料夾**：設定常用資料夾，一鍵載入並自動搜尋。
-- **Jellyfin 圖片模式**：自動生成 poster / fanart 供 Jellyfin / Emby 使用。
+- **Jellyfin / Emby 圖片模式**：自動生成 poster + NFO（Jellyfin 與 Emby 皆相容），並額外生成 fanart 供 Jellyfin（Emby 不支援此 fanart 命名）。
 - **靜態 HTML 匯出**：生成獨立 HTML 索引檔，不需部署伺服器也能離線瀏覽。
 
 ### 🔌 刮削來源擴充：Metatube 聯邦（進階選配）
