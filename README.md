@@ -130,6 +130,7 @@ irm https://raw.githubusercontent.com/slive777/OpenAver/main/install.ps1 | iex
 - **女優別名管理**：用 GUI 即時新增、編輯別名（不用手改設定檔或 XML），搜尋時自動展開同一人的所有藝名與退休名。
 - **Tag 別名管理 chip 牆**：跨語言同義詞集中管理，搜尋框與 Showcase chip 在搜尋時自動展開（中日英，如「女僕＝Maid＝メイド」）。
 - **字幕偵測**：影片搬移時自動偵測並搬移同目錄字幕檔。
+- **VR 檔名標籤保留**：整理 VR 影片時自動保留原檔名的投影/立體標籤（如 `_180_LR`、`_3dh`、`mkx200`），讓 VR 頭顯播放器（Skybox / DeoVR / HereSphere 等）正確識別投影格式。
 
 ### ⚡ Search → Showcase 即時化
 - **同名 NFO 跳過**：最愛資料夾若同目錄已有 `.nfo`，視為已整理不重打 scraper（避免重複外部請求）。
