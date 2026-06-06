@@ -268,3 +268,33 @@
         animation: source-pill-spin 0.6s linear infinite;
     }
 }
+
+/* ─── Dark theme (dim) calibration — feature/69 T2 ───
+ * 近黑 dim surface（oklch ~26-31%）吃光低% color-mix tint（research §2 Factor A）。
+ * 補：enabled tint 10%→22%、border 由 transparent-mix 改 solid-mix（混 surface-0
+ * 成不透明色邊）作結構信號。T1 已校準 --color-primary（冷藍）解 Factor B 色相碰撞，
+ * 本區只解背景物理隱形 → dim 下有碼(primary 冷藍) vs 無碼(success 綠) 一眼可辨。
+ * 狀態色一律走命名 token（--accent / --pill-accent / --color-warning），無硬編碼。 */
+
+/* P1/P3: enabled 態（有/無碼）— 提 tint + solid 色邊 */
+[data-theme="dim"] .source-pill[data-enabled="true"] {
+    background: color-mix(in oklch, var(--pill-accent) 22%, var(--surface-0));
+    border-color: color-mix(in oklch, var(--pill-accent) 60%, var(--surface-0));
+}
+
+/* P2/P4: inline badge — 提 tint + solid 色邊（dim 下不退化成普通文字） */
+[data-theme="dim"] .source-pill-badge {
+    background: color-mix(in oklch, var(--accent) 28%, var(--surface-0));
+    border-color: color-mix(in oklch, var(--accent) 60%, var(--surface-0));
+}
+
+/* P7: Parts Bin 不可達 — warning 色邊提強度（slash-icon 已救，補 border 在暗底可見） */
+[data-theme="dim"] .source-pill.is-partsbin[data-available="false"] {
+    border-color: color-mix(in oklch, var(--color-warning) 70%, var(--surface-0));
+}
+
+/* P8: 載入 spinner — track 由 35%-transparent 改 50%-solid，暗底上轉動對比清楚 */
+[data-theme="dim"] .source-pill .pill-spin {
+    border-color: color-mix(in oklch, var(--pill-accent) 50%, var(--surface-0));
+    border-top-color: var(--pill-accent);
+}
