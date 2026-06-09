@@ -597,7 +597,8 @@
       "back_to_pick": "换来源",
       "close": "关闭",
       "success": "已覆盖写入（封面 + NFO）",
-      "fail": "重新刮削失败，请稍后再试。"
+      "fail": "重新刮削失败，请稍后再试。",
+      "jl_desktop_only": "仅限桌面应用程序（standalone）可用"
     },
     "placeholder": {
       "search": "搜索番号、女优、标题..."

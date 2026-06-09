@@ -618,7 +618,8 @@
       "back_to_pick": "換來源",
       "close": "關閉",
       "success": "已覆蓋寫入（封面 + NFO）",
-      "fail": "重新刮削失敗，請稍後再試。"
+      "fail": "重新刮削失敗，請稍後再試。",
+      "jl_desktop_only": "僅限桌面應用程式（standalone）可用"
     },
     "placeholder": {
       "search": "搜尋番號、女優、標題..."

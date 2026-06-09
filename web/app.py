@@ -195,10 +195,15 @@ def get_common_context(request: Request) -> dict:
     _proxy_url = (config.get('search') or {}).get('proxy_url') or ''
     proxy_configured = len(_proxy_url) > 0
 
+    # 70-T5：cf_transport_available — standalone 已 register → true；dev/server → false
+    from core.cf_transport import get_cf_transport as _get_cf_transport
+    _cf_transport_available = _get_cf_transport() is not None
+
     return {
         "request": request,
         "config": config,
         "proxy_configured": proxy_configured,
+        "cf_transport_available": _cf_transport_available,
         "theme": config.get('general', {}).get('theme', 'light'),
         "sidebar_collapsed": config.get('general', {}).get('sidebar_collapsed', False),
         "font_size": font_size,

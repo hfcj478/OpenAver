@@ -597,7 +597,8 @@
       "back_to_pick": "Change source",
       "close": "Close",
       "success": "Overwritten (cover + NFO)",
-      "fail": "Re-scrape failed, please try again later."
+      "fail": "Re-scrape failed, please try again later.",
+      "jl_desktop_only": "Available in standalone desktop app only"
     },
     "placeholder": {
       "search": "Search ID, actress, title..."

@@ -134,6 +134,15 @@ export function rescrapeState() {
         },
 
         /**
+         * 70-T5: JavLibrary 不可用 gate（desktop-only / standalone 限定）。
+         * manual_only && is_beta = javlibrary（目前唯一）；cf_transport_available = standalone 已 register。
+         * dev / server 環境：cf_transport_available=false → 此 helper 回 true → pill 灰化不可點。
+         */
+        isJlUnavailable(s) {
+            return !!(s && s.manual_only && s.is_beta && !(window.__ADVANCED_SEARCH__ && window.__ADVANCED_SEARCH__.cf_transport_available));
+        },
+
+        /**
          * 解析 preview 卡的來源顯示名（落差#1：端點回 source id，partial 綁 sourceName）。
          */
         _resolveSourceName(sourceId) {

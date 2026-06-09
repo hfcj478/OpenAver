@@ -45,16 +45,26 @@
           </button>
           {# builtin pill：picker 依 usability 不依 promotion（CD-64-A4），恆 data-enabled=true 正常可選，不反映 Settings 開關 #}
           <template x-for="s in rescrapeBuiltinSources()" :key="s.id">
-            <button type="button" class="source-pill source-pill--action"
-                    :class="{ 'source-pill--uncensored': !s.is_censored, 'is-loading': rescrapeLoadingSource === s.id }"
+            <button type="button"
+                    :class="{
+                        'source-pill': true,
+                        'source-pill--action': !isJlUnavailable(s),
+                        'source-pill--manual-only': isJlUnavailable(s),
+                        'source-pill--uncensored': !s.is_censored,
+                        'is-loading': rescrapeLoadingSource === s.id
+                    }"
                     data-enabled="true"
                     :data-proxy-required="isSourceProxyBlocked(s) ? 'true' : 'false'"
+                    :aria-disabled="isJlUnavailable(s) ? 'true' : 'false'"
+                    :title="isJlUnavailable(s) ? window.t('showcase.rescrape.jl_desktop_only') : ''"
                     :disabled="rescrapeLoadingSource !== null && rescrapeLoadingSource !== s.id"
-                    @click="isSourceProxyBlocked(s) ? showToast(window.t('settings.sources.dmm_proxy_required_hint'), 'warning') : rescrapeWithSource(s.id)">
+                    @click="isJlUnavailable(s) ? showToast(window.t('showcase.rescrape.jl_desktop_only'), 'warning') : (isSourceProxyBlocked(s) ? showToast(window.t('settings.sources.dmm_proxy_required_hint'), 'warning') : rescrapeWithSource(s.id))">
               <span class="pill-spin" x-show="rescrapeLoadingSource === s.id"></span>
-              <i class="bi bi-slash-circle slash-icn" x-show="rescrapeLoadingSource !== s.id" aria-hidden="true"></i>
+              <i class="bi bi-slash-circle slash-icn" x-show="rescrapeLoadingSource !== s.id && !isJlUnavailable(s)" aria-hidden="true"></i>
               {# 品牌名（display_name_raw → display_name_key fallback；不走 i18n，CD-62-12） #}
               <span class="pill-name" x-text="s.display_name_raw || s.display_name_key || s.id"></span>
+              {# 70-T5: BETA badge（manual_only && is_beta = javlibrary 等；未來 beta source 自動顯示） #}
+              <span class="source-pill-badge" x-show="s.manual_only && s.is_beta" aria-hidden="true">BETA</span>
             </button>
           </template>
         </div>

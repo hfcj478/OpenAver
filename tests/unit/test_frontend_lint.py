@@ -9831,3 +9831,81 @@ class TestPartsBinStagedAffordanceGuard:
         assert 'data-available="false"' in ds, (
             "TASK-partsbin 違規 C6：design-system D.13 缺 is-partsbin data-available=\"false\" demo（不可達態）。"
         )
+
+
+# ── TASK-70-T5: JavLibrary Picker BETA 視覺 + 不可用 gate 靜態守衛 ──
+
+_BOOTSTRAP_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "_advanced_search_bootstrap.html"
+_STATE_RESCRAPE_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "shared" / "state-rescrape.js"
+_APP_PY = Path(__file__).parent.parent.parent / "web" / "app.py"
+_MODAL_HTML_70 = Path(__file__).parent.parent.parent / "web" / "templates" / "_rescrape_modal.html"
+_LOCALES_ROOT_70 = Path(__file__).parent.parent.parent / "locales"
+
+
+class TestJavlibraryPickerT5Guard:
+    """70-T5: javlibrary picker BETA 視覺 + 不可用 gate 靜態守衛。
+
+    守衛靜態字串契約（HTML/JS/Python）：
+      (1) bootstrap template 含 cf_transport_available 注入
+      (2) app.py get_common_context 注入 cf_transport_available
+      (3) state-rescrape.js 定義 isJlUnavailable
+      (4) _rescrape_modal.html builtin pill 含 source-pill-badge（BETA）綁於 manual_only && is_beta
+      (5) _rescrape_modal.html builtin pill 含 isJlUnavailable gate（aria-disabled + jl_desktop_only toast）
+      (6) 4 locale 檔含 jl_desktop_only key
+    """
+
+    def test_bootstrap_cf_transport_available(self):
+        """(1) _advanced_search_bootstrap.html 含 cf_transport_available 注入。"""
+        html = _BOOTSTRAP_HTML.read_text(encoding="utf-8")
+        assert "cf_transport_available" in html, (
+            "70-T5 違規：_advanced_search_bootstrap.html 未注入 cf_transport_available 到 __ADVANCED_SEARCH__"
+        )
+
+    def test_app_py_get_common_context_cf_transport(self):
+        """(2) web/app.py get_common_context() 注入 cf_transport_available。"""
+        src = _APP_PY.read_text(encoding="utf-8")
+        assert "cf_transport_available" in src, (
+            "70-T5 違規：web/app.py get_common_context() 未包含 cf_transport_available key"
+        )
+        assert "get_cf_transport" in src, (
+            "70-T5 違規：web/app.py 未 import 或呼叫 get_cf_transport（cf_transport_available 值的來源）"
+        )
+
+    def test_state_rescrape_has_isJlUnavailable(self):
+        """(3) state-rescrape.js 定義 isJlUnavailable helper。"""
+        js = _STATE_RESCRAPE_JS.read_text(encoding="utf-8")
+        assert "isJlUnavailable" in js, (
+            "70-T5 違規：state-rescrape.js 未定義 isJlUnavailable helper"
+        )
+
+    def test_modal_builtin_pill_has_beta_badge(self):
+        """(4) _rescrape_modal.html builtin pill 模板含 source-pill-badge（BETA badge）。"""
+        html = _MODAL_HTML_70.read_text(encoding="utf-8")
+        assert "source-pill-badge" in html, (
+            "70-T5 違規：_rescrape_modal.html builtin pill 模板缺 source-pill-badge（BETA badge）"
+        )
+        assert "manual_only" in html and "is_beta" in html, (
+            "70-T5 違規：source-pill-badge 未綁於 manual_only && is_beta 條件（不應對所有 pill 顯示）"
+        )
+
+    def test_modal_builtin_pill_jl_unavailable_gate(self):
+        """(5) _rescrape_modal.html builtin pill 含 isJlUnavailable gate（aria-disabled + jl_desktop_only）。"""
+        html = _MODAL_HTML_70.read_text(encoding="utf-8")
+        assert "isJlUnavailable" in html, (
+            "70-T5 違規：_rescrape_modal.html builtin pill 模板未使用 isJlUnavailable gate"
+        )
+        assert "aria-disabled" in html, (
+            "70-T5 違規：_rescrape_modal.html builtin pill 缺 aria-disabled 綁定（不可用語義）"
+        )
+        assert "jl_desktop_only" in html, (
+            "70-T5 違規：_rescrape_modal.html builtin pill 缺 jl_desktop_only i18n key（toast / title）"
+        )
+
+    def test_i18n_jl_desktop_only_parity(self):
+        """(6) 4 locale 檔（zh_TW/zh_CN/en/ja）皆含 jl_desktop_only key。"""
+        for lang in ("zh_TW", "zh_CN", "en", "ja"):
+            locale_path = _LOCALES_ROOT_70 / f"{lang}.json"
+            content = locale_path.read_text(encoding="utf-8")
+            assert "jl_desktop_only" in content, (
+                f"70-T5 違規：locales/{lang}.json 缺 showcase.rescrape.jl_desktop_only key（i18n parity）"
+            )
