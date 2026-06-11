@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.9.9] - 2026-06-10
+## [0.9.9] - 2026-06-11
 
 本版單一主軸：**新增 JavLibrary 來源（BETA，桌面專屬）**（feature/70）。JavLibrary 是社群索引站，metatube 聯邦 30+ 來源都沒收錄——它擁有別處拿不到的最豐富社群標籤、用戶評分、以及冷門/長尾番號。但全站受 Cloudflare 人機驗證保護、純自動抓一律失敗。OpenAver 的解法：借桌面版 PyWebView 彈出真實瀏覽器視窗，讓你手動點一次驗證，之後在「已過驗證的分頁」裡抓取。因此 JavLibrary **只在桌面 standalone 可用**、**只能在進階搜尋／重刮來源選單以精確番號查詢**、並標示 BETA。
 
@@ -32,10 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **守衛強化（P3-1）**：`cf_needed` 位置守衛由 `js.index("cf_needed")`（命中第 185 行註解）改錨 `data.cf_needed`（實際消費表達式）；`TestRescrapeModalSearchHideJlPillGuard` 改錨完整 `x-show` 表達式（L49），防止留空殼字串騙過守衛。
   - **B1 AST 守衛**：`test_standalone_init_order_guard.py` 新增 `test_on_main_closing_destroys_jl_win` 鎖定 `jl_win.destroy()` 呼叫（AST，防靜默回退）。
 
+### Fixed
+#### 🔧 JavLibrary CF flow 修通（70d）/ CF re-verify flow fixed
+- **40 分鐘後重新驗證從「永久壞、要重開程式」變「打一次勾自動完成」**：clearance 過期後，舊流程把隱藏視窗導到首頁（那裡沒有 CF 可解），又因 `evaluate_js` 在 CF 頁卡 20 秒拖垮整個 JS 橋接 → JavLibrary 從此壞掉、必須重啟。現在彈窗直接帶你到「剛被擋下的搜尋頁」，你點一次人機驗證（或它自己過），視窗約 9 秒自動關閉、結果自動回填——全程不必碰 18 歲同意鈕、不必點頁面任何內容。
+  *The 40-minute re-verification went from "permanently broken, restart required" to "one click, auto-completes": after clearance expired, the old flow navigated the hidden window to the homepage (no CF to solve there) and `evaluate_js` blocked ~20s on the CF page, stranding the JS bridge — JavLibrary stayed broken until restart. Now the popup takes you straight to the just-blocked search page; you click the challenge once (or it passes on its own), the window auto-closes in ~9s and results auto-fill — no 18+ consent button, no page clicks.*
+- 18+ 同意閘改用 `over18=18` cookie（站台真值；舊 `over18=1` 不被接受、遮罩不消）；此為視覺正確性，不影響資料抓取（mask 是 client-side overlay，從不擋 fetch/parse）。
+  *The 18+ gate now uses the `over18=18` cookie (the site's real value; the old `over18=1` was rejected and the mask stayed); cosmetic only — the mask is a client-side overlay that never blocks fetch/parse.*
+
 ### Non-Goals（明確不做）
 - 不支援 server / NAS / Docker（CF 需真人 ＋ 真瀏覽器 ＋ 桌面 GUI）、不做自動繞過 CF、不做模糊／演員搜尋、Transport A（cookie→curl_cffi）結構性死路不實作。
 
-- **`fetch()` 主動設 `over18` cookie（Codex P2）**：`fetch()` 在呼叫 `_wv_fetch` 前先主動設 `over18=1` cookie，冷啟動 CF 自動過關後首次 fetch 不會收到 18+ 同意閘 → 不再靜默「無結果」。備用路徑：若 cookie 仍未抑制閘門（race/agreeBtn），改拋 `CfChallengeRequired` 路入 solve/poll 流程，而非回傳空殼 HTML。*`fetch()` now sets the `over18` cookie proactively so the 18+ age gate never returns as empty "no results" (Codex P2); persistent-gate fallback routes into the solve flow.*
+- **`fetch()` 主動設 `over18` cookie（Codex P2）**：`fetch()` 在呼叫 `_wv_fetch` 前先主動設 `over18=18` cookie，冷啟動 CF 自動過關後首次 fetch 不會收到 18+ 同意閘 → 不再靜默「無結果」。備用路徑：若 cookie 仍未抑制閘門（race/agreeBtn），改拋 `CfChallengeRequired` 路入 solve/poll 流程，而非回傳空殼 HTML。*`fetch()` now sets the `over18` cookie proactively so the 18+ age gate never returns as empty "no results" (Codex P2); persistent-gate fallback routes into the solve flow.*
 
 ### 測試
 - 全套 pytest **3738 passed, 2 skipped**（unit ＋ integration，排除 smoke / e2e）＋ `npm run lint`（eslint ＋ stylelint）綠。
