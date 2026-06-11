@@ -437,10 +437,12 @@ export function stateSimilar() {
               ? drilledItem.actresses.join(', ')
               : (drilledItem.actresses || '');
             this.similarExitVideo = {
-              number:    drilledItem.number,
-              title:     drilledItem.title,
-              cover_url: drilledItem.cover_url,
-              actresses: actressStr,
+              number:         drilledItem.number,
+              title:          drilledItem.title,
+              cover_url:      drilledItem.cover_url,
+              cover_full_url: drilledItem.cover_full_url || '',  // 71c slip-through fix：帶入原圖 url，
+              // 確保 .lb-full @load fire（缺此欄時 src=undefined → @load 永不 fire → opacity:0 卡死）
+              actresses:      actressStr,
               // path 故意留 undefined — lightbox template 用 ?.path guard，path 缺失時
               // user-tags 區、play/open-folder 按鈕靜默不渲染（方案 1 optional-chaining）
             };

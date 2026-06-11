@@ -627,8 +627,13 @@
 }
 
 .lightbox-cover img {
+    /* 71c：height 明確（非僅 max-height），讓 400px thumb 放大撐滿 60vh；
+       width:auto + max-width:100% 保持比例且不超容器寬；object-fit:contain 絕不裁切。
+       T4 前原圖靠自然尺寸填滿，T4 後 thumb 自然 400px < 60vh → 用 max-* 無法放大，
+       需 height 明確才能撐高（瀏覽器按 height 限制縮放比例，object-fit:contain 補完）。 */
+    height: 60vh;
+    width: auto;
     max-width: 100%;
-    max-height: 60vh;
     object-fit: contain;
     border-radius: var(--radius-sm);
 }
@@ -636,13 +641,15 @@
 /* 71-T6 blur-up overlay：原圖（cover_full_url）疊在 base（cover_url 小圖）之上。
    sizing 鏡像 .lightbox-cover img 使兩層精準對齊；預設 opacity:0、@load 後翻 .lb-full-shown 淡入。
    pointer-events:none → overlay 永不攔截 cover-actions / sparkle 的點擊。
-   transition 用 fluent token（不寫裸 .3s）；duration-slow=300ms（= plan .3s）、ease-decel 為進場/淡入角色。 */
+   transition 用 fluent token（不寫裸 .3s）；duration-slow=300ms（= plan .3s）、ease-decel 為進場/淡入角色。
+   71c：height/width/object-fit 完全鏡像 base img，確保原圖淡入時尺寸不偏移（兩層像素對齊）。 */
 .lb-full {
     position: absolute;
     inset: 0;
     margin: auto;
+    height: 60vh;
+    width: auto;
     max-width: 100%;
-    max-height: 60vh;
     object-fit: contain;
     border-radius: var(--radius-sm);
     opacity: 0;

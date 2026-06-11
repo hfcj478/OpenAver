@@ -10530,3 +10530,87 @@ class TestCfPollUnavailableGuard:
             "cancelCfPoll() call not found inside _pollCfThenRetry() definition — "
             "must be called when data.unavailable is true"
         )
+
+
+SHOWCASE_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "showcase.css"
+SHOWCASE_SIMILAR_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-similar.js"
+
+
+class TestLightboxCoverSizeGuards:
+    """71c: 守衛 lightbox 封面縮水修復（thumb 放大填滿 + blur-up 鏡像 + same-URL complete-check）
+
+    三條 element-bound 守衛：
+    G1 — .lightbox-cover img 有明確 height:（非僅 max-height），確保 400px thumb 放大到 60vh
+    G2 — .lb-full 有明確 height:（非僅 max-height），確保 overlay 與 base 尺寸鏡像
+    G3 — state-lightbox.js 含 same-URL @load complete-check（$refs.lightboxCoverFull + .complete + _lbFullLoaded）
+    """
+
+    def _css(self):
+        return SHOWCASE_CSS.read_text(encoding="utf-8")
+
+    def _lightbox_js(self):
+        return SHOWCASE_LIGHTBOX_JS.read_text(encoding="utf-8")
+
+    def _similar_js(self):
+        return SHOWCASE_SIMILAR_JS.read_text(encoding="utf-8")
+
+    def _html(self):
+        return SHOWCASE_HTML.read_text(encoding="utf-8")
+
+    def test_lightbox_cover_img_has_explicit_height(self):
+        """G1: .lightbox-cover img 含明確 height: 規則（非僅 max-height），讓 thumb 放大填滿"""
+        css = self._css()
+        import re
+        # 找到 .lightbox-cover img { ... } 區塊
+        block_match = re.search(r'\.lightbox-cover\s+img\s*\{([^}]+)\}', css, re.DOTALL)
+        assert block_match, ".lightbox-cover img 規則在 showcase.css 找不到"
+        block = block_match.group(1)
+        # 確認有明確的 height:（不只是 max-height:）
+        assert re.search(r'(?<!\w)height\s*:', block), (
+            ".lightbox-cover img 缺少明確 height: 規則（只有 max-height 不足以放大小 thumb）"
+        )
+
+    def test_lb_full_has_explicit_height(self):
+        """G2: .lb-full 含明確 height: 規則（非僅 max-height），與 base img 鏡像對齊"""
+        css = self._css()
+        import re
+        block_match = re.search(r'\.lb-full\s*\{([^}]+)\}', css, re.DOTALL)
+        assert block_match, ".lb-full 規則在 showcase.css 找不到"
+        block = block_match.group(1)
+        assert re.search(r'(?<!\w)height\s*:', block), (
+            ".lb-full 缺少明確 height: 規則（overlay 需與 base img 尺寸完全鏡像）"
+        )
+
+    def test_lightbox_js_has_sameurl_complete_check(self):
+        """G3: state-lightbox.js _setLightboxIndex 含 same-URL @load complete-check"""
+        js = self._lightbox_js()
+        # 找 _setLightboxIndex 函數體並確認三個關鍵部分都在函數體範圍內
+        idx = js.find("_setLightboxIndex(")
+        assert idx != -1, "state-lightbox.js 找不到 _setLightboxIndex 函數"
+        # 截取 _setLightboxIndex 附近 1400 字元（涵蓋 $nextTick complete-check 區塊，
+        # 含實際 runtime 行 `fullImg.complete && fullImg.naturalWidth`，非僅前段註解）
+        snippet = js[idx: idx + 1400]
+        assert "lightboxCoverFull" in snippet, (
+            "state-lightbox.js _setLightboxIndex 缺少 lightboxCoverFull x-ref 取用"
+            "（same-URL complete-check 需 $refs.lightboxCoverFull）"
+        )
+        # 鎖 runtime 表達式 `fullImg.complete`（非註解——註解用 `img.complete`，不會誤命中）
+        assert "fullImg.complete" in snippet and "fullImg.naturalWidth" in snippet, (
+            "state-lightbox.js _setLightboxIndex 缺少 fullImg.complete && fullImg.naturalWidth 檢查"
+            "（same-URL 時瀏覽器不重新 fire @load，需手動偵測 complete）"
+        )
+        assert "_lbFullLoaded" in snippet, (
+            "state-lightbox.js _setLightboxIndex 缺少 _lbFullLoaded 賦值"
+        )
+
+    def test_similar_exit_video_has_cover_full_url(self):
+        """G4（JS contract）: state-similar.js similarExitVideo 含 cover_full_url 欄位"""
+        js = self._similar_js()
+        # 找 similarExitVideo = { ... } 構建區塊
+        idx = js.find("this.similarExitVideo = {")
+        assert idx != -1, "state-similar.js 找不到 similarExitVideo = { 構建"
+        snippet = js[idx: idx + 600]
+        assert "cover_full_url" in snippet, (
+            "state-similar.js similarExitVideo 缺少 cover_full_url 欄位"
+            "（slip-through 路徑缺此欄 → .lb-full src=undefined → @load 永不 fire → opacity:0 卡死）"
+        )

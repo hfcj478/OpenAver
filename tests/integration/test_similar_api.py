@@ -40,6 +40,7 @@ _EXPECTED_RESULT_KEYS = frozenset({
     "title",
     "cover_path",
     "cover_url",
+    "cover_full_url",  # 71c：恆原圖 url，供燈箱 blur-up .lb-full overlay（slip-through 路徑必要）
     "cosine_score",
     "penalty_applied",
     "actresses",
@@ -436,6 +437,33 @@ class TestSimilarThumbnailCacheCoverUrl:
             expected = f"/api/gallery/image?path={quote(uri_to_fs_path(r['cover_path']), safe='')}"
             assert r["cover_url"] == expected
             assert r["cover_url"].startswith("/api/gallery/image?path=")
+
+    def test_cover_full_url_is_always_original_image(self, client_with_covers):
+        """71c 邊界 9：cover_full_url 恆為原圖 /api/gallery/image?path=...，不受 enabled 影響。
+
+        slip-through 路徑（星座退出）的 similarExitVideo.cover_full_url 若缺失 → .lb-full opacity:0 卡死。
+        """
+        client, target_id, set_flag, repo = client_with_covers
+        for enabled_flag in [True, False]:
+            set_flag(enabled_flag)
+            resp = client.get(f"/api/similar-covers/{target_id}")
+            assert resp.status_code == 200
+            data = resp.json()
+            for r in data["results"]:
+                # cover_full_url 必須存在且為原圖（/api/gallery/image? 而非 /api/gallery/thumb?）
+                assert "cover_full_url" in r, (
+                    f"similar result 缺 cover_full_url（enabled={enabled_flag}）"
+                )
+                if r["cover_path"]:
+                    # 有封面時 cover_full_url 必須指向 image endpoint
+                    assert r["cover_full_url"].startswith("/api/gallery/image?path="), (
+                        f"cover_full_url 應為 /api/gallery/image?path=...（enabled={enabled_flag}），"
+                        f"got {r['cover_full_url']!r}"
+                    )
+                    # 無論 enabled 是否開啟，cover_full_url 不走 thumb endpoint
+                    assert "/api/gallery/thumb?" not in r["cover_full_url"], (
+                        f"cover_full_url 不應走 /api/gallery/thumb?（enabled={enabled_flag}）"
+                    )
 
     def test_enabled_empty_cover_returns_empty_url(self, tmp_path, monkeypatch):
         """邊界 8：enabled 但 video 無 cover → cover_url == ''（與 showcase 對齊，不發 thumb url）。"""

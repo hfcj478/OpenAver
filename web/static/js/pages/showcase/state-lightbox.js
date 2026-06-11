@@ -77,6 +77,17 @@ export function stateLightbox() {
             this.addingLbTag = false;             // 切換影片時重置輸入框
             this._videoChipsExpanded = false;     // 影片切換時 reset chips 展開
             this._lbFullLoaded = false;           // 71-T6 blur-up：開燈箱/prev-next/重開每次重走（不殘留前一張 true）
+            // 71c same-URL complete-check：若新 cover_full_url 與前次相同，Alpine dirty-check 不改 DOM
+            // → 瀏覽器不重新請求 → @load 不再 fire → _lbFullLoaded 卡 false → .lb-full 停 opacity:0。
+            // $nextTick 後 Alpine 已 patch DOM，此時 img.complete && img.naturalWidth > 0 表示瀏覽器已快取
+            // → 直接翻 _lbFullLoaded=true，跳過 @load 等待。
+            var self = this;
+            this.$nextTick(function () {
+                var fullImg = self.$refs && self.$refs.lightboxCoverFull;
+                if (fullImg && fullImg.complete && fullImg.naturalWidth > 0) {
+                    self._lbFullLoaded = true;
+                }
+            });
         },
 
         // --- Lightbox (M3a) ---

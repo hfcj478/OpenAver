@@ -41,6 +41,18 @@ def _build_cover_url(video, enabled: bool = False) -> str:
     return f"/api/gallery/image?path={quote(local_path, safe='')}"
 
 
+def _build_cover_full_url(video) -> str:
+    """組封面原圖 url（71c）。
+
+    恆原圖（不受 thumbnail_cache_enabled 影響），鏡像 showcase._serialize_video 中 cover_full_url 的邏輯。
+    供 燈箱 blur-up .lb-full overlay 使用；similar slip-through 路徑不帶此欄會讓 .lb-full 卡 opacity:0。
+    """
+    if not video.cover_path:
+        return ""
+    local_path = uri_to_fs_path(video.cover_path)
+    return f"/api/gallery/image?path={quote(local_path, safe='')}"
+
+
 def _compute_similar_covers(video_id: int, limit: int) -> dict:
     """核心業務邏輯：根據 video_id 取 target，呼叫 ranker 取得相似影片，組裝 response。
 
@@ -81,6 +93,7 @@ def _compute_similar_covers(video_id: int, limit: int) -> dict:
                 "title": v.title,
                 "cover_path": v.cover_path,
                 "cover_url": _build_cover_url(v, enabled),
+                "cover_full_url": _build_cover_full_url(v),  # 71c：恆原圖，供燈箱 blur-up .lb-full overlay
                 "cosine_score": ranker._score(target, v),
                 "penalty_applied": False,  # rule-based 無 penalty 概念，保留 key 為 fixture 相容
                 "actresses": v.actresses if isinstance(v.actresses, list) else [],

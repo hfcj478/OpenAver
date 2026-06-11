@@ -683,8 +683,10 @@
                                  @error="handleCoverError(currentLightboxVideo, $event)">
                             <!-- 71-T6 blur-up: overlay 層=cover_full_url（原圖）。@load 後 opacity 0→1 就地淡入蓋上 base；
                                  用 CSS opacity 切換（非 x-show — display:none 的 img 不載入、@load 永不 fire）；
-                                 pointer-events:none 確保不擋 cover-actions/sparkle 點擊。 -->
+                                 pointer-events:none 確保不擋 cover-actions/sparkle 點擊。
+                                 71c: x-ref="lightboxCoverFull" 供 _setLightboxIndex same-URL complete-check 用。 -->
                             <img class="lb-full"
+                                 x-ref="lightboxCoverFull"
                                  :src="currentLightboxVideo?.cover_full_url"
                                  @load="_lbFullLoaded=true"
                                  :class="{'lb-full-shown':_lbFullLoaded}"
