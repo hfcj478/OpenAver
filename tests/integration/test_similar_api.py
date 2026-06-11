@@ -10,12 +10,14 @@ Strategy:
 """
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.database import init_db, Video, VideoRepository
-from core.path_utils import to_file_uri
+from core.path_utils import to_file_uri, uri_to_fs_path
 from core.similar.ranker import SimilarRanker
 from core.similar.ranker_cache import SimilarRankerCache
 from web.routers.similar import router as similar_router
@@ -347,6 +349,133 @@ class TestSimilarCoversAPI:
         assert target_number not in result_numbers, (
             f"target number {target_number!r} should not appear in results"
         )
+
+
+# ---------------------------------------------------------------------------
+# feature/71 T4 — thumbnail_cache cover_url switch
+# ---------------------------------------------------------------------------
+
+class TestSimilarThumbnailCacheCoverUrl:
+    """enabled → thumb url（key = video path）；disabled → image url（字節不變）。"""
+
+    @pytest.fixture
+    def client_with_covers(self, tmp_path, monkeypatch):
+        """target + 12 candidates，每部都有 cover_path（驗 thumb url 用 v.path 非 cover）。"""
+        db_path = tmp_path / "covers.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        def _cover(idx):
+            return to_file_uri(f"/fake/cover_{idx:03d}.jpg")
+
+        target = _make_video(
+            idx=1, number="TEST-001",
+            tags=["高畫質", "單體作品", "美乳", "巨乳"],
+            maker="MakerA", cover_path=_cover(1),
+        )
+        target_id = repo.upsert(target)
+        candidates = [
+            _make_video(idx=i, number=f"TEST-{i:03d}",
+                        tags=["高畫質", "單體作品", "美乳"],
+                        maker="MakerA", cover_path=_cover(i))
+            for i in range(2, 14)
+        ]
+        repo.upsert_batch(candidates)
+
+        real_repo_cls = VideoRepository
+
+        class _PatchedRepo(real_repo_cls):
+            def __init__(self, db_path_arg=None):
+                super().__init__(db_path)
+
+        monkeypatch.setattr("web.routers.similar.VideoRepository", _PatchedRepo)
+
+        repo2 = VideoRepository(db_path)
+        corpus = repo2.get_all()
+        ranker = SimilarRanker(corpus)
+        monkeypatch.setattr(SimilarRankerCache, "_instance", ranker)
+
+        def _set_flag(enabled):
+            monkeypatch.setattr(
+                "web.routers.similar.load_config",
+                lambda: {"thumbnail_cache_enabled": enabled},
+            )
+
+        yield TestClient(_make_test_app()), target_id, _set_flag, repo2
+        SimilarRankerCache._instance = None
+
+    def test_enabled_cover_url_is_thumb_keyed_by_video_path(self, client_with_covers):
+        """邊界 6：enabled → cover_url = /api/gallery/thumb?path=quote(v.path)，非 cover。"""
+        client, target_id, set_flag, repo = client_with_covers
+        set_flag(True)
+        resp = client.get(f"/api/similar-covers/{target_id}")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        target = repo.get_by_id(target_id)
+        qv_expected = f"/api/gallery/thumb?path={quote(target.path, safe='')}"
+        assert data["query_video"]["cover_url"] == qv_expected
+
+        for r in data["results"]:
+            v = repo.get_by_id(r["video_id"])
+            expected = f"/api/gallery/thumb?path={quote(v.path, safe='')}"
+            assert r["cover_url"] == expected
+            # thumb key 必須是 video path，不是 cover path
+            assert quote(r["cover_path"], safe="") not in r["cover_url"]
+            assert quote(uri_to_fs_path(r["cover_path"]), safe="") not in r["cover_url"]
+
+    def test_disabled_cover_url_is_image_bytewise(self, client_with_covers):
+        """邊界 7：disabled → cover_url = /api/gallery/image?path=quote(uri_to_fs_path(cover))。"""
+        client, target_id, set_flag, repo = client_with_covers
+        set_flag(False)
+        resp = client.get(f"/api/similar-covers/{target_id}")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        for r in data["results"]:
+            expected = f"/api/gallery/image?path={quote(uri_to_fs_path(r['cover_path']), safe='')}"
+            assert r["cover_url"] == expected
+            assert r["cover_url"].startswith("/api/gallery/image?path=")
+
+    def test_enabled_empty_cover_returns_empty_url(self, tmp_path, monkeypatch):
+        """邊界 8：enabled 但 video 無 cover → cover_url == ''（與 showcase 對齊，不發 thumb url）。"""
+        db_path = tmp_path / "empty_cover.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+        # target 有 cover，候選全無 cover
+        target = _make_video(idx=1, number="TEST-001",
+                             tags=["高畫質", "單體作品", "美乳"], cover_path="")
+        target_id = repo.upsert(target)
+        candidates = [
+            _make_video(idx=i, number=f"TEST-{i:03d}",
+                        tags=["高畫質", "單體作品", "美乳"], cover_path="")
+            for i in range(2, 14)
+        ]
+        repo.upsert_batch(candidates)
+
+        real_repo_cls = VideoRepository
+
+        class _PatchedRepo(real_repo_cls):
+            def __init__(self, _=None):
+                super().__init__(db_path)
+
+        monkeypatch.setattr("web.routers.similar.VideoRepository", _PatchedRepo)
+        corpus = repo.get_all()
+        ranker = SimilarRanker(corpus)
+        monkeypatch.setattr(SimilarRankerCache, "_instance", ranker)
+        monkeypatch.setattr("web.routers.similar.load_config",
+                            lambda: {"thumbnail_cache_enabled": True})
+
+        client = TestClient(_make_test_app())
+        try:
+            resp = client.get(f"/api/similar-covers/{target_id}")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["query_video"]["cover_url"] == ""
+            for r in data["results"]:
+                assert r["cover_url"] == ""
+        finally:
+            SimilarRankerCache._instance = None
 
 
 # ---------------------------------------------------------------------------

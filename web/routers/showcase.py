@@ -21,12 +21,23 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/showcase", tags=["showcase"])
 
 
-def _serialize_video(v, path_mappings: dict) -> dict:
-    """將 Video ORM 物件序列化為前端 JSON dict（列表端點與單筆端點共用）"""
+def _serialize_video(v, path_mappings: dict, enabled: bool = False) -> dict:
+    """將 Video ORM 物件序列化為前端 JSON dict（列表端點與單筆端點共用）。
+
+    feature/71 T4：thumbnail_cache_enabled 開關決定 cover_url 走 thumb / image 分支。
+    - enabled  → cover_url 指向 T3 /api/gallery/thumb?path=<quote(v.path)>（thumb key = video path）
+    - disabled → 維持現狀 /api/gallery/image?path=<quote(uri_to_fs_path(v.cover_path))>（字節不變）
+    cover_full_url 恆原圖（不受 flag 影響），供 T6 燈箱 blur-up 上層淡入用。
+    """
     cover_url = ""
+    cover_full_url = ""
     if v.cover_path:
-        local_path = uri_to_fs_path(v.cover_path)
-        cover_url = f"/api/gallery/image?path={quote(local_path, safe='')}"
+        original_url = f"/api/gallery/image?path={quote(uri_to_fs_path(v.cover_path), safe='')}"
+        cover_full_url = original_url
+        if enabled:
+            cover_url = f"/api/gallery/thumb?path={quote(v.path, safe='')}"
+        else:
+            cover_url = original_url
 
     sample_urls = []
     for img_uri in (v.sample_images or []):
@@ -43,7 +54,8 @@ def _serialize_video(v, path_mappings: dict) -> dict:
         "release_date": v.release_date,
         "tags": ','.join(v.tags) if v.tags else '',              # 逗號分隔字串
         "size": v.size_bytes,
-        "cover_url": cover_url,                                  # /api/gallery/image?path=...
+        "cover_url": cover_url,                                  # enabled→thumb / disabled→image
+        "cover_full_url": cover_full_url,                        # 恆原圖 /api/gallery/image?path=...（T6 燈箱）
         "mtime": int(v.mtime) if v.mtime else 0,                 # Unix timestamp 整數
         "director": v.director or '',
         "duration": v.duration,                                  # Optional[int]，None 時前端 x-show 隱藏
@@ -96,7 +108,8 @@ def get_videos():
         all_videos = [v for v in repo.get_all()
                       if any(is_path_under_dir(v.path, uri) for uri in configured_dir_uris)]
 
-        videos_json = [_serialize_video(v, path_mappings) for v in all_videos]
+        thumb_enabled = config.get('thumbnail_cache_enabled', False)
+        videos_json = [_serialize_video(v, path_mappings, thumb_enabled) for v in all_videos]
 
         return JSONResponse({
             "success": True,
@@ -135,7 +148,8 @@ def get_video(path: str = Query(..., description="file:/// URI")):
         if v is None:
             return JSONResponse({"success": False, "error": "video not found"}, status_code=404)
 
-        return JSONResponse({"success": True, "video": _serialize_video(v, path_mappings)})
+        thumb_enabled = config.get('thumbnail_cache_enabled', False)
+        return JSONResponse({"success": True, "video": _serialize_video(v, path_mappings, thumb_enabled)})
 
     except Exception as e:
         logger.error("取得單筆影片失敗: %s", e)
