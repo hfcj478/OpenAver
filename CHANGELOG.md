@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+#### 🔧 整理 pipeline 附帶修復（issue #44 後續，feature/72-T-c1/T-c2）/ Organize-pipeline drive-by fixes
+- **B1 — 整理搬檔時 DB 跟著搬，消除重複死卡**：先用列表生成（Scanner）原地索引一批片、之後又在搜尋頁對其中某片「整理」（改名搬移）時，舊路徑那筆會變成孤兒死卡，同一片在瀏覽出現兩張（其中一張封面壞掉）。現在整理搬檔會把 DB 那筆原地跟著搬到新路徑（保留入庫時間、瀏覽排序位置、以及你在瀏覽頁加的標籤），整理完當下就只剩一張正確的卡、不必等下次重掃。**任何外部媒體管理器模式皆修，與模式無關。**
+  *B1 — when you index videos in-place via the list generator (Scanner) and later "organize" (rename+move) one of them from search, the old path used to linger as an orphan dead card (the same video showed twice, one with a broken cover). Now the organize move carries the DB record to the new path in place (preserving created-at time, browse ordering, and your browse-page tags); you get a single correct card immediately, no rescan needed. Mode-agnostic.*
+- **B2 — 已整理過的檔再整理一次，標題不再疊加**：對 OpenAver 自己整理出來的成品檔（檔名已是 `[番號][廠商] 標題-後綴` 格式）再整理一次，過去會把整段已格式化檔名誤當「標題」塞回去，越疊越長（番號/廠商/後綴重複）。現在會辨識「這是已整理過的成品」而改用刮削/翻譯標題，並把標題開頭多餘的番號前綴剝乾淨（連舊版本已寫進磁碟/資料庫的雙重前綴也一併修好）；真正的原始下載檔名行為不變，中文標題搶救照舊。
+  *B2 — re-organizing a file OpenAver already produced (filename already in `[number][maker] title-suffix` form) used to mistake the whole formatted name for the "title" and stack it endlessly (duplicated number/maker/suffix). It now recognizes an already-organized file and uses the scraped/translated title instead, stripping redundant leading number prefixes from the title (repairing even doubled prefixes previously written to disk/DB); genuine raw download filenames are unaffected and Chinese-title rescue still works.*
+
 ## [0.9.10] - 2026-06-12
 
 本版主軸：**本地 WebP 縮圖快取（opt-in）+ 燈箱單筆刪除**（feature/71）。部署主場景是 app 跑在 PC(SSD)、影片/圖片放在區網 Synology NAS(HDD)，封面牆一頁 90 張每張都直接打 NAS 原圖、HDD 隨機 seek + idle 喚醒 → 一張張慢慢冒。本版讓你在 Settings 手動開啟「封面縮圖快取」後，在本機把封面預先壓成集中極小的 WebP（每張約 32KB），瀏覽時從 SSD（或 OS page cache）出圖、**根本不碰 NAS**；燈箱點進去採 blur-up（小圖秒出 → 原圖載入後就地變清）。**來源真理仍在 NAS**（原圖／NFO 不動），本地只放可回收的衍生快取。另含 issue #57 的燈箱單筆刪除（只移除 DB 紀錄＋它的快取縮圖，**絕不刪你的影片檔或原始封面**），以及進階搜尋畢業移除 Beta 標記。
