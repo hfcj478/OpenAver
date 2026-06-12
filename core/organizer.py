@@ -877,6 +877,14 @@ def organize_file(
         filename_base = truncate_to_chars(filename_base, max(0, max_chars - reserve))
     # VR tail 永遠最後接（CD-68-6）；vr_tail='' 時零變化（CD-68-9）
     filename_base = filename_base + vr_tail
+    # P1-A 修正（Codex）：{title} 欄位（尤其是 extracted_title）可能殘留多段 token
+    # （如 extract_chinese_title 保留 '某中文標題-part2[HD]'），導致 part_tail 雙寫。
+    # 在接 part_tail 之前，先從 filename_base 剝除最靠後的多段 token（_strip_part_token
+    # 無 token 時為 no-op → 乾淨標題案例完全不影響輸出）。
+    # off 模式 part_tail='' → if 分支不進入，行為與修前 byte-identical。
+    # 注意：不需另在 extracted_title 層剝除，組裝後整體剝更穩健（任何欄位來源均覆蓋）。
+    if part_tail:
+        filename_base = _strip_part_token(filename_base)  # 移除 {title} 等欄位遺留的多段 token
     # part token 接在 VR tail 之後（最末）；off 模式 part_tail='' → no-op（CD-72b-T5）
     # 順序：{base}{vr_tail}{part_tail}；Jellyfin stacking 要求 part token 落在 stem 最末
     filename_base = filename_base + part_tail

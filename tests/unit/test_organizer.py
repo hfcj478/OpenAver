@@ -3523,3 +3523,88 @@ class TestOrganizeMultipart:
         # 檔名不應帶任何 part_tail
         stem = Path(result['new_filename']).stem
         assert not stem.endswith('-cd1'), f'apartment1 不應接 -cd1 part_tail：{stem!r}'
+
+    # ---- I: P1-A 修正 — extracted_title 殘留多段 token 不雙寫（Codex P1-A）----
+
+    def test_chinese_title_part2_hd_no_dup_token(self, tmp_path):
+        """I-1：中文標題含 -part2[HD] 的 part2 檔案（jellyfin_emby 模式）→
+        輸出 stem 中 part2 token 恰一次，且嚴格落在 stem 最末（無 ...-part2[HD]-part2 雙寫）。
+        涵蓋 POC Q2 典型輸入形狀：bracket 包裝版本標記殘留在 extracted_title。
+        """
+        import re
+        # part2 檔：[ABC-123]某中文標題-part2[HD].mp4
+        src = tmp_path / '[ABC-123]某中文標題-part2[HD].mp4'
+        src.write_bytes(b'part2 hd content')
+
+        config = self._ext_config(
+            suffix_keywords=['-cd1', '-cd2', '-part1', '-part2', '-4k'],
+            filename_format='[{num}] {title}{suffix}',
+        )
+        metadata = self._base_metadata(number='ABC-123', title='Some Japanese Title')
+
+        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
+            result = organize_file(str(src), metadata, config)
+
+        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
+        stem = Path(result['new_filename']).stem
+
+        # part2 token 恰好出現一次（無雙寫）
+        assert stem.count('part2') == 1, (
+            f'part2 token 應恰好出現一次，實際：{stem!r}'
+        )
+        # part2 token 嚴格在 stem 末尾（Jellyfin stacking 要求）
+        assert re.search(r'-part2$', stem), (
+            f'stem 應以 -part2 結尾，實際：{stem!r}'
+        )
+
+    def test_chinese_title_part1_no_dup_token(self, tmp_path):
+        """I-2：part1 版本同類型驗證 → part1 恰一次且在 stem 末。"""
+        import re
+        src = tmp_path / '[ABC-123]某中文標題-part1.mp4'
+        src.write_bytes(b'part1 content')
+
+        config = self._ext_config(
+            suffix_keywords=['-cd1', '-cd2', '-part1', '-part2', '-4k'],
+            filename_format='[{num}] {title}{suffix}',
+        )
+        metadata = self._base_metadata(number='ABC-123', title='Some Japanese Title')
+
+        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
+            result = organize_file(str(src), metadata, config)
+
+        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
+        stem = Path(result['new_filename']).stem
+
+        assert stem.count('part1') == 1, (
+            f'part1 token 應恰好出現一次，實際：{stem!r}'
+        )
+        assert re.search(r'-part1$', stem), (
+            f'stem 應以 -part1 結尾，實際：{stem!r}'
+        )
+
+    def test_clean_title_cd1_no_op(self, tmp_path):
+        """I-3：乾淨番號（scraped 非多段標題）+ 外部模式 cd1 → 輸出與修前 byte-identical
+        （_strip_part_token no-op：title 內無多段 token → 組裝後 filename_base 無 token 可剝）。
+        """
+        import re
+        src = tmp_path / 'MIRD-151-cd1.mp4'
+        src.write_bytes(b'clean cd1')
+
+        config = self._ext_config(suffix_keywords=['-cd1', '-cd2', '-4k', '-uc'])
+        # 使用非多段 scraped 標題
+        metadata = self._base_metadata(number='MIRD-151', title='Test Title')
+
+        with patch('core.organizer.download_image', side_effect=_mock_download_image_write_jpeg):
+            result = organize_file(str(src), metadata, config)
+
+        assert result['success'] is True, f"organize 失敗: {result.get('error')}"
+        stem = Path(result['new_filename']).stem
+
+        # -cd1 恰好一次（不被雙剝或漏寫）
+        assert stem.count('cd1') == 1, (
+            f'cd1 token 應恰好一次（no-op），實際：{stem!r}'
+        )
+        # 嚴格在末尾
+        assert re.search(r'-cd1$', stem), (
+            f'stem 應以 -cd1 結尾，實際：{stem!r}'
+        )
