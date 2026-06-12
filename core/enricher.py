@@ -3,6 +3,7 @@ enricher.py - 舊片原地補完（NFO / 封面 / 劇照），絕對不搬移、
 """
 
 import os
+import shutil
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,7 +12,7 @@ from typing import List, Optional
 from core.database import Video, VideoRepository, get_connection
 from core.logger import get_logger
 from core.nfo_updater import parse_nfo
-from core.organizer import download_image, find_subtitle_files, generate_nfo
+from core.organizer import crop_to_poster, download_image, find_subtitle_files, generate_nfo
 from core.path_utils import to_file_uri, uri_to_fs_path
 from core.scraper import search_jav
 
@@ -162,6 +163,9 @@ def _write_nfo(
     overwrite_existing: bool,
     has_subtitle: bool,
     user_tags: List[str] = None,
+    external_manager: str = "off",
+    has_poster: bool = False,
+    has_fanart: bool = False,
 ) -> bool:
     if not write_nfo:
         return False
@@ -198,6 +202,11 @@ def _write_nfo(
         # DB/NFO base meta 無此欄 → default 空 plot / 無 rating tag。
         summary=meta.get("summary", ""),
         rating=meta.get("rating"),
+        # 72b-T6：外部媒體管理器模式 F3 欄位 + poster/fanart tag 切換。
+        # off 模式：三者皆用 default，generate_nfo 行為 byte-identical。
+        external_manager=external_manager,
+        has_poster=has_poster,
+        has_fanart=has_fanart,
     )
     return True
 
@@ -218,6 +227,68 @@ def _write_cover(
         return False
 
     return download_image(cover_url, cover_path)
+
+
+def _write_external_images(
+    fs_path: str,
+    external_manager: str,
+    overwrite_existing: bool,
+) -> dict:
+    """外部媒體管理器模式下產生 poster / fanart 圖（72b-T6 CD-7 方案 A）。
+
+    回傳 {"poster": bool, "fanart": bool}，反映最終磁碟存在狀態，
+    供 enrich_single 算 has_poster/has_fanart 傳 _write_nfo。
+
+    gate 規則：以 cover_path.exists()（磁碟真相）為準，不以 cover_written 為準，
+    避免 _write_cover skip-but-exists 邊界（.jpg 存在 + overwrite=False）喪失外部圖。
+    """
+    # off 或未知模式：直接 no-op（防呆）
+    if external_manager == "off":
+        return {"poster": False, "fanart": False}
+
+    cover_path = Path(fs_path).with_suffix(".jpg")
+
+    # 底圖不存在 → 無法產生 poster/fanart
+    if not cover_path.exists():
+        return {"poster": False, "fanart": False}
+
+    stem = str(cover_path.with_suffix(""))  # 去副檔名的完整路徑前綴
+
+    # 依模式決定目標路徑
+    if external_manager == "jellyfin_emby":
+        poster_path = Path(stem + "-poster.jpg")
+        fanart_path = Path(stem + "-fanart.jpg")
+    elif external_manager == "kodi":
+        parent = cover_path.parent
+        poster_path = parent / "poster.jpg"
+        fanart_path = parent / "fanart.jpg"
+    else:
+        # 未知 external_manager 值：不產圖、不崩（防呆）
+        return {"poster": False, "fanart": False}
+
+    poster_ok = False
+    fanart_ok = False
+
+    # fanart = 原圖複製
+    if fanart_path.exists() and not overwrite_existing:
+        fanart_ok = True  # 存在即算 True，NFO tag 對得上磁碟現況
+    else:
+        try:
+            shutil.copy2(str(cover_path), str(fanart_path))
+            fanart_ok = True
+        except Exception as e:
+            logger.warning("_write_external_images fanart 複製失敗 (%s): %s", fs_path, e)
+
+    # poster = 裁切
+    if poster_path.exists() and not overwrite_existing:
+        poster_ok = True  # 同上
+    else:
+        try:
+            poster_ok = crop_to_poster(str(cover_path), str(poster_path))
+        except Exception as e:
+            logger.warning("_write_external_images poster 裁切失敗 (%s): %s", fs_path, e)
+
+    return {"poster": poster_ok, "fanart": fanart_ok}
 
 
 def _write_extrafanart(
@@ -251,6 +322,7 @@ def enrich_single(  # noqa: ranker-invalidate (only updates nfo_mtime, not a cor
     write_cover: bool = True,
     write_extrafanart: bool = False,
     overwrite_existing: bool = False,
+    external_manager: str = "off",
     proxy_url: str = "",
     source: Optional[str] = None,
     javbus_lang: Optional[str] = None,
@@ -341,28 +413,63 @@ def enrich_single(  # noqa: ranker-invalidate (only updates nfo_mtime, not a cor
     existing_record = repo.get_by_path(path_uri)
     preserved_user_tags = existing_record.user_tags if existing_record else []
 
-    nfo_written = False
-    try:
-        nfo_written = _write_nfo(
-            fs_path=fs_path,
-            number=number,
-            meta=meta,
-            write_nfo=write_nfo,
-            overwrite_existing=overwrite_existing,
-            has_subtitle=has_subtitle,
-            user_tags=preserved_user_tags,
-        )
-    except PermissionError:
-        _empty.error = "NFO 寫入失敗，請確認目錄寫入權限"
-        return _empty
-
     cover_url = meta.get("cover_url", "")
-    cover_written = _write_cover(
-        fs_path=fs_path,
-        cover_url=cover_url,
-        write_cover=write_cover,
-        overwrite_existing=overwrite_existing,
-    )
+
+    nfo_written = False
+    cover_written = False
+
+    if external_manager != "off":
+        # 72b-T6 外部媒體管理器寫序：cover → external images → NFO
+        # NFO 必須在圖片後寫入，才能取得 has_poster/has_fanart 真值。
+        cover_written = _write_cover(
+            fs_path=fs_path,
+            cover_url=cover_url,
+            write_cover=write_cover,
+            overwrite_existing=overwrite_existing,
+        )
+        imgs = _write_external_images(
+            fs_path=fs_path,
+            external_manager=external_manager,
+            overwrite_existing=overwrite_existing,
+        )
+        try:
+            nfo_written = _write_nfo(
+                fs_path=fs_path,
+                number=number,
+                meta=meta,
+                write_nfo=write_nfo,
+                overwrite_existing=overwrite_existing,
+                has_subtitle=has_subtitle,
+                user_tags=preserved_user_tags,
+                external_manager=external_manager,
+                has_poster=imgs["poster"],
+                has_fanart=imgs["fanart"],
+            )
+        except PermissionError:
+            _empty.error = "NFO 寫入失敗，請確認目錄寫入權限"
+            return _empty
+    else:
+        # off 模式：維持原寫序（NFO 先、cover 後），行為 byte-identical
+        try:
+            nfo_written = _write_nfo(
+                fs_path=fs_path,
+                number=number,
+                meta=meta,
+                write_nfo=write_nfo,
+                overwrite_existing=overwrite_existing,
+                has_subtitle=has_subtitle,
+                user_tags=preserved_user_tags,
+            )
+        except PermissionError:
+            _empty.error = "NFO 寫入失敗，請確認目錄寫入權限"
+            return _empty
+
+        cover_written = _write_cover(
+            fs_path=fs_path,
+            cover_url=cover_url,
+            write_cover=write_cover,
+            overwrite_existing=overwrite_existing,
+        )
 
     written_uris = _write_extrafanart(
         fs_path=fs_path,
