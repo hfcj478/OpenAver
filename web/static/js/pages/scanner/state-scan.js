@@ -229,6 +229,8 @@ export function stateScan() {
         // ===== Leave Guard =====
         shouldWarnBeforeLeave() {
             // T7b: 改為讀取 Alpine state，而非全域變數
+            // TODO(milestone i18n): 下方三條 leave-warning message 為硬編碼繁中（pre-existing），
+            // milestone i18n pass 應統一改 window.t() + 加 zh_TW key + 四語系翻譯（72d Codex P2 deferred）。
             if (this.isGenerating) {
                 return {
                     shouldWarn: true,
