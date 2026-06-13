@@ -441,7 +441,7 @@ class TestJellyfinCheckManualGuard:
             f"scanner.js jellyfinCheckState = 'idle' 出現 {count} 次，期望 >= 2（cleanup + clearCache）"
 
     def test_trigger_row_xshow_uses_jellyfin_image_visible(self):
-        """T3(40c) Codex fix / T-d4: 觸發列 x-show 改為 !='off' 三態 gate（含 kodi）"""
+        """T3(40c) / T-d4 / 72d-codexP2: 觸發列 x-show 用正向白名單 gate（fail-closed，含 kodi）"""
         from bs4 import BeautifulSoup
         html = self._html()
         soup = BeautifulSoup(html, "html.parser")
@@ -455,12 +455,29 @@ class TestJellyfinCheckManualGuard:
         assert jellyfin_row is not None, \
             "scanner.html 找不到含 jellyfinImageVisible + config 的 nfo-update-row element"
         xshow = jellyfin_row.get("x-show", "")
-        assert "config?.scraper?.external_manager !== 'off' && !jellyfinImageVisible" in xshow, \
-            f"nfo-update-row x-show 應使用 !== 'off' 三態 gate，實際: {xshow!r}"
-        assert "config?.scraper?.external_manager === 'jellyfin_emby' && !jellyfinImageVisible" not in html, \
-            "scanner.html 觸發列 x-show 仍殘留舊 === 'jellyfin_emby' gate（應已改為 !== 'off'）"
+        # 正向白名單（fail-closed）：config={} / undefined 時 gate 為 false，不顯示
+        assert "['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)" in xshow, \
+            f"nfo-update-row x-show 應使用正向白名單 .includes() gate（fail-closed），實際: {xshow!r}"
+        assert "!jellyfinImageVisible" in xshow, \
+            f"nfo-update-row x-show 應含 !jellyfinImageVisible，實際: {xshow!r}"
+        # forbidden：舊 jellyfin_emby gate 與 interim !='off'（fail-open）皆不得殘留
+        assert "=== 'jellyfin_emby'" not in html, \
+            "scanner.html 仍殘留舊 === 'jellyfin_emby' gate"
+        assert "config?.scraper?.external_manager !== 'off' && !jellyfinImageVisible" not in html, \
+            "scanner.html 觸發列仍用 interim !== 'off' gate（undefined 會 fail-open，須改正向白名單）"
         assert "config?.scraper?.jellyfin_mode && !jellyfinImageVisible" not in html, \
             "scanner.html 觸發列 x-show 仍使用舊的 jellyfin_mode 讀取點（應已 repoint 為 external_manager）"
+
+    def test_check_jellyfin_method_gate_is_fail_closed(self):
+        """72d-codexP2: checkJellyfinImages() 方法端 gate 用正向白名單，config 未載入時 fail-closed 不打 API"""
+        js = self._js()
+        assert "async checkJellyfinImages()" in js, "state-scan.js 找不到 checkJellyfinImages() 方法"
+        # 正向白名單 early-return（fail-closed）；此字串為該 gate 獨有
+        assert "!['jellyfin', 'emby', 'kodi'].includes(this.config?.scraper?.external_manager)" in js, \
+            "checkJellyfinImages() 應以正向白名單 early-return（fail-closed），不可用 === 'off'（undefined fail-open）"
+        # forbidden：舊 fail-open gate（undefined === 'off' 為 false → 不 return → 打 /jellyfin-check）
+        assert "this.config?.scraper?.external_manager === 'off'" not in js, \
+            "state-scan.js 仍殘留 external_manager === 'off' gate（undefined 會 fail-open）"
 
     def test_trigger_row_done_state_text_present(self):
         """T3(40c) Codex fix: 觸發列包含 done 狀態顯示文字"""

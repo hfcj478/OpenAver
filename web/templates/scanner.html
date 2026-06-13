@@ -206,7 +206,7 @@
         <!-- T2(40c): Jellyfin 圖片檢查觸發列 -->
         <!-- T3(40c) Codex fix: x-show 改為 !jellyfinImageVisible，done 狀態仍顯示觸發列 -->
         <div class="nfo-update-row"
-             x-show="config?.scraper?.external_manager !== 'off' && !jellyfinImageVisible">
+             x-show="['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager) && !jellyfinImageVisible">
             <span class="nfo-badge">
                 <i class="bi bi-image"></i>
                 <span x-show="jellyfinCheckState === 'idle'">

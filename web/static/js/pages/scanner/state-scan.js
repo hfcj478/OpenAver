@@ -364,7 +364,9 @@ export function stateScan() {
 
         // ===== T6d: Jellyfin Image Check =====
         async checkJellyfinImages() {
-            if (this.config?.scraper?.external_manager === 'off') return;
+            // 正向白名單（fail-closed）：config 未載入 / 載入失敗 / 缺 external_manager 時
+            // 一律不補圖（對應後端 _STEM_IMAGE_MODES）。勿改回 === 'off'（undefined 會 fail-open）。
+            if (!['jellyfin', 'emby', 'kodi'].includes(this.config?.scraper?.external_manager)) return;
 
             // T2(40c): 取消上一次未完成的請求（防重複點擊）
             if (this._jellyfinCheckController) {
