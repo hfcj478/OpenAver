@@ -481,3 +481,175 @@ class TestFactoryOpenAI:
         service = create_translate_service(config)
         assert isinstance(service, OpenAICompatibleTranslateService)
         assert service.base_url == ""
+
+
+# ============ OllamaTranslateService._clean_output 純字串測試 ============
+
+class TestOllamaCleanOutput:
+    """測試 _clean_output 字串清理行為（純邏輯，零 mock）"""
+
+    def setup_method(self):
+        self.service = OllamaTranslateService({})
+
+    def test_strip_double_quotes(self):
+        """雙引號包圍的文字應剝除引號"""
+        assert self.service._clean_output('"結果"') == '結果'
+
+    def test_strip_single_quotes(self):
+        """單引號包圍的文字應剝除引號"""
+        assert self.service._clean_output("'結果'") == '結果'
+
+    def test_strip_think_tag(self):
+        """<think>...</think> 標籤應被移除，保留後面的翻譯"""
+        assert self.service._clean_output('<think>思考過程</think>翻譯結果') == '翻譯結果'
+
+    def test_strip_think_tag_multiline(self):
+        """<think> 跨行時 re.DOTALL 仍能正確移除"""
+        text = '<think>\n多行\n思考\n</think>翻譯結果'
+        assert self.service._clean_output(text) == '翻譯結果'
+
+    def test_empty_string(self):
+        """空字串輸入應回傳空字串"""
+        assert self.service._clean_output('') == ''
+
+    def test_translation_prefix_retained_current_behavior(self):
+        """「翻譯：」前綴應保留——鎖定 :176 字面 \\s*（雙反斜線）現狀。
+        regex r'^翻譯[：:]\\s*' 中 \\ 是字面反斜線，非 whitespace 萬用符；
+        實務上前綴不被移除。若日後修正 regex，此測試需同步更新。"""
+        assert self.service._clean_output('翻譯：result') == '翻譯：result'
+
+
+# ============ OllamaTranslateService._parse_batch_output 純字串測試 ============
+
+class TestOllamaParseBatchOutput:
+    """測試 _parse_batch_output 批次輸出解析（純邏輯，零 mock）"""
+
+    def setup_method(self):
+        self.service = OllamaTranslateService({})
+
+    def test_numbered_dot_format(self):
+        """1. / 2. 格式編號應被去除，內容正確收入"""
+        result = self.service._parse_batch_output("1. 結果A\n2. 結果B")
+        assert result == ["結果A", "結果B"]
+
+    def test_numbered_paren_format(self):
+        """1) 括號格式編號應被去除"""
+        result = self.service._parse_batch_output("1) 結果A")
+        assert result == ["結果A"]
+
+    def test_numbered_comma_format(self):
+        """1、頓號格式編號應被去除"""
+        result = self.service._parse_batch_output("1、結果A")
+        assert result == ["結果A"]
+
+    def test_pure_number_lines_skipped(self):
+        """純數字行（無實際內容）應全部跳過，回傳空列表"""
+        result = self.service._parse_batch_output("1\n2\n3")
+        assert result == []
+
+    def test_no_numbering_accepted(self):
+        """無編號但有內容的行也應收入"""
+        result = self.service._parse_batch_output("結果A\n結果B")
+        assert result == ["結果A", "結果B"]
+
+    def test_empty_lines_skipped(self):
+        """空行應跳過，有效內容正常收入"""
+        result = self.service._parse_batch_output("1. 結果\n\n2. 結果2")
+        assert result == ["結果", "結果2"]
+
+
+# ============ GeminiTranslateService.translate_single 四分支測試 ============
+
+class TestGeminiTranslateSingleBranches:
+    """測試 Gemini translate_single 四個回應分支（mock httpx，零真連線）
+
+    mock 模式沿用 TestOpenAICompatibleTranslateService：
+    patch("core.translate_service.httpx.AsyncClient", return_value=mock_client_instance)
+    mock_client_instance 支援 async with（__aenter__/__aexit__），
+    resp 物件有 .raise_for_status()（no-op）與 .json()。
+    target_language 使用預設 zh-TW，避免 :230-231 ja 短路。
+    """
+
+    def _make_service(self):
+        return GeminiTranslateService({"api_key": "fake-key-for-test"}, "zh-TW")
+
+    def _make_mock_client(self, json_data):
+        """建立支援 async with 的 httpx mock，回傳指定 json_data"""
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = json_data
+
+        mock_client_instance = MagicMock()
+        mock_client_instance.post = AsyncMock(return_value=mock_response)
+        mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+        return mock_client_instance
+
+    @pytest.mark.asyncio
+    async def test_prompt_feedback_block_reason_returns_empty(self):
+        """Step 1：response 含 promptFeedback.blockReason → 回 ''"""
+        service = self._make_service()
+        json_data = {
+            "promptFeedback": {
+                "blockReason": "SAFETY",
+                "safetyRatings": []
+            }
+        }
+        mock_client = self._make_mock_client(json_data)
+
+        with patch("core.translate_service.httpx.AsyncClient", return_value=mock_client):
+            result = await service.translate_single("テスト")
+
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_no_candidates_returns_empty(self):
+        """Step 2：response 無 candidates 欄位 → 回 ''"""
+        service = self._make_service()
+        json_data = {"error": {"message": "some error"}}
+        mock_client = self._make_mock_client(json_data)
+
+        with patch("core.translate_service.httpx.AsyncClient", return_value=mock_client):
+            result = await service.translate_single("テスト")
+
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_finish_reason_safety_returns_empty(self):
+        """Step 3：candidates[0].finishReason == 'SAFETY' → 回 ''"""
+        service = self._make_service()
+        json_data = {
+            "candidates": [
+                {
+                    "finishReason": "SAFETY",
+                    "safetyRatings": []
+                }
+            ]
+        }
+        mock_client = self._make_mock_client(json_data)
+
+        with patch("core.translate_service.httpx.AsyncClient", return_value=mock_client):
+            result = await service.translate_single("テスト")
+
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_happy_path_returns_translation(self):
+        """Step 4 happy：正常 content.parts[0].text → 回翻譯字串（strip 後）"""
+        service = self._make_service()
+        json_data = {
+            "candidates": [
+                {
+                    "finishReason": "STOP",
+                    "content": {
+                        "parts": [{"text": "  翻譯結果  "}]
+                    }
+                }
+            ]
+        }
+        mock_client = self._make_mock_client(json_data)
+
+        with patch("core.translate_service.httpx.AsyncClient", return_value=mock_client):
+            result = await service.translate_single("テスト")
+
+        assert result == "翻譯結果"
