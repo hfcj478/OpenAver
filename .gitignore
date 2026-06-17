@@ -85,3 +85,9 @@ npm-debug.log*
 
 # CLIP 模型（56a 後本地下載，不入版控）
 models/
+
+# Coverage 產物（scripts/run_cov.sh / US4 cov-floor 生成，不入版控）
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
