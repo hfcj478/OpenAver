@@ -306,3 +306,69 @@ class TestExistingFieldsUnchanged:
         # director and label use model defaults
         assert video.director == ""
         assert video.label == ""
+
+
+class TestGenreTags:
+    """genre タグ（:122-126）: MIDV-018 fixture に 5 個の /genre/ リンクが含まれる"""
+
+    def test_genre_tags_parsed(self, scraper):
+        fixture_path = "tests/fixtures/scrapers/jav321_MIDV-018.html"
+        with open(fixture_path, encoding="utf-8") as f:
+            html = f.read()
+
+        with patch("core.scrapers.jav321.post_html", return_value=html):
+            video = scraper.search("MIDV-018")
+
+        assert video is not None
+        assert len(video.tags) > 0
+        # 實讀 fixture 確認的 genre 清單（5 個）
+        assert "3P・4P" in video.tags
+        assert "レズ" in video.tags
+        assert "女医" in video.tags
+        assert "熟女" in video.tags
+        assert "看護婦・ナース" in video.tags
+
+
+class TestNoGenreTags:
+    """genre タグなし（:122-126）: SONE-103 fixture に /genre/ リンクが含まれない → tags == []"""
+
+    def test_no_genre_tags(self, scraper):
+        fixture_path = "tests/fixtures/scrapers/jav321_SONE-103.html"
+        with open(fixture_path, encoding="utf-8") as f:
+            html = f.read()
+
+        with patch("core.scrapers.jav321.post_html", return_value=html):
+            video = scraper.search("SONE-103")
+
+        assert video is not None
+        assert video.tags == []
+
+
+class TestSearchResultElseBranch:
+    """else 分支（:74-85）: 搜尋頁無 <h3> → else; link found → get_html 回詳情頁"""
+
+    def test_else_branch_follow_get(self, scraper):
+        # 搜尋結果頁：含 .row a[href*="/video/"] 但「不含 <h3>」→ 走 else 分支
+        search_result_html = """\
+<html><body>
+<div class="row">
+  <a href="/video/jufd-000">JUFD-000</a>
+</div>
+</body></html>
+"""
+        # 詳情頁：含 <h3> + cover → guard :165 通過
+        detail_html = """\
+<html><body>
+<h3>JUFD-000 テストタイトル <small>jufd-000</small></h3>
+<div class="panel-body">
+  <div class="row">
+    <div class="col-md-3"><img class="img-responsive" src="https://pics.dmm.co.jp/digital/video/jufd00000/jufd00000ps.jpg"></div>
+  </div>
+</div>
+</body></html>
+"""
+        with patch("core.scrapers.jav321.post_html", return_value=search_result_html), \
+             patch("core.scrapers.jav321.get_html", return_value=detail_html):
+            video = scraper.search("JUFD-000")
+
+        assert video is not None

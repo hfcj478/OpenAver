@@ -10,7 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from core.nfo_updater import needs_update, update_nfo_file
+from core.nfo_updater import (
+    add_actor,
+    add_tags_and_genres,
+    needs_update,
+    update_nfo_file,
+    update_nfo_user_tags,
+)
 
 
 # ============================================================
@@ -543,3 +549,211 @@ class TestUpdateNfoFilePlotRatingMpaa:
         plot_elem = root.find('plot')
         assert plot_elem is not None
         assert plot_elem.text == evil   # ET round-trips unescaped
+
+
+# ============================================================
+# add_actor() 測試（TASK-73c-T1）
+# ============================================================
+
+class TestAddActor:
+    """add_actor() — 演員新增與去重"""
+
+    def test_add_actor_to_empty_root_returns_true_and_element_exists(self):
+        """空 root 新增演員 → return True 且 <actor><name> 存在。"""
+        root = ET.fromstring("<movie/>")
+        result = add_actor(root, "女優A")
+        assert result is True
+        names = root.findall('.//actor/name')
+        assert len(names) == 1
+        assert names[0].text == "女優A"
+
+    def test_add_duplicate_actor_returns_false_and_count_unchanged(self):
+        """root 已有同名 actor → return False，<actor> 數量不變。"""
+        root = ET.fromstring("<movie><actor><name>女優A</name></actor></movie>")
+        result = add_actor(root, "女優A")
+        assert result is False
+        assert len(root.findall('.//actor')) == 1
+
+    def test_first_actor_name_text_matches(self):
+        """root.findall('.//actor/name')[0].text == actor_name。"""
+        root = ET.fromstring("<movie/>")
+        add_actor(root, "女優B")
+        assert root.findall('.//actor/name')[0].text == "女優B"
+
+
+# ============================================================
+# add_tags_and_genres() 測試（TASK-73c-T1）
+# ============================================================
+
+class TestAddTagsAndGenres:
+    """add_tags_and_genres() — tag/genre 獨立去重"""
+
+    def test_empty_root_add_three_tags_returns_three(self):
+        """空 root 加 3 個 tag → return 3，<tag> × 3、<genre> × 3。"""
+        root = ET.fromstring("<movie/>")
+        count = add_tags_and_genres(root, ["東方", "魔法", "戀愛"])
+        assert count == 3
+        assert len(root.findall('tag')) == 3
+        assert len(root.findall('genre')) == 3
+
+    def test_existing_tag_not_duplicated_count_zero(self):
+        """root 已有 <tag>東方</tag> 再加「東方」→ count == 0，<tag>東方</tag> 僅 1 個。"""
+        root = ET.fromstring("<movie><tag>東方</tag><genre>東方</genre></movie>")
+        count = add_tags_and_genres(root, ["東方"])
+        assert count == 0
+        assert len(root.findall('tag')) == 1
+
+    def test_existing_genre_but_no_tag_adds_tag_not_genre(self):
+        """root 已有 <genre>東方</genre>（無 <tag>）再加「東方」→ <tag> 新增 1（count==1），<genre> 不重複（仍 1 個）。"""
+        root = ET.fromstring("<movie><genre>東方</genre></movie>")
+        count = add_tags_and_genres(root, ["東方"])
+        # tag should be added (was not in existing_tags)
+        assert count == 1
+        assert len(root.findall('tag')) == 1
+        # genre should NOT be duplicated (already in existing_genres)
+        assert len(root.findall('genre')) == 1
+
+    def test_empty_and_whitespace_strings_skipped(self):
+        """加 ["", "  "] → count == 0。"""
+        root = ET.fromstring("<movie/>")
+        count = add_tags_and_genres(root, ["", "  "])
+        assert count == 0
+        assert len(root.findall('tag')) == 0
+        assert len(root.findall('genre')) == 0
+
+
+# ============================================================
+# update_nfo_user_tags() 測試（TASK-73c-T1）
+# ============================================================
+
+class TestUpdateNfoUserTags:
+    """update_nfo_user_tags() — user_tag 清空再寫入"""
+
+    def test_replace_existing_user_tags_with_new_list(self, tmp_path):
+        """含 2 個 <user_tag> 的 NFO + ["new1","new2","new3"] → return True，讀回 <user_tag> 恰 3 個。"""
+        nfo = tmp_path / "test.nfo"
+        nfo.write_text(
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<movie><title>test</title>'
+            '<user_tag>old1</user_tag>'
+            '<user_tag>old2</user_tag>'
+            '</movie>',
+            encoding="utf-8",
+        )
+        result = update_nfo_user_tags(str(nfo), ["new1", "new2", "new3"])
+        assert result is True
+        root = ET.parse(str(nfo)).getroot()
+        user_tags = root.findall('user_tag')
+        assert len(user_tags) == 3
+        texts = [e.text for e in user_tags]
+        assert "new1" in texts
+        assert "new2" in texts
+        assert "new3" in texts
+
+    def test_empty_list_clears_all_user_tags(self, tmp_path):
+        """傳 [] → 所有 <user_tag> 被清除。"""
+        nfo = tmp_path / "test.nfo"
+        nfo.write_text(
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<movie><user_tag>a</user_tag><user_tag>b</user_tag></movie>',
+            encoding="utf-8",
+        )
+        result = update_nfo_user_tags(str(nfo), [])
+        assert result is True
+        root = ET.parse(str(nfo)).getroot()
+        assert len(root.findall('user_tag')) == 0
+
+    def test_nonexistent_path_returns_false(self, tmp_path):
+        """不存在路徑 → return False。"""
+        result = update_nfo_user_tags(str(tmp_path / "no_such.nfo"), ["tag"])
+        assert result is False
+
+    def test_malformed_xml_returns_false(self, tmp_path):
+        """畸形 XML → return False（ParseError 被 except Exception 捕捉）。"""
+        nfo = tmp_path / "bad.nfo"
+        nfo.write_bytes(b'<movie><title>test</title><unclosed>')
+        result = update_nfo_user_tags(str(nfo), ["tag"])
+        assert result is False
+
+
+# ============================================================
+# update_nfo_file() 補欄分支測試（TASK-73c-T1）
+# ============================================================
+
+class TestUpdateNfoFileFillBranches:
+    """update_nfo_file() date / actor 補欄 fill-only-if-missing 分支"""
+
+    @staticmethod
+    def _write_nfo(tmp_path: Path, xml_content: str, filename: str = "movie.nfo") -> str:
+        nfo = tmp_path / filename
+        nfo.write_text(xml_content, encoding="utf-8")
+        return str(nfo)
+
+    def test_fill_date_when_info_has_no_date(self, tmp_path):
+        """NFO 無 <premiered>，info={}，metadata={'date':'2024-01-01'} → <premiered> 寫入，changed==True，訊息含 'date'。"""
+        nfo_path = self._write_nfo(
+            tmp_path,
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<movie><title>テスト</title><num>TEST-001</num></movie>',
+        )
+        info = {}
+        metadata = {"date": "2024-01-01"}
+        updated, msg = update_nfo_file(nfo_path, metadata, info)
+
+        assert updated is True
+        assert "date" in msg
+        root = ET.parse(nfo_path).getroot()
+        premiered = root.find('premiered')
+        assert premiered is not None
+        assert premiered.text == "2024-01-01"
+
+    def test_existing_date_in_info_not_overwritten(self, tmp_path):
+        """NFO 已有 <premiered>2023-05-01</premiered>，info['date']='2023-05-01' → <premiered> 不改。"""
+        nfo_path = self._write_nfo(
+            tmp_path,
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<movie><title>テスト</title><num>TEST-001</num>'
+            '<premiered>2023-05-01</premiered></movie>',
+        )
+        info = {"date": "2023-05-01"}
+        metadata = {"date": "2024-01-01"}
+        update_nfo_file(nfo_path, metadata, info)
+
+        root = ET.parse(nfo_path).getroot()
+        assert root.find('premiered').text == "2023-05-01"
+
+    def test_fill_actors_when_info_has_no_actor(self, tmp_path):
+        """NFO 無 <actor>，info={}，metadata={'actors':['女優A','女優B']} → 兩個 <actor><name> 加入。"""
+        nfo_path = self._write_nfo(
+            tmp_path,
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<movie><title>テスト</title><num>TEST-001</num></movie>',
+        )
+        info = {}
+        metadata = {"actors": ["女優A", "女優B"]}
+        updated, msg = update_nfo_file(nfo_path, metadata, info)
+
+        assert updated is True
+        root = ET.parse(nfo_path).getroot()
+        names = [e.text for e in root.findall('.//actor/name')]
+        assert "女優A" in names
+        assert "女優B" in names
+        assert len(names) == 2
+
+    def test_existing_actor_in_info_no_new_actor_added(self, tmp_path):
+        """NFO 已有 <actor><name>女優A</name></actor>，info={'actor':[{'name':'女優A'}]} → 無新 actor 加入。"""
+        nfo_path = self._write_nfo(
+            tmp_path,
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<movie><title>テスト</title><num>TEST-001</num>'
+            '<actor><name>女優A</name></actor></movie>',
+        )
+        # info['actor'] is truthy → the fill branch is skipped entirely
+        info = {"actor": [{"name": "女優A"}]}
+        metadata = {"actors": ["女優A", "女優B"]}
+        update_nfo_file(nfo_path, metadata, info)
+
+        root = ET.parse(nfo_path).getroot()
+        names = [e.text for e in root.findall('.//actor/name')]
+        # Only the original actor should be present — the fill branch was skipped
+        assert names == ["女優A"]

@@ -1,15 +1,19 @@
 """AVSOX 爬蟲"""
 import re
+import json
 import requests
 from typing import Optional
 
 from core.logger import get_logger
 
 logger = get_logger(__name__)
-from lxml import etree
 from .base import BaseScraper
 from .models import Video, Actress, ScraperConfig
 from .utils import rate_limit
+
+
+class CsrfExpired(Exception):
+    """API 回 403 或 code != 200 指示 token 失效 → search() 清 cache 重抓 token 重試一次。"""
 
 
 class AVSOXScraper(BaseScraper):
@@ -18,7 +22,6 @@ class AVSOXScraper(BaseScraper):
 
     優點：
     - 主要收錄無碼作品
-    - 有女優頭像
     - 支援 FC2 等特殊番號
 
     注意：
@@ -40,207 +43,170 @@ class AVSOXScraper(BaseScraper):
         self._session = requests.Session()
         self._session.headers.update({
             'User-Agent': self.config.user_agent,
-            'Accept': 'text/html,application/xhtml+xml',
+            'Accept': 'application/json, text/html',
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
         })
         self._working_domain: Optional[str] = None
+        self._csrf_token: Optional[str] = None
 
     def _get_source_name(self) -> str:
         return "avsox"
 
-    def _get_working_domain(self) -> Optional[str]:
-        """取得可用網域"""
-        if self._working_domain:
-            return self._working_domain
+    def _ensure_session(self) -> tuple[Optional[str], Optional[str]]:
+        """
+        回 (base_url, token)；遍歷 BASE_DOMAINS，逐一 GET {domain}/cn、
+        regex 抽 <meta name="csrf-token" content="...">，成功即 cache
+        self._working_domain + self._csrf_token 並回傳。
+        全失敗回 (None, None)。
+        兼任「域名輪替」+「token 抓取」（韌性 #3）。
+        """
+        # Return cached if available
+        if self._working_domain and self._csrf_token:
+            return self._working_domain, self._csrf_token
 
         for domain in self.BASE_DOMAINS:
             try:
-                resp = self._session.get(domain, timeout=5)
-                if resp.status_code == 200:
-                    self._working_domain = domain
-                    return domain
+                resp = self._session.get(f"{domain}/cn", timeout=self.config.timeout)
+                if resp.status_code != 200:
+                    continue
+                match = re.search(r'<meta\s+name="csrf-token"\s+content="([^"]+)"', resp.text)
+                if not match:
+                    logger.debug(f"AVSOX domain {domain} returned no csrf-token")
+                    continue
+                token = match.group(1)
+                self._working_domain = domain
+                self._csrf_token = token
+                return domain, token
             except Exception as e:
                 logger.debug(f"AVSOX domain {domain} unavailable: {e}")
                 continue
+
+        return None, None
+
+    def _api_post(self, path: str, body) -> dict:
+        """
+        POST {base}{path}，帶 x-csrf-token / x-requested-with / content-type。
+        回 parsed JSON dict。
+        HTTP 403 或 json["code"] != 200 → raise CsrfExpired。
+        其餘非 200 HTTP → raise Exception。
+        """
+        base = self._working_domain
+        url = f"{base}{path}"
+        headers = {
+            "x-csrf-token": self._csrf_token,
+            "x-requested-with": "XMLHttpRequest",
+            "content-type": "application/json",
+        }
+        resp = self._session.post(url, data=json.dumps(body), headers=headers,
+                                  timeout=self.config.timeout)
+        if resp.status_code == 403:
+            raise CsrfExpired(f"HTTP 403 from {url}")
+        if resp.status_code != 200:
+            raise Exception(f"AVSOX API {url} returned HTTP {resp.status_code}")
+        parsed = resp.json()
+        if parsed.get("code") != 200:
+            raise CsrfExpired(f"API code={parsed.get('code')} from {url}")
+        return parsed
+
+    def _search_movie_id(self, number: str) -> Optional[str]:
+        """
+        搜尋番號，遍歷 data 用 _number_match 比對，回首個命中 movieId 或 None。
+        """
+        result = self._api_post("/javu/data/api/search", [{"search": number, "lang": "cn"}, 60, 1])
+        for d in result.get("data", []):
+            fan_hao = d.get("movieFanHao", "")
+            if self._number_match(fan_hao, number):
+                return d.get("movieId")
         return None
 
-    def _get_title(self, html) -> str:
-        """取得標題"""
-        result = html.xpath('//div[@class="container"]/h3/text()')
-        return result[0].strip() if result else ""
-
-    def _get_number(self, html) -> str:
-        """取得番號"""
-        result = html.xpath('//div[@class="col-md-3 info"]/p/span[@style="color:#CC0000;"]/text()')
-        return result[0].strip() if result else ""
-
-    def _get_cover(self, html) -> str:
-        """取得封面"""
-        result = html.xpath('//a[@class="bigImage"]/@href')
-        return result[0] if result else ""
-
-    def _get_actors(self, html) -> list[str]:
-        """取得演員列表"""
-        result = html.xpath("//div[@id='avatar-waterfall']/a/span/text()")
-        return [a.strip() for a in result if a.strip()]
-
-    def _get_release(self, html) -> str:
-        """取得發售日期"""
-        result = html.xpath(
-            '//span[contains(text(),"发行时间:") or contains(text(),"發行日期:") or contains(text(),"発売日:")]/../text()'
-        )
-        return result[0].strip() if result else ""
-
-    def _get_runtime(self, html) -> str:
-        """取得片長"""
-        result = html.xpath(
-            '//span[contains(text(),"长度:") or contains(text(),"長度:") or contains(text(),"収録時間:")]/../text()'
-        )
-        if result:
-            minutes = re.findall(r"(\d+)", result[0])
-            return minutes[0] if minutes else ""
-        return ""
-
-    def _get_series(self, html) -> str:
-        """取得系列"""
-        result = html.xpath('//p/a[contains(@href,"/series/")]/text()')
-        return result[0].strip() if result else ""
-
-    def _get_studio(self, html) -> str:
-        """取得片商"""
-        result = html.xpath('//p/a[contains(@href,"/studio/")]/text()')
-        return result[0].strip() if result else ""
-
-    def _get_tags(self, html) -> list[str]:
-        """取得標籤"""
-        result = html.xpath('//span[@class="genre"]/a/text()')
-        return [tag.strip() for tag in result if tag.strip()]
-
-    def _search_and_get_url(self, number: str, base_url: str) -> Optional[tuple[str, str]]:
+    def _get_movie(self, movie_id: str) -> dict:
         """
-        搜尋並取得詳情頁 URL
-
-        Returns:
-            (detail_url, poster_url) or None
+        呼叫 getMovie API，回 data dict。
         """
-        search_url = f"{base_url}/cn/search/{number}"
+        result = self._api_post("/javu/data/api/getMovie", [movie_id, "cn"])
+        return result["data"]
 
-        try:
-            resp = self._session.get(search_url, timeout=self.config.timeout)
-            if resp.status_code != 200:
-                return None
+    def _build_video(self, number: str, base: str, data: dict) -> Video:
+        """
+        依 Video 欄位 map 組 Video。
+        number 用傳入 canonical（非 movieFanHao）。
+        None-safe（studio/series 可能 None 或 key 缺席）。
+        """
+        maker = (data.get("studio") or {}).get("studioName", "") or ""
+        series = (data.get("series") or {}).get("seriesName", "") or ""
+        actresses = [
+            Actress(name=s["starName"])
+            for s in data.get("star", [])
+            if s.get("starName")
+        ]
+        tags = [g["genreName"] for g in data.get("genre", []) if g.get("genreName")]
+        detail_url = f"{base}/cn/movies/{data['movieId']}"
 
-            html = etree.fromstring(resp.content, etree.HTMLParser())
+        return Video(
+            number=number,
+            title=data.get("title_ja", ""),
+            actresses=actresses,
+            date=data.get("releaseDate", ""),
+            maker=maker,
+            cover_url=data.get("posterLarge", ""),
+            tags=tags,
+            source=self.source_name,
+            detail_url=detail_url,
+            duration=data.get("length"),
+            series=series,
+        )
 
-            # 找所有搜尋結果
-            url_list = html.xpath('//*[@id="waterfall"]/div/a/@href')
-            if not url_list:
-                return None
+    def _number_match(self, a: str, b: str) -> bool:
+        """
+        比對兩個番號是否相同（忽略大小寫、-PPV、連字符/底線差異）。
+        韌性 #1：吃 062719-001 ↔ 062719_001。
+        僅內部比對用，不影響 Video.number 輸出。
+        """
+        def normalize(s: str) -> str:
+            return s.upper().replace("-PPV", "").replace("-", "").replace("_", "")
+        return normalize(a) == normalize(b)
 
-            # 比對番號找到正確的結果
-            for i, url in enumerate(url_list, 1):
-                number_found = html.xpath(
-                    f'//*[@id="waterfall"]/div[{i}]/a/div[@class="photo-info"]/span/date[1]/text()'
-                )
-                if number_found:
-                    number_found = number_found[0].strip().upper()
-                    # 比對時忽略 -PPV 差異
-                    if number.upper().replace("-PPV", "") == number_found.replace("-PPV", ""):
-                        detail_url = "https:" + url if url.startswith("//") else url
-                        # 取得海報
-                        poster = html.xpath(
-                            f'//*[@id="waterfall"]/div[{i}]/a/div[@class="photo-frame"]/img/@src'
-                        )
-                        poster_url = poster[0] if poster else ""
-                        return detail_url, poster_url
+    def _lookup(self, number: str, base: str) -> Optional[Video]:
+        """核心兩段流程，抽出供重試用。"""
+        movie_id = self._search_movie_id(number)
+        if not movie_id:
+            return None  # 查無此番號（個別下架/未收；None 或空字串皆視為未命中）
+        return self._build_video(number, base, self._get_movie(movie_id))
 
-            return None
-
-        except Exception as e:
-            logger.debug(f"AVSOX search URL failed for {number}: {e}")
-            return None
-
-    def search(self, number: str) -> Optional[Video]:
+    def search(self, raw: str) -> Optional[Video]:
         """
         搜尋影片資訊
 
         Args:
-            number: 番號（如 012523-001, FC2-1234567）
+            raw: 番號（如 012523-001, FC2-1234567）
 
         Returns:
             Video 物件，找不到返回 None
+
+        Raises:
+            TimeoutError: 請求超時
         """
-        # 正規化番號
-        number = self.normalize_number(number)
-
-        # 取得可用網域
-        base_url = self._get_working_domain()
-        if not base_url:
-            return None
-
+        number = self.normalize_number(raw)
         try:
-            # 搜尋取得詳情頁 URL
-            search_result = self._search_and_get_url(number, base_url)
-            if not search_result:
-                return None
-
-            detail_url, poster_url = search_result
-
-            # 取得詳情頁
-            resp = self._session.get(detail_url, timeout=self.config.timeout)
-            if resp.status_code != 200:
-                return None
-
-            html = etree.fromstring(resp.content, etree.HTMLParser())
-
-            # 取得番號（從頁面取得正確格式）
-            web_number = self._get_number(html)
-
-            # 取得標題（移除番號）
-            title = self._get_title(html)
-            if web_number and title.startswith(web_number):
-                title = title[len(web_number):].strip()
-
-            if not title:
-                return None
-
-            # 取得各項資訊
-            cover_url = self._get_cover(html)
-            actors = self._get_actors(html)
-            release = self._get_release(html)
-            studio = self._get_studio(html)
-            series = self._get_series(html)
-            tags = self._get_tags(html)
-            runtime_str = self._get_runtime(html)
-            duration = int(runtime_str) if runtime_str else None
-
-            # 建立女優列表
-            actresses = [Actress(name=name) for name in actors]
-
-            video = Video(
-                number=web_number or number,
-                title=title,
-                actresses=actresses,
-                date=release,
-                maker=studio,
-                cover_url=cover_url,
-                tags=tags,
-                source=self.source_name,
-                detail_url=detail_url,
-                duration=duration,
-                series=series,
-            )
-
-            # 節流
-            rate_limit(self.config.delay)
-
-            return video
-
+            base, _ = self._ensure_session()
+            if not base:
+                return None  # 全域名連不上（韌性 #4；canary probe False → skip）
+            try:
+                return self._lookup(number, base)
+            except CsrfExpired:  # 韌性 #2：token 失效 → 清 cache 重抓一次重試
+                self._working_domain = None
+                self._csrf_token = None
+                base, _ = self._ensure_session()
+                if not base:
+                    return None
+                return self._lookup(number, base)  # 只重試一次；再 CsrfExpired → 冒到下方 except → None
         except requests.Timeout:
-            raise TimeoutError(f"AVSOX request timeout for {number}")
+            raise TimeoutError(f"AVSOX request timeout for {number}")  # 沿用舊行為（canary → skip）
         except Exception as e:
-            logger.warning(f"AVSOX search failed for {number}: {e}")
-            return None
+            logger.debug(f"AVSOX search failed for {number}: {e}")
+            return None  # 韌性 #4：任何解析/網路爆掉 → None，不崩
+        finally:
+            rate_limit(self.config.delay)  # 節流照舊
 
     def search_by_keyword(self, keyword: str, limit: int = 20) -> list[Video]:
         """
@@ -258,57 +224,23 @@ class AVSOXScraper(BaseScraper):
         Returns:
             Video 列表
         """
-        # AVSOX 搜尋可以用關鍵字
-        base_url = self._get_working_domain()
-        if not base_url:
-            return []
-
-        search_url = f"{base_url}/cn/search/{keyword}"
-
-        try:
-            resp = self._session.get(search_url, timeout=self.config.timeout)
-            if resp.status_code != 200:
-                return []
-
-            html = etree.fromstring(resp.content, etree.HTMLParser())
-
-            # 取得所有結果
-            results = []
-            url_list = html.xpath('//*[@id="waterfall"]/div/a/@href')
-
-            for i, url in enumerate(url_list[:limit], 1):
-                number = html.xpath(
-                    f'//*[@id="waterfall"]/div[{i}]/a/div[@class="photo-info"]/span/date[1]/text()'
-                )
-                if number:
-                    video = self.search(number[0])
-                    if video:
-                        results.append(video)
-
-                # 節流
-                rate_limit(self.config.delay)
-
-            return results
-
-        except Exception as e:
-            logger.warning(f"AVSOX keyword search failed for {keyword}: {e}")
-            return []
+        return []
 
 
 # 測試用
 if __name__ == "__main__":
     scraper = AVSOXScraper()
 
-    print("=== AVSOX 網域測試 ===")
-    domain = scraper._get_working_domain()
-    if domain:
-        print(f"✓ 可用網域: {domain}")
+    print("=== AVSOX Session 測試 ===")
+    base, token = scraper._ensure_session()
+    if base:
+        print(f"✓ 可用網域: {base}")
+        print(f"✓ CSRF token: {token[:20]}...")
     else:
         print("✗ 無法連接到 AVSOX")
         exit(1)
 
     print("\n=== API 測試 ===")
-    # 測試一個無碼番號
     test_numbers = ["051119-917", "FC2-2101993"]
 
     for num in test_numbers:
@@ -319,7 +251,11 @@ if __name__ == "__main__":
             print(f"標題: {video.title[:40]}..." if len(video.title) > 40 else f"標題: {video.title}")
             print(f"女優: {[a.name for a in video.actresses]}")
             print(f"片商: {video.maker}")
+            print(f"系列: {video.series}")
             print(f"發售: {video.date}")
+            print(f"片長: {video.duration} 分鐘")
+            print(f"標籤: {video.tags}")
             print(f"封面: {video.cover_url[:50]}..." if video.cover_url else "封面: (無)")
+            print(f"詳情: {video.detail_url}")
         else:
             print("✗ 搜尋失敗")

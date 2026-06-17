@@ -25,3 +25,7 @@
 *.ps1 text eol=crlf
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# 爬蟲 HTML 測試 fixture → 原始站方回應，免 whitespace 檢查（保留 byte-faithful）
+# eol=lf 仍由上方 *.html 規則套用；-whitespace 只關掉 git diff --check 的尾空白告警
+tests/fixtures/**/*.html -whitespace
