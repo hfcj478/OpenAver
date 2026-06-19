@@ -1250,6 +1250,34 @@
     }
 }
 
+/* US5-75b-T8: ≤480px 影片燈箱封面貼合原圖比例（消 object-fit:contain 在 60vh 高框的 letterbox 死白）。
+ * :has(.lb-full) 只命中影片 cover（女優 cover 無 .lb-full，showcase.html:569 vs 669）→ 女優燈箱零波及。
+ * make-or-break（live 實證）：須同改 (a) img/.lb-full 尺寸法 + (b) 容器 min-*，只改 img 會把空白留在容器。
+ * 副作用：盒比例=圖比例後 object-fit:cover≈contain，T7 grid→lightbox flight 落地 cover→contain seam 自然消失。
+ * specificity（Codex P3 修正）：:has(.lb-full) 計入其引數一個 class →
+ *   img 規則 .lightbox-cover:has(.lb-full) img = (0,2,1) 勝基準 §667 .lightbox-cover img (0,1,1)，
+ *   容器 .lightbox-cover.has-cover:has(.lb-full) = (0,3,0) 勝基準 .lightbox-cover (0,1,0)；皆靠 specificity（非源序）。無 !important。
+ * Codex P2：容器 min-height:0 只在 .has-cover（有封面）才套——無封面影片若塌到 0 高，補封面入口會壞，
+ *   故無封面保留基準 min-height。img 規則不 gate has-cover（無封面時 img 空 src→height:auto=0 無害），
+ *   且刻意保持 (0,2,1) 不升到 (0,3,1) 以免在 ≤480∩similar-open 與 similar-open img (0,3,1) 撞同權。
+ * similar-open 交互：.lightbox-content.similar-open .lightbox-cover img (0,3,1) 勝本 img 規則 (0,2,1)
+ *   → ≤480px ∩ similar-open 時手機相似主片維持 40vh（本 task 不接管相似模式，刻意）。 */
+@media (max-width: 480px) {
+    /* (b) 容器塌到圖的盒（Codex P2：僅 .has-cover；無封面保留基準 min-height 防塌成 0 高） */
+    .lightbox-cover.has-cover:has(.lb-full) {
+        min-height: 0;
+        min-width: 0;
+    }
+    /* (a) base img + .lb-full overlay 同步：寬填滿、高隨原圖比例（覆寫 60vh）。
+       不 gate has-cover：無封面 img 空 src→height:auto=0 無害，且保 (0,2,1) 不撞 similar-open。 */
+    .lightbox-cover:has(.lb-full) img,
+    .lightbox-cover:has(.lb-full) .lb-full {
+        width: 100%;
+        height: auto;
+        object-fit: contain;   /* 盒=圖比例時與 cover 等價，保留 contain 不裁切語意 */
+    }
+}
+
 /* ==================== Responsive: Toolbar ==================== */
 /* 小螢幕：Toolbar 單欄堆疊 (44c-T8) */
 @media (max-width: 768px) {

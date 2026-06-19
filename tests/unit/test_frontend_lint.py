@@ -11796,3 +11796,85 @@ class TestUS5PosterCropGhostCrossfade:
         assert "cleanupGhost(ghost, coverEl)" in body, (
             "非 posterCrop 路徑應保留硬切 cleanupGhost（桌面零回歸）"
         )
+
+
+# ============================================================================
+# TASK-75b-T8：≤480px 影片燈箱封面貼合原圖比例（消 letterbox 死白 + 根治 T7 seam）
+# CSS element-bound 讀取守衛（require-presence of a rule，比照 US5 其他 guard）
+# ============================================================================
+
+
+class TestUS5VideoCoverFitMobile:
+    """TASK-75b-T8：≤480px 影片燈箱封面以原圖比例呈現、消上下 letterbox 死白。
+
+    make-or-break（live 實證）：須同改 (a) img/.lb-full 尺寸法 + (b) 容器 min-*，
+    只改 img 空白會留在容器。scope :has(.lb-full) 只中影片、不波及女優 cover。
+    三問：刪容器 min-height:0 → 紅（make-or-break）；刪 img height:auto → 紅；
+    把 :has(.lb-full) 改裸 .lightbox-cover（會波及女優）→ scope 守衛紅。
+    """
+
+    def _css(self):
+        return SHOWCASE_CSS.read_text(encoding="utf-8")
+
+    def _t8_block(self) -> str:
+        """抓含 .lightbox-cover:has(.lb-full) 的那個 @media (max-width: 480px) block。"""
+        css = self._css()
+        blocks = re.findall(r'@media \(max-width: 480px\) \{(.*?)\n\}', css, re.DOTALL)
+        target = [b for b in blocks if ".lightbox-cover:has(.lb-full)" in b]
+        assert target, "showcase.css 找不到含 .lightbox-cover:has(.lb-full) 的 ≤480px block（T8 缺失）"
+        return target[0]
+
+    def test_video_cover_fit_media_block_exists(self):
+        block = self._t8_block()
+        assert ".lightbox-cover:has(.lb-full)" in block, "T8 block 應 scope 到 :has(.lb-full)"
+
+    def test_container_min_zeroed_gated_on_has_cover(self):
+        """make-or-break：容器 min-height/min-width 必須歸零（否則空白只是重新分配）。
+        Codex P2：容器 min-height:0 必須 gate 在 .has-cover——無封面影片若塌成 0 高、補封面入口會壞，
+        故 selector 必為 .lightbox-cover.has-cover:has(.lb-full)（非裸 :has(.lb-full)）。
+        三問：拿掉 .has-cover gate → 紅（無封面會塌）；拿掉 min-height:0 → 紅（留白未消）。
+        """
+        block = self._t8_block()
+        m = re.search(r'\.lightbox-cover\.has-cover:has\(\.lb-full\) \{([^}]*)\}', block)
+        assert m, "T8 容器規則須為 .lightbox-cover.has-cover:has(.lb-full)（Codex P2：min-height:0 須 gate has-cover）"
+        body = m.group(1)
+        assert "min-height: 0" in body, (
+            "容器須 min-height: 0（否則 min(58vh,460px) 主導、img 置中留白未消）—— make-or-break"
+        )
+        assert "min-width: 0" in body, "容器須 min-width: 0"
+
+    def test_img_height_auto_width_full(self):
+        """img + .lb-full 須 height:auto + width:100%（覆寫 60vh），且規則涵蓋 .lb-full。"""
+        block = self._t8_block()
+        m = re.search(
+            r'\.lightbox-cover:has\(\.lb-full\) img,\s*\.lightbox-cover:has\(\.lb-full\) \.lb-full \{([^}]*)\}',
+            block,
+        )
+        assert m, "T8 block 內找不到涵蓋 img + .lb-full 的尺寸規則"
+        body = m.group(1)
+        assert "height: auto" in body, "img/.lb-full 須 height: auto（覆寫 60vh）"
+        assert "width: 100%" in body, "img/.lb-full 須 width: 100%"
+
+    def test_scoped_to_has_lb_full_not_actress(self):
+        """scope 護欄：T8 block 不得出現裸 .lightbox-cover img 的 height:auto（會波及女優 cover）。"""
+        block = self._t8_block()
+        # 裸 .lightbox-cover img {（無 :has）出現在 block 內即危險
+        bare = re.search(r'(?<!\)) \.lightbox-cover img \{', block)
+        assert not bare, (
+            "T8 block 不得含裸 .lightbox-cover img 規則（無 :has(.lb-full)）—— 會波及女優燈箱封面"
+        )
+
+    def test_similar_open_40vh_untouched(self):
+        """回歸護欄：手機相似模式 similar-open 40vh / 38vh 規則仍在（未被 T8 波及）。"""
+        css = self._css()
+        assert "min(38vh, 290px)" in css, "similar-open 容器 min-height 規則應保留"
+        assert "height: 40vh" in css, "similar-open img/lb-full 40vh 規則應保留"
+
+    def test_video_lightbox_cover_has_cover_class(self):
+        """Codex P2：影片燈箱 .lightbox-cover 須帶 has-cover 旗標（綁 cover_url），
+        供 T8 容器 min-height:0 只在有封面時生效。三問：拿掉旗標 → 紅（CSS gate 失效）。
+        """
+        html = SHOWCASE_HTML.read_text(encoding="utf-8")
+        assert "'has-cover': !!currentLightboxVideo?.cover_url" in html, (
+            "影片燈箱 .lightbox-cover 應綁 :class=\"{'has-cover': !!currentLightboxVideo?.cover_url}\""
+        )

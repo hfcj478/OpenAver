@@ -666,7 +666,9 @@
                 <template x-if="currentLightboxVideo && !currentLightboxActress">
                     <div style="display:contents">
                         <!-- Cover Image -->
-                        <div class="lightbox-cover">
+                        <!-- T8(Codex P2): has-cover 旗標 — 僅有封面時才讓 ≤480px min-height:0 塌到圖盒；
+                             無封面時保留 min-height 避免 cover 區塌成 0 高（補封面入口會壞）。 -->
+                        <div class="lightbox-cover" :class="{'has-cover': !!currentLightboxVideo?.cover_url}">
                             <!-- 56c-T3fix: magic 按鈕已搬至 .lightbox-content（與 .lightbox-close sibling 鏡射對稱）；sparkle-burst overlay 留在 .lightbox-cover 以便 inset:0 精準覆蓋封面區（不擴及 metadata） -->
                             <!-- 71-T6 blur-up: base 層=cover_url（快取開啟=小 webp 秒出、放大略糊；關閉=原圖）。
                                  撐容器尺寸；x-ref + @error 三態留 base（ghost-fly / 破圖偵測沿用 base src）。 -->
