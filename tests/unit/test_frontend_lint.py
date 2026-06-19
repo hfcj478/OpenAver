@@ -150,6 +150,30 @@ class TestPageTransitionDomGuard:
         assert re.search(r"\.page-showcase\s+#main-content\s*\{\s*view-transition-name:\s*none", css), \
             "theme.css 缺少 .page-showcase #main-content { view-transition-name: none }（feature/76 CD-11 輔助）"
 
+    def test_base_html_showcase_skip_script_in_head(self):
+        """showcase 硬切 head script（pagereveal/pageswap + skipTransition）存在且在 </head> 之前（CD-11/F8）。
+
+        pagereveal 在 first rendering opportunity 前觸發 → listener 必須在 <head> 的
+        parser-blocking classic script，掛在 body 底（如 page-lifecycle.js）會漏接。
+        斷言三 token 皆落在 </head> 之前，鎖定位置。
+        """
+        html = self._base()
+        head_end = html.find("</head>")
+        assert head_end != -1, "base.html 找不到 </head>"
+        head = html[:head_end]
+        for token in ("pagereveal", "pageswap", "skipTransition"):
+            assert token in head, \
+                f"base.html <head> 缺少 {token!r}（feature/76 CD-11 showcase 硬切 head script 必須在 head、非 body 底）"
+        # 鎖定 parser-blocking classic：包住 skipTransition 的 <script> open tag 不得有
+        # type=module / defer / async（任一都會把 pagereveal 延後過 first render → 漏接、靜默壞掉）。
+        skip_idx = head.find("skipTransition")
+        open_start = head.rfind("<script", 0, skip_idx)
+        open_tag = head[open_start:head.find(">", open_start) + 1]
+        for banned in ('type="module"', "type='module'", "defer", "async"):
+            assert banned not in open_tag, \
+                (f"base.html showcase 硬切 script 的 <script> tag 含 {banned!r}（feature/76 CD-11）："
+                 "pagereveal listener 必須是 parser-blocking classic script，defer/async/module 會漏接事件")
+
 
 SETTINGS_CSS_T76 = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "settings.css"
 THEME_TRANSITION_JS_T76 = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "settings" / "theme-transition.js"
