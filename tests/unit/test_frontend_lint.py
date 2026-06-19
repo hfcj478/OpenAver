@@ -4690,16 +4690,18 @@ class TestSearchCssHardcoded:
     SEARCH_CSS = PROJECT_ROOT / "web/static/css/pages/search.css"
 
     HARDCODED_RGBA_ALLOWLIST = {
-        # T2.1 commit 41f2a5b 後狀態：
+        # 75b-T2 search.css US1 重排插入 ~54 行（@ ~L107）後行號順移：788→840；90 在插入點上方不變。
+        # T9-port 在 L718 後插入 blocks：840→902；T9 Codex-P2 fix 補註解 +4 行：902→906。
+        # T11：在 L753 後插入 hero 規則（~14 行）：906→920。
         90: "drop-shadow rgba 0.3 — §2 例外（drop-shadow 跟封面去背形狀，非矩形 box-shadow 無法用 --fluent-shadow-* token）",
-        780: "var(--bg-card, rgba(0, 0, 0, 0.05)) fallback — defensive fallback，非硬編碼違規",
+        920: "var(--bg-card, rgba(0, 0, 0, 0.05)) fallback — defensive fallback，非硬編碼違規",
     }
 
     SIX_PX_ALLOWLIST = {
-        # T2.2 commit 89d52b6 後狀態：
-        235: "row inline btn optical 6px — T2.2 加 optical 註記（btn-sm 12px padding 對 row inline 太寬）",
-        516: ".batch-progress-bar height: 6px — intrinsic dimension（非 §4 spacing）",
-        571: "chip optical 6px — T2.2 加 optical 註記（對齊 showcase .lb-tag-add-btn）",
+        # 75b-T2 search.css US1 重排插入 ~54 行（@ ~L107）後行號順移：235→282、524→576、579→631（皆在插入點下方）。
+        282: "row inline btn optical 6px — T2.2 加 optical 註記（btn-sm 12px padding 對 row inline 太寬）",
+        576: ".batch-progress-bar height: 6px — intrinsic dimension（非 §4 spacing）",
+        631: "chip optical 6px — T2.2 加 optical 註記（對齊 showcase .lb-tag-add-btn）",
     }
 
     def _scan(self, regex: str, allowlist=None):
@@ -10824,10 +10826,16 @@ class TestSwitchSourceBtnRemoved:
         )
 
     def test_switch_source_btn_arrow_repeat_icon_gone(self):
-        """強化：原 🔄 icon bi-arrow-repeat 隨按鈕一併消失於 .av-card-full-header 區段。"""
+        """強化：原 🔄 icon bi-arrow-repeat 隨按鈕一併消失於 .av-card-full-header 區段。
+
+        TASK-75b-T6（Codex F3）：US1 把 .av-card-full-title 插在 header 與 body 之間，
+        原終止錨點 `<div class="av-card-full-body">` 不再緊接 header → lazy (.*?) 會吞掉
+        整個 title block（測試不紅但 silent 失準）。終止錨點改 adjacency-independent 的
+        `(?:title|body)`，讓 group(1) 仍只取 header 自身（停在 header 的 </div> → title）。
+        """
         html = SEARCH_HTML.read_text(encoding="utf-8")
         m = re.search(
-            r'<div class="av-card-full-header">(.*?)</div>\s*<div class="av-card-full-body">',
+            r'<div class="av-card-full-header">(.*?)</div>\s*<div class="av-card-full-(?:title|body)">',
             html, re.DOTALL,
         )
         assert m, "search.html 找不到 .av-card-full-header 區段"
@@ -11063,4 +11071,1199 @@ class TestRescrapePreviewEffectiveSource:
         _, body = self._assembly()
         assert "sourceCensored" in body and "is_censored" in body and "?? true" in body, (
             f"rescrapePreview 必須含 sourceCensored: ...is_censored ?? true；body: {body!r}"
+        )
+
+
+# ── 75a-T4 path constants ──────────────────────────────────────────────────
+CONSTELLATION_ANIMATIONS_JS = (
+    Path(__file__).parent.parent.parent
+    / "web" / "static" / "js" / "shared" / "constellation" / "animations.js"
+)
+T4_STATE_SIMILAR_JS = (
+    Path(__file__).parent.parent.parent
+    / "web" / "static" / "js" / "pages" / "showcase" / "state-similar.js"
+)
+T4_CONSTELLATION_HOST_JS = (
+    Path(__file__).parent.parent.parent
+    / "web" / "static" / "js" / "pages" / "motion-lab" / "constellation-host.js"
+)
+T4_SHOWCASE_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "showcase.css"
+T4_THEME_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "theme.css"
+T4_MOTION_LAB_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "motion_lab.html"
+T4_SHOWCASE_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "showcase.html"
+
+
+class TestPosterCropCSSGuard:
+    """75a-T4: poster-crop token 守衛 — theme.css 變數 + showcase.css selector-bound 斷言。
+
+    涵蓋：
+    - theme.css 含 --poster-crop-ratio: 0.71
+    - .poster-crop rule block 含 var(--poster-crop-ratio) + right center，不含 71/100
+    - showcase.css .similar-slot-img block 含 right center，不含 100% 20%
+    - showcase.css .similar-main-static block 含 width: 178px，不含 width: 200px
+    """
+
+    def _theme(self):
+        return T4_THEME_CSS.read_text(encoding="utf-8")
+
+    def _css(self):
+        return T4_SHOWCASE_CSS.read_text(encoding="utf-8")
+
+    def test_poster_crop_ratio_token_value(self):
+        """theme.css 含 --poster-crop-ratio: 0.71"""
+        css = self._theme()
+        assert "--poster-crop-ratio: 0.71" in css, \
+            "theme.css missing: --poster-crop-ratio: 0.71"
+
+    def test_poster_crop_class_uses_token(self):
+        """.poster-crop rule block 含 var(--poster-crop-ratio)"""
+        css = self._theme()
+        match = re.search(r'\.poster-crop\s*\{([^}]+)\}', css)
+        assert match, "theme.css: .poster-crop selector not found"
+        block = match.group(1)
+        assert "var(--poster-crop-ratio)" in block, \
+            ".poster-crop block must contain var(--poster-crop-ratio)"
+
+    def test_poster_crop_class_has_right_center(self):
+        """.poster-crop rule block 含 right center"""
+        css = self._theme()
+        match = re.search(r'\.poster-crop\s*\{([^}]+)\}', css)
+        assert match, "theme.css: .poster-crop selector not found"
+        block = match.group(1)
+        assert "right center" in block, \
+            ".poster-crop block must contain object-position: right center"
+
+    def test_poster_crop_class_no_hardcoded_ratio(self):
+        """.poster-crop rule block 不含 71/100 硬編碼比例"""
+        css = self._theme()
+        match = re.search(r'\.poster-crop\s*\{([^}]+)\}', css)
+        assert match, "theme.css: .poster-crop selector not found"
+        block = match.group(1)
+        assert "71/100" not in block, \
+            ".poster-crop block must not contain hardcoded 71/100 (use var(--poster-crop-ratio))"
+
+    def test_similar_slot_img_no_100_20(self):
+        """showcase.css .similar-slot-img block 不含 100% 20%"""
+        css = self._css()
+        match = re.search(r'\.similar-slot-img\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-slot-img selector not found"
+        block = match.group(1)
+        assert "100% 20%" not in block, \
+            ".similar-slot-img block must not contain object-position: 100% 20%"
+
+    def test_similar_slot_img_has_right_center(self):
+        """showcase.css .similar-slot-img block 含 right center"""
+        css = self._css()
+        match = re.search(r'\.similar-slot-img\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-slot-img selector not found"
+        block = match.group(1)
+        assert "right center" in block, \
+            ".similar-slot-img block must contain object-position: right center"
+
+    def test_similar_main_static_width_178(self):
+        """showcase.css .similar-main-static block 含 width: 178px"""
+        css = self._css()
+        match = re.search(r'\.similar-main-static\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-main-static selector not found"
+        block = match.group(1)
+        assert "width: 178px" in block, \
+            ".similar-main-static block must contain width: 178px"
+
+    def test_similar_main_static_no_200(self):
+        """showcase.css .similar-main-static block 不含 width: 200px"""
+        css = self._css()
+        match = re.search(r'\.similar-main-static\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-main-static selector not found"
+        block = match.group(1)
+        assert "width: 200px" not in block, \
+            ".similar-main-static block must not contain width: 200px (use 178px)"
+
+
+class TestMotionLabObjectPositionGuard:
+    """75a-T4: motion_lab.html inline <style> 守衛 — clip-lab-* object-position。
+
+    NOTE: stylelint glob (web/static/css/**/*.css) 不覆蓋 motion_lab.html inline <style>；
+    且 picker-candidate-img 有合法 100% 20%，不可全域 ban。
+    故用 pytest selector-scoped HTML style-block read（plan-sanctioned pytest fallback）。
+    """
+
+    def _html(self):
+        return T4_MOTION_LAB_HTML.read_text(encoding="utf-8")
+
+    def _style_blocks(self, html):
+        blocks = re.findall(r"<style[^>]*>(.*?)</style>", html, re.DOTALL)
+        assert blocks, "motion_lab.html has no <style> blocks"
+        return "\n".join(blocks)
+
+    def test_clip_lab_img_object_position_right_center(self):
+        """.clip-lab-slot-img, .clip-lab-main-img rule block 含 right center，不含 100% 20%"""
+        html = self._html()
+        css = self._style_blocks(html)
+        match = re.search(
+            r'\.clip-lab-slot-img\s*,\s*\.clip-lab-main-img\s*\{([^}]+)\}',
+            css,
+        )
+        assert match, "motion_lab.html <style>: .clip-lab-slot-img, .clip-lab-main-img rule not found"
+        block = match.group(1)
+        assert "right center" in block, \
+            ".clip-lab-slot-img,.clip-lab-main-img block must contain object-position: right center"
+        assert "100% 20%" not in block, \
+            ".clip-lab-slot-img,.clip-lab-main-img block must not contain 100% 20%"
+
+    def test_clip_lab_slot_no_120(self):
+        """.clip-lab-slot rule block 不含 width: 120px（應為 107px）"""
+        html = self._html()
+        css = self._style_blocks(html)
+        match = re.search(r'\.clip-lab-slot\s*\{([^}]+)\}', css)
+        assert match, "motion_lab.html <style>: .clip-lab-slot rule not found"
+        block = match.group(1)
+        assert "width: 120px" not in block, \
+            ".clip-lab-slot block must not contain width: 120px (should be 107px)"
+
+
+class TestSimilarSlotGsapGuard:
+    """75a-T4: GSAP width literal 守衛 — constellation/animations.js + state-similar.js。
+
+    animations.js: T1 後所有 width 已改為 SLOT_W/MAIN_W 具名常量（無 120/200 literal）；
+    用全文 ban 安全（確認無其他合法 120/200 出現）。
+    assert 'width: 120' not in js + assert 'width: 200' not in js；
+    正向斷言 POSTER_CROP_RATIO 常數存在。
+
+    state-similar.js: 全文只有一處 width: 107（gsap.set slot reset），無 120 出現；
+    用全文 ban 安全。
+    """
+
+    def _animations(self):
+        return CONSTELLATION_ANIMATIONS_JS.read_text(encoding="utf-8")
+
+    def _similar(self):
+        return T4_STATE_SIMILAR_JS.read_text(encoding="utf-8")
+
+    def test_animations_no_width_120_literal(self):
+        """animations.js 全文不含 width: 120（T1 後已改 SLOT_W 常量）"""
+        js = self._animations()
+        assert "width: 120" not in js, \
+            "animations.js must not contain literal 'width: 120' (use SLOT_W constant)"
+
+    def test_animations_no_width_200_literal(self):
+        """animations.js 全文不含 width: 200（T1 後已改 MAIN_W 常量）"""
+        js = self._animations()
+        assert "width: 200" not in js, \
+            "animations.js must not contain literal 'width: 200' (use MAIN_W constant)"
+
+    def test_animations_has_poster_crop_ratio_const(self):
+        """animations.js 含 POSTER_CROP_RATIO 具名常量（單一真理 NC#7）"""
+        js = self._animations()
+        assert "POSTER_CROP_RATIO" in js, \
+            "animations.js must define POSTER_CROP_RATIO constant (single source of truth NC#7)"
+
+    def test_animations_has_slot_w_const(self):
+        """animations.js 含 SLOT_W 具名常量"""
+        js = self._animations()
+        assert "SLOT_W" in js, \
+            "animations.js must define SLOT_W constant derived from POSTER_CROP_RATIO"
+
+    def test_animations_has_main_w_const(self):
+        """animations.js 含 MAIN_W 具名常量"""
+        js = self._animations()
+        assert "MAIN_W" in js, \
+            "animations.js must define MAIN_W constant derived from POSTER_CROP_RATIO"
+
+    def test_state_similar_no_width_120(self):
+        """state-similar.js 全文不含 width: 120（slot reset 應為 107）"""
+        js = self._similar()
+        assert "width: 120" not in js, \
+            "state-similar.js must not contain 'width: 120' (slot width should be 107)"
+
+    def test_state_similar_has_width_107(self):
+        """state-similar.js 含 width: 107（slot reset 正確值）"""
+        js = self._similar()
+        assert "width: 107" in js, \
+            "state-similar.js must contain 'width: 107' (slot reset value)"
+
+    def _host(self):
+        return T4_CONSTELLATION_HOST_JS.read_text(encoding="utf-8")
+
+    def test_constellation_host_no_width_120(self):
+        """constellation-host.js 全文不含 width: 120（reduced-motion click + reset baseline path
+        繞過 animations.js gsap.set，應為 107；Codex P3 補洞——plan 6 處 inventory 漏此 host 檔）"""
+        js = self._host()
+        assert "width: 120" not in js, \
+            "constellation-host.js must not contain 'width: 120' (slot box should be 107, NC#7 mirror)"
+
+    def test_constellation_host_has_width_107(self):
+        """constellation-host.js 含 width: 107（reduced-motion / reset slot 正確值）"""
+        js = self._host()
+        assert "width: 107" in js, \
+            "constellation-host.js must contain 'width: 107' (reduced-motion + reset slot value)"
+
+
+class TestSimilarMobileDOMOrderGuard:
+    """75a-T4: showcase.html DOM 順序 — lightbox-similar-mobile 在 lightbox-metadata 之前。
+
+    使用 re.search 取 class attr 出現位置，避免誤中 HTML comment。
+    """
+
+    def _html(self):
+        return T4_SHOWCASE_HTML.read_text(encoding="utf-8")
+
+    def test_similar_mobile_before_metadata(self):
+        """lightbox-similar-mobile div 在主 lightbox-metadata div 之前。
+
+        showcase.html 有兩個 lightbox-metadata：actress-lightbox-meta（上方）和主 metadata（下方）。
+        守衛目標是主 lightbox-metadata（不含 actress 子 class），故用 exact class= match。
+        """
+        html = self._html()
+        m_mobile = re.search(r'class="lightbox-similar-mobile"', html)
+        # Match the standalone lightbox-metadata (not actress-lightbox-meta)
+        m_meta = re.search(r'class="lightbox-metadata"(?!\s)', html)
+        assert m_mobile, "showcase.html: lightbox-similar-mobile class attr not found"
+        assert m_meta, "showcase.html: class=\"lightbox-metadata\" (main, non-actress) not found"
+        assert m_mobile.start() < m_meta.start(), (
+            "showcase.html: lightbox-similar-mobile must appear before main lightbox-metadata in DOM"
+        )
+
+
+class TestSimilarJSThresholdGuard:
+    """75a-T4: state-similar.js openSimilarMode 手機門檻 960px 守衛。
+
+    提取 openSimilarMode 函式體後斷言 < 960（不是 < 768）。
+    三問：改回 768 → 紅；刪 960 → 紅；加 768 → 紅。
+    """
+
+    def _js(self):
+        return T4_STATE_SIMILAR_JS.read_text(encoding="utf-8")
+
+    def _extract_method_body(self, js, method_name):
+        """提取 Alpine/module method 函式體（大括號平衡法）"""
+        pattern = re.compile(
+            r'(?:^|\n)\s*async ' + re.escape(method_name) + r'\s*\([^)]*\)\s*\{',
+            re.DOTALL,
+        )
+        m = pattern.search(js)
+        if m is None:
+            # try non-async form
+            pattern2 = re.compile(
+                r'(?:^|\n)\s*' + re.escape(method_name) + r'\s*\([^)]*\)\s*\{',
+                re.DOTALL,
+            )
+            m = pattern2.search(js)
+        assert m is not None, f"state-similar.js: cannot find method {method_name}"
+        start = m.end()
+        depth = 1
+        i = start
+        while i < len(js) and depth > 0:
+            c = js[i]
+            if c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+            i += 1
+        return js[start:i - 1]
+
+    def test_open_similar_mode_threshold_960(self):
+        """openSimilarMode 函式體含 innerWidth < 960"""
+        js = self._js()
+        body = self._extract_method_body(js, 'openSimilarMode')
+        assert "innerWidth < 960" in body, \
+            "state-similar.js openSimilarMode must use 'innerWidth < 960' threshold (not 768)"
+
+    def test_open_similar_mode_no_threshold_768(self):
+        """openSimilarMode 函式體不含 innerWidth < 768（舊錯誤門檻）"""
+        js = self._js()
+        body = self._extract_method_body(js, 'openSimilarMode')
+        assert "innerWidth < 768" not in body, \
+            "state-similar.js openSimilarMode must not use 'innerWidth < 768' (should be 960)"
+
+
+class TestSimilarCssSafetyAndGridGuard:
+    """75a-T4: showcase.css 安全規則 + 手機網格守衛。
+
+    涵蓋：
+    - @media (min-width: 960px) 包含 .lightbox-similar-mobile（安全網，不用 768px）
+    - .similar-mobile-card img block 含 var(--poster-crop-ratio)，不含 4/5
+    - .similar-slot block 含 width: 107px，不含 width: 120px
+    - .similar-mobile-grid block 含 repeat(4
+    - @media (max-width: 960px) 含 .lightbox-content.similar-open .lightbox-cover 縮高規則
+    """
+
+    def _css(self):
+        return T4_SHOWCASE_CSS.read_text(encoding="utf-8")
+
+    def test_safety_rule_min_960_hides_mobile(self):
+        """@media (min-width: 960px) 安全網存在且包含 .lightbox-similar-mobile"""
+        css = self._css()
+        match = re.search(r'@media\s*\(\s*min-width\s*:\s*960px\s*\)', css)
+        assert match, "showcase.css: @media (min-width: 960px) not found"
+        # Verify lightbox-similar-mobile is within or near this media block
+        after = css[match.start():]
+        assert "lightbox-similar-mobile" in after[:500], \
+            "@media (min-width: 960px) block must contain .lightbox-similar-mobile rule"
+
+    def test_safety_rule_not_768(self):
+        """安全網媒體查詢用 960px 而非 768px"""
+        css = self._css()
+        # The safety rule specifically for lightbox-similar-mobile hides it at 960px
+        # Confirm there's a min-width: 960px block (not just 768px) for the mobile section
+        idx_960 = css.find("min-width: 960px")
+        assert idx_960 != -1, "showcase.css: min-width: 960px not found (safety rule)"
+        # Confirm lightbox-similar-mobile appears after min-width: 960px
+        idx_mobile = css.find("lightbox-similar-mobile", idx_960)
+        assert idx_mobile != -1, \
+            "showcase.css: lightbox-similar-mobile not found after min-width: 960px"
+
+    def test_similar_mobile_card_img_has_poster_crop_ratio(self):
+        """.similar-mobile-card img block 含 var(--poster-crop-ratio)"""
+        css = self._css()
+        match = re.search(r'\.similar-mobile-card\s+img\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-mobile-card img rule not found"
+        block = match.group(1)
+        assert "var(--poster-crop-ratio)" in block, \
+            ".similar-mobile-card img must contain var(--poster-crop-ratio)"
+
+    def test_similar_mobile_card_img_no_hardcoded_4_5(self):
+        """.similar-mobile-card img block 不含 4/5 硬編碼比例"""
+        css = self._css()
+        match = re.search(r'\.similar-mobile-card\s+img\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-mobile-card img rule not found"
+        block = match.group(1)
+        assert "4/5" not in block, \
+            ".similar-mobile-card img must not contain hardcoded 4/5 (use var(--poster-crop-ratio))"
+
+    def test_similar_slot_width_107(self):
+        """.similar-slot rule block 含 width: 107px"""
+        css = self._css()
+        match = re.search(r'\.similar-slot\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-slot selector not found"
+        block = match.group(1)
+        assert "width: 107px" in block, \
+            ".similar-slot block must contain width: 107px"
+
+    def test_similar_slot_no_width_120(self):
+        """.similar-slot rule block 不含 width: 120px"""
+        css = self._css()
+        match = re.search(r'\.similar-slot\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-slot selector not found"
+        block = match.group(1)
+        assert "width: 120px" not in block, \
+            ".similar-slot block must not contain width: 120px (should be 107px)"
+
+    def test_similar_mobile_grid_repeat_4(self):
+        """.similar-mobile-grid block 含 repeat(4"""
+        css = self._css()
+        match = re.search(r'\.similar-mobile-grid\s*\{([^}]+)\}', css)
+        assert match, "showcase.css: .similar-mobile-grid selector not found"
+        block = match.group(1)
+        assert "repeat(4" in block, \
+            ".similar-mobile-grid must contain repeat(4, 1fr) grid-template-columns"
+
+    def test_similar_open_cover_height_override(self):
+        """@media (max-width: 960px) 含 similar-open 封面縮高規則（min(38vh + height: 40vh）"""
+        css = self._css()
+        # Find the max-width: 960px media block containing similar-open
+        match = re.search(r'@media\s*\(\s*max-width\s*:\s*960px\s*\)', css)
+        assert match, "showcase.css: @media (max-width: 960px) not found"
+        after = css[match.start():]
+        assert "similar-open" in after[:500], \
+            "@media (max-width: 960px) must contain .similar-open cover rule"
+        assert "min(38vh" in after[:500], \
+            "@media (max-width: 960px) similar-open must contain min(38vh cover override"
+        assert "height: 40vh" in after[:500], \
+            "@media (max-width: 960px) similar-open must contain height: 40vh override"
+
+    def test_similar_open_lb_full_outranks_t8(self):
+        """similar-open .lb-full selector 須用 compound 中間形式 .lightbox-cover .lb-full，
+        使 specificity 達 (0,4,0)，勝 T8 ≤480 的 .lightbox-cover:has(.lb-full) .lb-full (0,3,0)。
+        否則 source order 讓 T8 的 height:auto 在 ≤480px ∩ similar-open 覆寫 overlay → overlay 與
+        base 40vh 脫鉤/溢出。
+
+        mutation test：將 .lightbox-cover 中間節點移除（還原為裸 .lightbox-content.similar-open .lb-full）
+        → 此測試應轉紅（RED）。
+        """
+        css = self._css()
+        # Strip CSS comments so comment-only occurrences don't fool the assertions
+        css_no_comments = re.sub(r'/\*.*?\*/', '', css, flags=re.DOTALL)
+
+        # MUST: compound form with .lightbox-cover intermediate present
+        assert '.lightbox-content.similar-open .lightbox-cover .lb-full' in css_no_comments, (
+            "showcase.css: similar-open .lb-full selector must use compound form "
+            "'.lightbox-content.similar-open .lightbox-cover .lb-full' (specificity (0,4,0)) "
+            "to outrank T8's .lightbox-cover:has(.lb-full) .lb-full (0,3,0). "
+            "Without the .lightbox-cover intermediate, source order lets T8 height:auto win in "
+            "≤480px ∩ similar-open → overlay desyncs from base 40vh."
+        )
+
+        # MUST NOT: bare form without .lightbox-cover intermediate (would tie T8 at (0,3,0) and lose by source order)
+        # Match patterns like: ".lightbox-content.similar-open .lb-full {" or ",\n    .lightbox-content.similar-open .lb-full {"
+        bare_pattern = re.search(
+            r'\.lightbox-content\.similar-open\s+\.lb-full\s*[{,]',
+            css_no_comments
+        )
+        assert bare_pattern is None, (
+            "showcase.css: bare '.lightbox-content.similar-open .lb-full' selector found — "
+            "this ties T8 at (0,3,0) and loses by source order in ≤480px ∩ similar-open. "
+            "Use '.lightbox-content.similar-open .lightbox-cover .lb-full' (0,4,0) instead."
+        )
+
+
+# ============================================================================
+# TASK-75b-T6：US1 搜尋詳情重排 + US5 影片卡 poster 格 守衛
+# search.html DOM 結構 / search.css + showcase.css element-bound CSS read
+# ============================================================================
+
+SEARCH_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "search.css"
+
+
+class TestUS1TitleAboveMetadata:
+    """TASK-75b-T1：翻譯標題區塊（.av-card-full-title）置於 .av-card-full-body 之上。
+
+    DOM 順序 contract（非單純 presence）：用字串位置比較。
+    三問：把 title 搬回 body 下方 → 紅（index 反轉）；刪 title → 紅（找不到）；註解化 → 紅（class 字串不在）。
+    """
+
+    def test_title_block_precedes_body(self):
+        html = SEARCH_HTML.read_text(encoding="utf-8")
+        idx_title = html.find('class="av-card-full-title"')
+        idx_body = html.find('class="av-card-full-body"')
+        assert idx_title >= 0, "search.html 缺 .av-card-full-title（翻譯標題區塊未置頂）"
+        assert idx_body >= 0, "search.html 缺 .av-card-full-body"
+        assert idx_title < idx_body, (
+            "av-card-full-title 必須在 av-card-full-body 之前（標題置頂，US1）；"
+            f"目前 title@{idx_title} body@{idx_body}"
+        )
+
+
+class TestUS1InfoGridPairPresent:
+    """TASK-75b-T1：metadata 雙欄配對——≥2 個 .info-grid-pair，且日期+片長在同一對。
+
+    三問：刪一個 grid-pair → 紅（count<2）；把 duration 移出該對 → 紅（不在第一對 slice）；註解化 → 紅。
+    """
+
+    def test_two_grid_pairs_and_date_duration_paired(self):
+        html = SEARCH_HTML.read_text(encoding="utf-8")
+        assert html.count('class="info-grid-pair"') >= 2, (
+            "search.html 應有 ≥2 個 .info-grid-pair（日期｜片長、片商｜廠牌）"
+        )
+        # 第一對 = 第一個 info-grid-pair 到第二個 info-grid-pair 之間
+        first = html.find('class="info-grid-pair"')
+        second = html.find('class="info-grid-pair"', first + 1)
+        assert second > first, "找不到第二個 info-grid-pair"
+        first_pair = html[first:second]
+        assert "search.label.date" in first_pair and "search.label.duration" in first_pair, (
+            "日期(search.label.date)與片長(search.label.duration)必須在同一個 info-grid-pair"
+        )
+        assert "search.label.maker" not in first_pair, (
+            "片商(search.label.maker)不應在日期｜片長那一對（應在第二對）— 配對串位"
+        )
+
+
+class TestUS1FooterClassRemoved:
+    """TASK-75b-T1/T3：search.html 不再含 wrapper class="av-card-full-footer"（已改名 av-card-full-title）。
+
+    僅讀 SEARCH_HTML（不全 repo 掃——motion_lab/design-system/theme.css/tailwind.css 合法保留，Codex F6）。
+    精確比對 wrapper（帶結尾引號），不誤殺子 class -content / -actions（search.html title block 內部仍用）。
+    三問：把 wrapper 改回 av-card-full-footer → 紅。
+    """
+
+    def test_footer_wrapper_class_gone_in_search_html_only(self):
+        html = SEARCH_HTML.read_text(encoding="utf-8")
+        assert 'class="av-card-full-footer"' not in html, (
+            "search.html wrapper 應改名 av-card-full-title，不得殘留 class=\"av-card-full-footer\""
+        )
+        # 子 class 仍應存在（title block 內部結構未改名）
+        assert 'class="av-card-full-footer-content"' in html, (
+            "title block 內部 .av-card-full-footer-content 應保留（只 wrapper 改名）"
+        )
+
+
+class TestUS1InfoCellInBody:
+    """TASK-75b-T1：.av-card-full-body 範圍內含 .info-cell（雙欄 cell 結構存在）。
+
+    三問：把 info-cell 移到 body 之外（title/header）→ 紅（body slice 不含）；刪 info-cell → 紅。
+    """
+
+    def test_info_cell_inside_body(self):
+        html = SEARCH_HTML.read_text(encoding="utf-8")
+        idx_body = html.find('class="av-card-full-body"')
+        assert idx_body >= 0, "search.html 缺 .av-card-full-body"
+        body_onward = html[idx_body:]
+        assert 'class="info-cell"' in body_onward, (
+            ".av-card-full-body 內應含 .info-cell（雙欄 cell）"
+        )
+        assert body_onward.count('class="info-cell"') == 4, (
+            f"body 內應有 4 個 info-cell（2 對×2），實得 {body_onward.count('class=\"info-cell\"')}"
+        )
+
+
+class TestUS1IdPreserved:
+    """TASK-75b-T1：重排後 DOM id 全保留（JS / 其他守衛可能依賴）。
+
+    三問：重排時漏刪任一 id → 紅。
+    """
+
+    def test_result_ids_preserved(self):
+        html = SEARCH_HTML.read_text(encoding="utf-8")
+        for _id in ['id="resultActors"', 'id="resultDate"', 'id="resultMaker"', 'id="resultTags"']:
+            assert _id in html, f"search.html 缺 {_id}（重排時誤刪）"
+
+
+class TestUS1SearchCssLayout:
+    """TASK-75b-T2：search.css 右欄重排 element-bound CSS read。
+
+    斷言 override 存在性（require-presence，stylelint 無法 require → 走 pytest）：
+    右欄 flex: 0 0 390px、body top-pack flex:none、雙欄 grid 1fr 1fr、≤1024px collapse 回單欄。
+    不斷言 theme.css 無 flex:1（全域刻意保留，CD-75b-4，測它消失會誤紅）。
+    """
+
+    def _css(self):
+        return SEARCH_CSS.read_text(encoding="utf-8")
+
+    def test_info_column_widened_to_390(self):
+        css = self._css()
+        m = re.search(r'\.search-container \.av-card-full-info \{([^}]*)\}', css)
+        assert m, "search.css 找不到 .search-container .av-card-full-info 規則"
+        assert "flex: 0 0 390px" in m.group(1), (
+            "右欄應加寬為 flex: 0 0 390px（CD-75b-1）；目前: " + m.group(1).strip()
+        )
+
+    def test_body_flex_none_scope_override(self):
+        css = self._css()
+        # bare .search-container .av-card-full-body { ... }（body 後直接 {，非 descendant selector）
+        m = re.search(r'\.search-container \.av-card-full-body \{([^}]*)\}', css)
+        assert m, "search.css 找不到 .search-container .av-card-full-body top-pack override"
+        assert "flex: none" in m.group(1), (
+            "search.css 應有 .search-container .av-card-full-body { flex: none }（top-pack，CD-75b-4）"
+        )
+
+    def test_info_grid_pair_two_columns_desktop(self):
+        css = self._css()
+        m = re.search(r'\.search-container \.av-card-full-body \.info-grid-pair \{([^}]*)\}', css)
+        assert m, "search.css 找不到 .info-grid-pair 桌面規則"
+        assert "grid-template-columns: 1fr 1fr" in m.group(1), (
+            "桌面 .info-grid-pair 應為 grid-template-columns: 1fr 1fr（CD-75b-2）"
+        )
+
+    def test_grid_pair_collapses_single_column_under_1024(self):
+        css = self._css()
+        # 抓 @media (max-width: 1024px) block（close 為行首 }）
+        m = re.search(r'@media \(max-width: 1024px\) \{(.*?)\n\}', css, re.DOTALL)
+        assert m, "search.css 找不到 @media (max-width: 1024px) block"
+        block = m.group(1)
+        m2 = re.search(r'\.info-grid-pair \{([^}]*)\}', block)
+        assert m2, "≤1024px block 內找不到 .info-grid-pair collapse 規則（spec §US1 強制）"
+        # 帶分號：防 `1fr 1fr` 子字串誤過（`1fr;` 不是 `1fr 1fr;` 的子串）
+        assert "grid-template-columns: 1fr;" in m2.group(1), (
+            "≤1024px .info-grid-pair 應 collapse 回單欄 grid-template-columns: 1fr;（spec §US1 L97/L113）"
+        )
+
+
+class TestUS5ShowcaseGridIs3Col:
+    """TASK-75b-T4：showcase.css ≤480px 的 .showcase-grid 為 repeat(3, 1fr)（非 1fr）。
+
+    鎖定含 .showcase-grid 的那個 @media (max-width: 480px) block（另有 actress-grid 的同寬 block）。
+    三問：改回 1fr → 紅；刪 3-col 規則 → 紅。
+    """
+
+    def _css(self):
+        return SHOWCASE_CSS.read_text(encoding="utf-8")
+
+    def test_showcase_grid_3col_at_480(self):
+        css = self._css()
+        # 所有 @media (max-width: 480px) block（close = 行首 }）
+        blocks = re.findall(r'@media \(max-width: 480px\) \{(.*?)\n\}', css, re.DOTALL)
+        assert blocks, "showcase.css 找不到 @media (max-width: 480px) block"
+        target = [b for b in blocks if re.search(r'\.showcase-grid \{', b)]
+        assert target, "找不到含 .showcase-grid 的 ≤480px block"
+        block = target[0]
+        m = re.search(r'\.showcase-grid \{([^}]*)\}', block)
+        assert m, "≤480px block 內找不到 .showcase-grid 規則"
+        rule = m.group(1)
+        assert "repeat(3, 1fr)" in rule, (
+            "≤480px .showcase-grid 應為 repeat(3, 1fr)（CD-75b-7）；目前: " + rule.strip()
+        )
+        assert "grid-template-columns: 1fr;" not in rule, (
+            "≤480px .showcase-grid 不應殘留單欄 grid-template-columns: 1fr;"
+        )
+
+
+class TestUS5PosterCropScoped:
+    """TASK-75b-T4/T5：影片卡 poster-crop + caption 截斷帶正確 specificity scope。
+
+    斷言 ≤480px 影片卡規則帶 :is(#ds-gallery-components, .ds-gallery-composition) + :not(.hero-card)，
+    引用 var(--poster-crop-ratio)，子 img object-position: right center，caption .av-actress display:none。
+    三問：拔 :is() 前綴 → 紅（silent no-op 不會被擋，靠此守衛擋）；用錯 class .av-maker → 紅。
+    """
+
+    def _css(self):
+        return SHOWCASE_CSS.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _strip_comments(text: str) -> str:
+        """移除 /* ... */ 註解——避免守衛被註解內提及的 selector 字串騙過（comment 內含 :is(...) 說明）。"""
+        return re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+
+    def test_poster_crop_rules_scoped_and_token_referenced(self):
+        css = self._strip_comments(self._css())
+        blocks = re.findall(r'@media \(max-width: 480px\) \{(.*?)\n\}', css, re.DOTALL)
+        target = [b for b in blocks if ".av-card-preview-img" in b]
+        assert target, "找不到含 .av-card-preview-img poster-crop 的 ≤480px block"
+        block = target[0]
+        # rule-bound：鎖定「含 aspect-ratio: var(--poster-crop-ratio) 的那條規則自身的 selector」，
+        # 確認該規則本身帶 scope（避免「caption 規則有 :is() 就過關、但關鍵 aspect-ratio 規則漏 :is() → silent no-op」）。
+        m = re.search(r'([^{}]*)\{[^{}]*aspect-ratio: var\(--poster-crop-ratio[^{}]*\}', block, re.DOTALL)
+        assert m, "找不到 aspect-ratio: var(--poster-crop-ratio) 規則"
+        sel = m.group(1)
+        assert ":is(#ds-gallery-components, .ds-gallery-composition)" in sel, (
+            "aspect-ratio 規則 selector 必帶 :is(#ds-gallery-components,…) scope（否則 (0,4,0) 輸基準 (1,0,1) → silent no-op）；"
+            f"目前 selector: {sel.strip()!r}"
+        )
+        assert ":not(.hero-card)" in sel, (
+            "aspect-ratio 規則 selector 必帶 :not(.hero-card)（排除女優 hero 卡）"
+        )
+        # object-position 規則同樣 rule-bound 檢查 scope
+        m2 = re.search(r'([^{}]*)\{[^{}]*object-position: right center[^{}]*\}', block, re.DOTALL)
+        assert m2, "找不到 object-position: right center 規則"
+        sel2 = m2.group(1)
+        assert ":is(#ds-gallery-components, .ds-gallery-composition)" in sel2 and ":not(.hero-card)" in sel2, (
+            "object-position 規則 selector 必帶 :is(…) scope + :not(.hero-card)"
+        )
+
+    def test_caption_truncation_uses_av_actress(self):
+        css = self._css()
+        blocks = re.findall(r'@media \(max-width: 480px\) \{(.*?)\n\}', css, re.DOTALL)
+        target = [b for b in blocks if ".footer-default" in b and ".av-actress" in b]
+        assert target, "找不到含 caption 截斷（.footer-default .av-actress）的 ≤480px block"
+        block = target[0]
+        # .av-actress 隱藏
+        m = re.search(r'\.footer-default \.av-actress \{([^}]*)\}', block)
+        assert m, "找不到 .footer-default .av-actress 規則"
+        assert "display: none" in m.group(1), ".av-actress（女優名次行）應 display:none"
+        # .av-num ellipsis
+        m2 = re.search(r'\.footer-default \.av-num \{([^}]*)\}', block)
+        assert m2, "找不到 .footer-default .av-num 規則"
+        assert "text-overflow: ellipsis" in m2.group(1), ".av-num（番號）應單行 ellipsis"
+
+    def test_touch_narrow_reshows_footer_default(self):
+        """Codex P1：≤480px ∩ pointer:coarse 必須還原 .footer-default（番號層）、壓 .footer-hover（標題層）。
+
+        否則 75a-US3c 的 @media(pointer:coarse) 把 .footer-default opacity:0、改顯 footer-hover 標題 →
+        T5 番號 ellipsis 作用在 invisible 層、真機看到的是不可讀標題（spec §US5 caption 失效）。
+        三問：刪此交集 block → 紅（找不到 480+coarse block）；把 footer-default opacity 改回 0 → 紅。
+        """
+        css = self._strip_comments(self._css())
+        m = re.search(
+            r'@media \(max-width: 480px\) and \(pointer: coarse\) \{(.*?)\n\}',
+            css, re.DOTALL,
+        )
+        assert m, "找不到 @media (max-width: 480px) and (pointer: coarse) 交集 block（Codex P1 fix 缺失）"
+        block = m.group(1)
+        # footer-default 規則自身帶 scope + 還原 opacity:1
+        md = re.search(r'([^{}]*\.footer-default)\s*\{([^}]*)\}', block)
+        assert md, "交集 block 內找不到 .footer-default 規則"
+        assert ":is(#ds-gallery-components, .ds-gallery-composition)" in md.group(1) and ":not(.hero-card)" in md.group(1), (
+            ".footer-default 還原規則 selector 必帶 :is(…) scope + :not(.hero-card)"
+        )
+        assert "opacity: 1" in md.group(2), (
+            "≤480px ∩ coarse 應把 poster 卡 .footer-default opacity:1（還原番號 caption 層）"
+        )
+        # footer-hover 壓回 opacity:0
+        mh = re.search(r'\.footer-hover\s*\{([^}]*)\}', block)
+        assert mh, "交集 block 內找不到 .footer-hover 規則"
+        assert "opacity: 0" in mh.group(1), (
+            "≤480px ∩ coarse poster 格應把 .footer-hover opacity:0（標題層在 107px 窄格不可讀）"
+        )
+
+
+# ============================================================================
+# TASK-75b-T7（CD-75b-12）：≤480px poster 格 → lightbox ghost-fly 溶接守衛
+# 跨檔契約：state-lightbox.js 計算並傳 posterCrop → ghost-fly.js 消費（對齊右裁 + 落地 crossfade）
+# ============================================================================
+
+GHOST_FLY_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "shared" / "ghost-fly.js"
+STATE_LIGHTBOX_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "showcase" / "state-lightbox.js"
+
+
+class TestUS5PosterCropGhostCrossfade:
+    """TASK-75b-T7：poster 格開燈箱的 cover→contain 溶接（Codex 視覺 bug2）。
+
+    契約：state-lightbox.js 依「≤480px ∩ 非女優模式 ∩ 非 hero」算 posterCrop 並傳給
+    playGridToLightbox；ghost-fly.js 在 posterCrop 下對齊縮圖右裁（objectPosition right center）
+    並於落地 crossfade（coverEl 淡入 + ghost 淡出 0.12s）取代硬切 cleanupGhost。
+    三問：刪 posterCrop 傳遞 → 紅；刪 objectPosition 對齊 → 紅；把 crossfade 改回硬切 → 紅。
+    """
+
+    def _grid_to_lightbox_body(self) -> str:
+        js = GHOST_FLY_JS.read_text(encoding="utf-8")
+        start = js.find("playGridToLightbox: function")
+        assert start >= 0, "ghost-fly.js 找不到 playGridToLightbox"
+        end = js.find("playLightboxToGrid: function", start)
+        assert end > start, "ghost-fly.js 找不到 playGridToLightbox 結束邊界"
+        return js[start:end]
+
+    def test_state_lightbox_threads_poster_crop(self):
+        js = STATE_LIGHTBOX_JS.read_text(encoding="utf-8")
+        # 計算條件三要素
+        assert "posterCrop" in js, "state-lightbox.js 應計算 posterCrop"
+        assert "window.innerWidth <= 480" in js, "posterCrop 應 gate ≤480px"
+        assert "showFavoriteActresses" in js, "posterCrop 應排除女優模式"
+        assert "hero-card" in js, "posterCrop 應排除 hero 卡（女優入口）"
+        # 傳入 playGridToLightbox 的 options
+        assert "posterCrop: posterCrop" in js, (
+            "state-lightbox.js 應把 posterCrop 傳入 playGridToLightbox options"
+        )
+
+    def test_ghost_fly_consumes_and_aligns_crop(self):
+        body = self._grid_to_lightbox_body()
+        assert "options.posterCrop" in body, "playGridToLightbox 應消費 options.posterCrop"
+        # (A) 對齊縮圖右裁
+        assert "objectPosition = 'right center'" in body, (
+            "posterCrop 下 ghost 應對齊縮圖 objectPosition right center（消起飛 pan）"
+        )
+
+    def test_ghost_fly_landing_crossfade(self):
+        body = self._grid_to_lightbox_body()
+        # (D) 落地 crossfade：coverEl 淡入 + ghost 淡出，且綁在 posterCrop 分支
+        assert "posterCrop && coverEl" in body, (
+            "落地 crossfade 應 gate 在 posterCrop（非 poster 路徑維持硬切 cleanupGhost）"
+        )
+        assert "opacity: 1, duration: 0.12" in body, "coverEl 應 0.12s 淡入（contain 真圖浮現）"
+        assert "opacity: 0, duration: 0.12" in body, "ghost 應 0.12s 淡出（溶接 cover→contain）"
+        # 非 poster 仍走硬切 cleanupGhost
+        assert "cleanupGhost(ghost, coverEl)" in body, (
+            "非 posterCrop 路徑應保留硬切 cleanupGhost（桌面零回歸）"
+        )
+
+
+# ============================================================================
+# TASK-75b-T8：≤480px 影片燈箱封面貼合原圖比例（消 letterbox 死白 + 根治 T7 seam）
+# CSS element-bound 讀取守衛（require-presence of a rule，比照 US5 其他 guard）
+# ============================================================================
+
+
+class TestUS5VideoCoverFitMobile:
+    """TASK-75b-T8：≤480px 影片燈箱封面以原圖比例呈現、消上下 letterbox 死白。
+
+    make-or-break（live 實證）：須同改 (a) img/.lb-full 尺寸法 + (b) 容器 min-*，
+    只改 img 空白會留在容器。scope :has(.lb-full) 只中影片、不波及女優 cover。
+    三問：刪容器 min-height:0 → 紅（make-or-break）；刪 img height:auto → 紅；
+    把 :has(.lb-full) 改裸 .lightbox-cover（會波及女優）→ scope 守衛紅。
+    """
+
+    def _css(self):
+        return SHOWCASE_CSS.read_text(encoding="utf-8")
+
+    def _t8_block(self) -> str:
+        """抓含 .lightbox-cover:has(.lb-full) 的那個 @media (max-width: 480px) block。"""
+        css = self._css()
+        blocks = re.findall(r'@media \(max-width: 480px\) \{(.*?)\n\}', css, re.DOTALL)
+        target = [b for b in blocks if ".lightbox-cover:has(.lb-full)" in b]
+        assert target, "showcase.css 找不到含 .lightbox-cover:has(.lb-full) 的 ≤480px block（T8 缺失）"
+        return target[0]
+
+    def test_video_cover_fit_media_block_exists(self):
+        block = self._t8_block()
+        assert ".lightbox-cover:has(.lb-full)" in block, "T8 block 應 scope 到 :has(.lb-full)"
+
+    def test_container_min_zeroed_gated_on_has_cover(self):
+        """make-or-break：容器 min-height/min-width 必須歸零（否則空白只是重新分配）。
+        Codex P2：容器 min-height:0 必須 gate 在 .has-cover——無封面影片若塌成 0 高、補封面入口會壞，
+        故 selector 必為 .lightbox-cover.has-cover:has(.lb-full)（非裸 :has(.lb-full)）。
+        三問：拿掉 .has-cover gate → 紅（無封面會塌）；拿掉 min-height:0 → 紅（留白未消）。
+        """
+        block = self._t8_block()
+        m = re.search(r'\.lightbox-cover\.has-cover:has\(\.lb-full\) \{([^}]*)\}', block)
+        assert m, "T8 容器規則須為 .lightbox-cover.has-cover:has(.lb-full)（Codex P2：min-height:0 須 gate has-cover）"
+        body = m.group(1)
+        assert "min-height: 0" in body, (
+            "容器須 min-height: 0（否則 min(58vh,460px) 主導、img 置中留白未消）—— make-or-break"
+        )
+        assert "min-width: 0" in body, "容器須 min-width: 0"
+
+    def test_img_height_auto_width_full(self):
+        """img + .lb-full 須 height:auto + width:100%（覆寫 60vh），且規則涵蓋 .lb-full。"""
+        block = self._t8_block()
+        m = re.search(
+            r'\.lightbox-cover:has\(\.lb-full\) img,\s*\.lightbox-cover:has\(\.lb-full\) \.lb-full \{([^}]*)\}',
+            block,
+        )
+        assert m, "T8 block 內找不到涵蓋 img + .lb-full 的尺寸規則"
+        body = m.group(1)
+        assert "height: auto" in body, "img/.lb-full 須 height: auto（覆寫 60vh）"
+        assert "width: 100%" in body, "img/.lb-full 須 width: 100%"
+
+    def test_scoped_to_has_lb_full_not_actress(self):
+        """scope 護欄：T8 block 不得出現裸 .lightbox-cover img 的 height:auto（會波及女優 cover）。"""
+        block = self._t8_block()
+        # 裸 .lightbox-cover img {（無 :has）出現在 block 內即危險
+        bare = re.search(r'(?<!\)) \.lightbox-cover img \{', block)
+        assert not bare, (
+            "T8 block 不得含裸 .lightbox-cover img 規則（無 :has(.lb-full)）—— 會波及女優燈箱封面"
+        )
+
+    def test_similar_open_40vh_untouched(self):
+        """回歸護欄：手機相似模式 similar-open 40vh / 38vh 規則仍在（未被 T8 波及）。"""
+        css = self._css()
+        assert "min(38vh, 290px)" in css, "similar-open 容器 min-height 規則應保留"
+        assert "height: 40vh" in css, "similar-open img/lb-full 40vh 規則應保留"
+
+    def test_video_lightbox_cover_has_cover_class(self):
+        """Codex P2：影片燈箱 .lightbox-cover 須帶 has-cover 旗標（綁 cover_url），
+        供 T8 容器 min-height:0 只在有封面時生效。三問：拿掉旗標 → 紅（CSS gate 失效）。
+        """
+        html = SHOWCASE_HTML.read_text(encoding="utf-8")
+        assert "'has-cover': !!currentLightboxVideo?.cover_url" in html, (
+            "影片燈箱 .lightbox-cover 應綁 :class=\"{'has-cover': !!currentLightboxVideo?.cover_url}\""
+        )
+
+
+# ============================================================================
+# TASK-75b-T9：search 頁 ≤480px 影片格 + 燈箱修正守衛
+# Port of showcase T4/T5/T7/T8 — all search-specific rules live in search.css (決策 ②)
+# ============================================================================
+
+_SHOWCASE_CSS_T9 = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "showcase.css"
+
+
+class TestUS9SearchGridMobileFix:
+    """TASK-75b-T9：search grid ≤480px 三欄 poster + 燈箱 letterbox 消除守衛。
+
+    涵蓋 T4（3-col）、T5（poster-crop/caption/coarse footer）、T7（posterCrop 傳遞）、T8（cover-fit）。
+    全部 search-specific 規則在 search.css（決策 ②）；showcase.css 零改動（回歸護欄）。
+    """
+
+    @staticmethod
+    def _strip_comments(text: str) -> str:
+        """移除 /* ... */ 註解——避免守衛被註解內提及的 selector 字串騙過。"""
+        return re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+
+    def _search_css(self):
+        return SEARCH_CSS.read_text(encoding="utf-8")
+
+    # --- T4 ---
+
+    def test_search_grid_3col_at_480(self):
+        """T4：search.css ≤480px .search-grid 為 repeat(3, 1fr)（非單欄 1fr）。
+        三問：改回 1fr → 紅；刪 3-col 規則 → 紅。
+        """
+        css = self._search_css()
+        blocks = re.findall(r'@media \(max-width: 480px\) \{(.*?)\n\}', css, re.DOTALL)
+        assert blocks, "search.css 找不到 @media (max-width: 480px) block"
+        target = [b for b in blocks if re.search(r'\.search-grid \{', b)]
+        assert target, "找不到含 .search-grid 的 ≤480px block"
+        block = target[0]
+        m = re.search(r'\.search-grid \{([^}]*)\}', block)
+        assert m, "≤480px block 內找不到 .search-grid 規則"
+        rule = m.group(1)
+        assert "repeat(3, 1fr)" in rule, (
+            "≤480px .search-grid 應為 repeat(3, 1fr)（T9-T4 port）；目前: " + rule.strip()
+        )
+        assert "grid-template-columns: 1fr;" not in rule, (
+            "≤480px .search-grid 不應殘留單欄 grid-template-columns: 1fr;"
+        )
+
+    # --- T5 ---
+
+    def test_search_poster_crop_scoped(self):
+        """T5：search.css ≤480px poster-crop + caption 帶正確 :is() scope + :not(.hero-card)。
+        STRIP CSS COMMENTS first（防被 selector 說明文字騙過，mirror TestUS5PosterCropScoped）。
+        三問：拔 :is() 前綴 → 紅；用錯 class .av-maker → 紅；拔 :not(.hero-card) → 紅。
+        """
+        css = self._strip_comments(self._search_css())
+        blocks = re.findall(r'@media \(max-width: 480px\) \{(.*?)\n\}', css, re.DOTALL)
+        target = [b for b in blocks if ".av-card-preview-img" in b and ".search-grid" in b]
+        assert target, "找不到含 .av-card-preview-img + .search-grid 的 ≤480px block（T9-T5 poster-crop 缺失）"
+        block = target[0]
+
+        # rule-bound：aspect-ratio 規則自身 selector 必帶 :is() + :not(.hero-card)
+        m = re.search(r'([^{}]*)\{[^{}]*aspect-ratio: var\(--poster-crop-ratio[^{}]*\}', block, re.DOTALL)
+        assert m, "找不到 aspect-ratio: var(--poster-crop-ratio) 規則"
+        sel = m.group(1)
+        assert ":is(#ds-gallery-components, .ds-gallery-composition)" in sel, (
+            "aspect-ratio 規則 selector 必帶 :is(#ds-gallery-components,…) scope；"
+            f"目前 selector: {sel.strip()!r}"
+        )
+        assert ":not(.hero-card)" in sel, (
+            "aspect-ratio 規則 selector 必帶 :not(.hero-card)（排除女優 hero 卡）"
+        )
+
+        # object-position 同款 rule-bound 檢查
+        m2 = re.search(r'([^{}]*)\{[^{}]*object-position: right center[^{}]*\}', block, re.DOTALL)
+        assert m2, "找不到 object-position: right center 規則"
+        sel2 = m2.group(1)
+        assert ":is(#ds-gallery-components, .ds-gallery-composition)" in sel2 and ":not(.hero-card)" in sel2, (
+            "object-position 規則 selector 必帶 :is(…) scope + :not(.hero-card)"
+        )
+
+        # caption：.av-actress display:none
+        m3 = re.search(r'\.footer-default \.av-actress \{([^}]*)\}', block)
+        assert m3, "找不到 .footer-default .av-actress 規則"
+        assert "display: none" in m3.group(1), ".av-actress（女優名次行）應 display: none"
+
+        # .av-num ellipsis
+        m4 = re.search(r'\.footer-default \.av-num \{([^}]*)\}', block)
+        assert m4, "找不到 .footer-default .av-num 規則"
+        assert "text-overflow: ellipsis" in m4.group(1), ".av-num（番號）應單行 ellipsis"
+
+    def test_search_grid_scope_is_compound_not_descendant(self):
+        """Codex P2 回歸守衛：search grid 的 scope class 在 .search-grid 元素本身
+        （`<div class="search-grid ds-gallery-composition">`），故 :is(…) 必須**複合**接 .search-grid（無空格）。
+        後代形式 `:is(…) .search-grid`（有空格）要求 scope 在「祖先」→ search 無此祖先 → 永不命中（silent no-op）。
+        靜態守衛抓不到「runtime 是否命中」，但能鎖死「複合 vs 後代」這個唯一致命差別。
+        三問：把任一 :is(…).search-grid 改回 :is(…) .search-grid（加一個空格）→ 紅。
+        """
+        css = self._strip_comments(self._search_css())
+        assert ":is(#ds-gallery-components, .ds-gallery-composition).search-grid" in css, (
+            "search.css 的 .search-grid scope 規則必須用複合 :is(…).search-grid（scope class 在 grid 本身，非祖先）"
+        )
+        assert ":is(#ds-gallery-components, .ds-gallery-composition) .search-grid" not in css, (
+            "search.css 不得用後代 :is(…) .search-grid（有空格）——scope 在 grid 本身、後代選擇器永不命中（Codex P2 silent no-op）"
+        )
+
+    def test_search_touch_narrow_reshows_footer_default(self):
+        """T5：≤480px ∩ pointer:coarse .search-grid 還原 .footer-default（番號層）+ 壓 .footer-hover。
+        三問：刪此 block → 紅；把 footer-default opacity 改回 0 → 紅。
+        """
+        css = self._strip_comments(self._search_css())
+        m = re.search(
+            r'@media \(max-width: 480px\) and \(pointer: coarse\) \{(.*?)\n\}',
+            css, re.DOTALL,
+        )
+        assert m, "search.css 找不到 @media (max-width: 480px) and (pointer: coarse) block（T9-T5 coarse 還原缺失）"
+        block = m.group(1)
+
+        assert ".search-grid" in block, "coarse 交集 block 應 scope 到 .search-grid"
+
+        # footer-default 還原：selector 帶 :is() + :not(.hero-card) + opacity:1
+        md = re.search(r'([^{}]*\.footer-default)\s*\{([^}]*)\}', block)
+        assert md, "coarse 交集 block 內找不到 .footer-default 規則"
+        assert ":is(#ds-gallery-components, .ds-gallery-composition)" in md.group(1) and ":not(.hero-card)" in md.group(1), (
+            ".footer-default 還原規則 selector 必帶 :is(…) scope + :not(.hero-card)"
+        )
+        assert "opacity: 1" in md.group(2), (
+            "≤480px ∩ coarse 應把 search 影片格 .footer-default opacity: 1（還原番號 caption 層）"
+        )
+
+        # footer-hover 壓回 opacity:0
+        mh = re.search(r'\.footer-hover\s*\{([^}]*)\}', block)
+        assert mh, "coarse 交集 block 內找不到 .footer-hover 規則"
+        assert "opacity: 0" in mh.group(1), (
+            "≤480px ∩ coarse search 影片格應把 .footer-hover opacity: 0"
+        )
+
+    # --- T8 ---
+
+    def test_search_lightbox_cover_fit(self):
+        """T8：search.css ≤480px .search-container .lightbox-cover.has-cover 消 letterbox。
+        決策 ①：容器 + img 皆 gate .has-cover（排除女優燈箱）。
+        護欄：block 內不得出現未 gate .has-cover 的裸 .search-container .lightbox-cover img（波及女優）。
+        三問：拿掉容器 min-height:0 → 紅；拿掉 img has-cover gate → 紅（bare 出現）。
+        """
+        css = self._search_css()
+        blocks = re.findall(r'@media \(max-width: 480px\) \{(.*?)\n\}', css, re.DOTALL)
+        target = [b for b in blocks if ".search-container .lightbox-cover" in b]
+        assert target, "search.css 找不到含 .search-container .lightbox-cover 的 ≤480px block（T9-T8 cover-fit 缺失）"
+        block = target[0]
+
+        # 容器：.search-container .lightbox-cover.has-cover { min-height: 0; min-width: 0 }
+        mc = re.search(r'\.search-container \.lightbox-cover\.has-cover \{([^}]*)\}', block)
+        assert mc, "T9-T8 容器規則須為 .search-container .lightbox-cover.has-cover"
+        cbody = mc.group(1)
+        assert "min-height: 0" in cbody, "容器須 min-height: 0（make-or-break）"
+        assert "min-width: 0" in cbody, "容器須 min-width: 0"
+
+        # img：.search-container .lightbox-cover.has-cover img { height: auto; width: 100% }
+        mi = re.search(r'\.search-container \.lightbox-cover\.has-cover img \{([^}]*)\}', block)
+        assert mi, "T9-T8 img 規則須為 .search-container .lightbox-cover.has-cover img（決策 ①：img 同 gate has-cover）"
+        ibody = mi.group(1)
+        assert "height: auto" in ibody, "img 須 height: auto（覆寫 60vh letterbox 源）"
+        assert "width: 100%" in ibody, "img 須 width: 100%"
+
+        # 護欄：不得含裸 .search-container .lightbox-cover img（無 .has-cover）
+        # 正確寫法一定有 .has-cover（如 .lightbox-cover.has-cover img），裸寫不含 .has-cover
+        bare = re.search(r'\.search-container \.lightbox-cover(?!\.has-cover) img \{', block)
+        assert not bare, (
+            "T9-T8 block 不得含裸 .search-container .lightbox-cover img（無 .has-cover gate）"
+            "——會波及女優燈箱封面（決策 ①）"
+        )
+
+    # --- T8 template ---
+
+    def test_search_lightbox_has_cover_class(self):
+        """T8：search.html .lightbox-cover 帶完整三條件 has-cover 旗標（決策 ②）。
+        三條件缺一即紅：非女優模式 + 有 cover 欄位 + 封面未 404。
+        注意：search 欄位是 .cover（非 .cover_url，R3 guard）。
+        """
+        html = SEARCH_HTML.read_text(encoding="utf-8")
+        assert (
+            "'has-cover': !actressLightboxMode() && !!currentLightboxVideo()?.cover && !_heroLightboxImageError"
+            in html
+        ), (
+            "search.html .lightbox-cover 應綁完整三條件 has-cover（決策 ②）；"
+            "缺少非女優判斷、或用 .cover_url（應為 .cover）、或漏 error-state 均為紅"
+        )
+
+    # --- T7 ---
+
+    def test_search_grid_mode_threads_poster_crop(self):
+        """T7：grid-mode.js openLightbox 計算 posterCrop 並傳入 playGridToLightbox。
+        三問：刪 posterCrop 計算 → 紅；刪傳遞 → 紅；拔 hero-card 判斷 → 紅。
+        """
+        js = GRID_MODE_JS.read_text(encoding="utf-8")
+        assert "posterCrop" in js, "grid-mode.js 應計算 posterCrop"
+        assert "window.innerWidth <= 480" in js, "posterCrop 應 gate ≤480px"
+        assert "hero-card" in js, "posterCrop 應排除 hero 卡（防禦性 guard）"
+        assert "posterCrop: posterCrop" in js, (
+            "grid-mode.js 應把 posterCrop 傳入 playGridToLightbox options"
+        )
+
+    # --- showcase 回歸護欄 ---
+
+    def test_showcase_t8_untouched(self):
+        """回歸護欄：T9 不動 showcase.css——showcase T8 block 仍在。
+        三問：T9 誤刪 showcase T8 container 規則 → 紅。
+        """
+        css = _SHOWCASE_CSS_T9.read_text(encoding="utf-8")
+        assert ".lightbox-cover.has-cover:has(.lb-full)" in css, (
+            "showcase.css T8 container 規則 .lightbox-cover.has-cover:has(.lb-full) 應保留（T9 不動 showcase.css）"
+        )
+        assert "min-height: 0" in css, (
+            "showcase.css T8 min-height: 0 應保留（T9 回歸護欄）"
+        )
+
+
+# ============================================================================
+# TASK-75b-T11：≤480px hero 卡（女優精準匹配入口）直式比例修正守衛
+# showcase + search 兩頁 video-mode grid ≤480px hero 卡改 0.71 直式 + img cover
+# ============================================================================
+
+class TestUS11HeroCardMobileFix:
+    """TASK-75b-T11：showcase + search 兩頁 ≤480px hero 卡改直式 poster 比例守衛。
+
+    根因：T4/T5/T9 的 :not(.hero-card) 排除 hero → hero 落回 theme.css 基準 3/2（寬短）→
+    圖高 62px vs 鄰卡 131px → row 死白 110px + 女優照 letterbox。
+    修正：≤480px hero .av-card-preview-img → aspect-ratio: var(--poster-crop-ratio, 0.71)；
+          hero img → object-fit: cover（覆蓋 hero 既有 contain）。
+    selector 規則：showcase 後代 :is(…) .showcase-grid；search 複合 :is(…).search-grid（Codex P2）。
+    三問：
+      - showcase：拔 aspect-ratio → 紅；img object-fit: cover 移除 → 紅
+      - search：同上；compound→descendant（加空格）→ 紅；後代形式存在 → 紅
+    """
+
+    @staticmethod
+    def _strip_comments(text: str) -> str:
+        """移除 /* ... */ 註解——避免守衛被註解內提及的 selector 字串騙過。"""
+        return re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+
+    def _showcase_css(self):
+        return SHOWCASE_CSS.read_text(encoding="utf-8")
+
+    def _search_css(self):
+        return SEARCH_CSS.read_text(encoding="utf-8")
+
+    # --- showcase hero guard ---
+
+    def test_showcase_hero_has_portrait_aspect_ratio(self):
+        """showcase.css ≤480px block 含 hero-card .av-card-preview-img aspect-ratio: var(--poster-crop-ratio。
+        rule-bound：驗 aspect-ratio 規則自身 selector 帶 :is(…) scope + .showcase-grid + .hero-card。
+        三問：拔 aspect-ratio → 紅；移除 :is() scope → 紅；移出 ≤480px block → 紅。
+        """
+        css = self._strip_comments(self._showcase_css())
+        blocks = re.findall(r'@media \(max-width: 480px\) \{(.*?)\n\}', css, re.DOTALL)
+        target = [b for b in blocks if ".av-card-preview.hero-card .av-card-preview-img" in b]
+        assert target, (
+            "showcase.css 找不到含 .av-card-preview.hero-card .av-card-preview-img 的 ≤480px block"
+            "（T11 showcase hero 規則缺失）"
+        )
+        block = target[0]
+        # rule-bound：aspect-ratio 規則 selector 帶正確 scope + hero class
+        m = re.search(r'([^{}]*)\{[^{}]*aspect-ratio: var\(--poster-crop-ratio[^{}]*\}', block, re.DOTALL)
+        assert m, "showcase.css ≤480px hero block 找不到 aspect-ratio: var(--poster-crop-ratio) 規則"
+        sel = m.group(1)
+        assert ":is(#ds-gallery-components, .ds-gallery-composition)" in sel, (
+            "showcase hero aspect-ratio 規則 selector 必帶 :is(#ds-gallery-components, .ds-gallery-composition) scope；"
+            f"目前 selector: {sel.strip()!r}"
+        )
+        assert ".showcase-grid" in sel, (
+            "showcase hero aspect-ratio 規則 selector 必帶 .showcase-grid；"
+            f"目前 selector: {sel.strip()!r}"
+        )
+        assert ".hero-card" in sel, (
+            "showcase hero aspect-ratio 規則 selector 必帶 .hero-card；"
+            f"目前 selector: {sel.strip()!r}"
+        )
+
+    def test_showcase_hero_img_has_object_fit_cover(self):
+        """showcase.css ≤480px hero img 規則含 object-fit: cover（覆蓋 hero 桌面 contain）。
+        三問：移除 object-fit: cover → 紅；移出 ≤480px block → 紅。
+        """
+        css = self._strip_comments(self._showcase_css())
+        blocks = re.findall(r'@media \(max-width: 480px\) \{(.*?)\n\}', css, re.DOTALL)
+        target = [b for b in blocks if ".av-card-preview.hero-card .av-card-preview-img" in b]
+        assert target, "showcase.css 找不到含 hero-card .av-card-preview-img 的 ≤480px block"
+        block = target[0]
+        m = re.search(r'([^{}]*)\{[^{}]*object-fit: cover[^{}]*\}', block, re.DOTALL)
+        assert m, "showcase.css ≤480px hero block 找不到 object-fit: cover 規則"
+        sel = m.group(1)
+        assert ".hero-card" in sel, (
+            "object-fit: cover 規則 selector 必帶 .hero-card（確認是 hero img 規則，非鄰卡）"
+        )
+
+    # --- search hero guard ---
+
+    def test_search_hero_has_portrait_aspect_ratio(self):
+        """search.css ≤480px block 含 hero-card .av-card-preview-img aspect-ratio: var(--poster-crop-ratio。
+        rule-bound：驗 selector 帶 :is(…).search-grid（複合）+ .hero-card。
+        三問：拔 aspect-ratio → 紅；移除 :is() scope → 紅；移出 ≤480px block → 紅。
+        """
+        css = self._strip_comments(self._search_css())
+        blocks = re.findall(r'@media \(max-width: 480px\) \{(.*?)\n\}', css, re.DOTALL)
+        target = [b for b in blocks if ".av-card-preview.hero-card .av-card-preview-img" in b]
+        assert target, (
+            "search.css 找不到含 .av-card-preview.hero-card .av-card-preview-img 的 ≤480px block"
+            "（T11 search hero 規則缺失）"
+        )
+        block = target[0]
+        m = re.search(r'([^{}]*)\{[^{}]*aspect-ratio: var\(--poster-crop-ratio[^{}]*\}', block, re.DOTALL)
+        assert m, "search.css ≤480px hero block 找不到 aspect-ratio: var(--poster-crop-ratio) 規則"
+        sel = m.group(1)
+        assert ":is(#ds-gallery-components, .ds-gallery-composition)" in sel, (
+            "search hero aspect-ratio 規則 selector 必帶 :is(#ds-gallery-components, .ds-gallery-composition) scope；"
+            f"目前 selector: {sel.strip()!r}"
+        )
+        assert ".hero-card" in sel, (
+            "search hero aspect-ratio 規則 selector 必帶 .hero-card；"
+            f"目前 selector: {sel.strip()!r}"
+        )
+
+    def test_search_hero_scope_is_compound_not_descendant(self):
+        """Codex P2 回歸守衛：search hero 規則 selector 必須是複合 :is(…).search-grid（無空格）。
+        後代形式 :is(…) .search-grid .av-card-preview.hero-card（有空格）在 search 永不命中（silent no-op）。
+        三問：hero 規則 compound→descendant（加空格）→ 紅；後代形式 hero 存在 → 紅。
+        """
+        css = self._strip_comments(self._search_css())
+        # 正向：複合形式 .hero-card 規則存在
+        assert ":is(#ds-gallery-components, .ds-gallery-composition).search-grid .av-card-preview.hero-card" in css, (
+            "search.css hero 規則 selector 必須用複合 :is(…).search-grid（scope class 在 grid 本身，非祖先；"
+            "後代 :is(…) .search-grid 在 search 永不命中 → silent no-op）"
+        )
+        # 負向：後代形式 hero 規則不得存在（P2 回歸護欄）
+        assert ":is(#ds-gallery-components, .ds-gallery-composition) .search-grid .av-card-preview.hero-card" not in css, (
+            "search.css 不得有後代 :is(…) .search-grid .av-card-preview.hero-card（有空格）——"
+            "scope class 在 grid 本身，後代選擇器永不命中（Codex P2 P11 hero 回歸）"
+        )
+
+    def test_search_hero_img_has_object_fit_cover(self):
+        """search.css ≤480px hero img 規則含 object-fit: cover（覆蓋 hero 桌面 contain）。
+        三問：移除 object-fit: cover → 紅；移出 ≤480px block → 紅。
+        """
+        css = self._strip_comments(self._search_css())
+        blocks = re.findall(r'@media \(max-width: 480px\) \{(.*?)\n\}', css, re.DOTALL)
+        target = [b for b in blocks if ".av-card-preview.hero-card .av-card-preview-img" in b]
+        assert target, "search.css 找不到含 hero-card .av-card-preview-img 的 ≤480px block"
+        block = target[0]
+        m = re.search(r'([^{}]*)\{[^{}]*object-fit: cover[^{}]*\}', block, re.DOTALL)
+        assert m, "search.css ≤480px hero block 找不到 object-fit: cover 規則"
+        sel = m.group(1)
+        assert ".hero-card" in sel, (
+            "object-fit: cover 規則 selector 必帶 .hero-card（確認是 hero img 規則，非鄰卡）"
         )

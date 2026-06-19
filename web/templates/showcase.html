@@ -545,7 +545,7 @@
              x-trap.inert="lightboxOpen && !sampleGalleryOpen && !removeActressModalOpen && !rescrapeOpen && !deleteVideoModalOpen"
              @click="handleLightboxBackdropClick($event)">
 
-            <div class="lightbox-content" @click.stop>
+            <div class="lightbox-content" @click.stop :class="{ 'similar-open': similarModeMobileOpen }">
                 <!-- Close Button (shared between actress and video branches) -->
                 <button class="lightbox-close"
                         @click="closeLightbox()"
@@ -666,7 +666,9 @@
                 <template x-if="currentLightboxVideo && !currentLightboxActress">
                     <div style="display:contents">
                         <!-- Cover Image -->
-                        <div class="lightbox-cover">
+                        <!-- T8(Codex P2): has-cover 旗標 — 僅有封面時才讓 ≤480px min-height:0 塌到圖盒；
+                             無封面時保留 min-height 避免 cover 區塌成 0 高（補封面入口會壞）。 -->
+                        <div class="lightbox-cover" :class="{'has-cover': !!currentLightboxVideo?.cover_url}">
                             <!-- 56c-T3fix: magic 按鈕已搬至 .lightbox-content（與 .lightbox-close sibling 鏡射對稱）；sparkle-burst overlay 留在 .lightbox-cover 以便 inset:0 精準覆蓋封面區（不擴及 metadata） -->
                             <!-- 71-T6 blur-up: base 層=cover_url（快取開啟=小 webp 秒出、放大略糊；關閉=原圖）。
                                  撐容器尺寸；x-ref + @error 三態留 base（ghost-fly / 破圖偵測沿用 base src）。 -->
@@ -722,6 +724,24 @@
                                     <i class="bi" :class="_enriching ? 'bi-arrow-clockwise spin' : 'bi-search'"></i>
                                 </button>
                             </div>
+                        </div>
+
+                        <!-- 手機 < 960px（75a-US3b）相似模式降級：cosine 前 4 張 collapse（x-collapse 需 @alpinejs/collapse plugin，已在 base.html 行 640 載入）。75a-US4：置於 cover 與 metadata 之間，主片 + 4 相似一眼可見 -->
+                        <div class="lightbox-similar-mobile"
+                             x-show="similarModeMobileOpen"
+                             x-collapse>
+                          <div class="similar-mobile-grid">
+                            <template x-for="item in similarResults.slice(0, 4)" :key="item.video_id">
+                              <div class="similar-mobile-card"
+                                   @click="onSimilarMobileCardClick(item)">
+                                <img :src="item.cover_url" :alt="item.title" loading="lazy">
+                                <div class="similar-mobile-meta">
+                                  <div class="similar-mobile-number" x-text="item.number"></div>
+                                  <div class="similar-mobile-title" x-text="item.title"></div>
+                                </div>
+                              </div>
+                            </template>
+                          </div>
                         </div>
 
                         <!-- Metadata Panel（緊湊版，匹配原版 gallery） -->
@@ -858,24 +878,6 @@
                                 </span>
                             </div>
 
-                        </div>
-
-                        <!-- 56c-T7：手機 < 768px cosine 前 4 張 collapse（x-collapse 需 @alpinejs/collapse plugin，已在 base.html 行 640 載入） -->
-                        <div class="lightbox-similar-mobile"
-                             x-show="similarModeMobileOpen"
-                             x-collapse>
-                          <div class="similar-mobile-grid">
-                            <template x-for="item in similarResults.slice(0, 4)" :key="item.video_id">
-                              <div class="similar-mobile-card"
-                                   @click="onSimilarMobileCardClick(item)">
-                                <img :src="item.cover_url" :alt="item.title" loading="lazy">
-                                <div class="similar-mobile-meta">
-                                  <div class="similar-mobile-number" x-text="item.number"></div>
-                                  <div class="similar-mobile-title" x-text="item.title"></div>
-                                </div>
-                              </div>
-                            </template>
-                          </div>
                         </div>
                     </div>
                 </template>

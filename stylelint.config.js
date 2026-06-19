@@ -15,6 +15,7 @@ module.exports = {
       '/^(-webkit-)?(backdrop-)?filter$/': ['/blur\\(\\s*\\d+px/'],
       'box-shadow': ['/\\brgba\\(\\s*\\d/'],
       'border-radius': ['/^\\d+px/'],
+      'object-position': ['/100%\\s+20%/'],
     },
     'selector-disallowed-list': ['/:is\\([^)]*manual-input/'],
     // Standard config rules relaxed for OpenAver's existing CSS conventions

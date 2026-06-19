@@ -102,8 +102,55 @@
 }
 
 .search-container .av-card-full-info {
-    flex: 0 0 320px;
+    flex: 0 0 390px;    /* US1-75b：320px → 390px（spec NC#2，CD-75b-1） */
     overflow-y: auto;
+}
+
+/* US1-75b：取消 search 右欄 body 撐高（top-pack）。不刪全域 theme.css flex:1
+   （design-system 也用 + 被 tailwind.css:4430 編譯副本架空，刪 theme.css 那條不生效）；
+   search.css 載入在 tailwind.css 之後、(0,2,0) > 全域 (0,1,0)，scope override 確實生效（CD-75b-4）。 */
+.search-container .av-card-full-body {
+    flex: none;
+}
+
+/* US1-75b：搜尋詳情右欄 inline label-value（覆寫 theme.css 全域 .info-label{display:block}，
+   只在 search 右欄 scope 覆寫，不動全域，避免影響 showcase 燈箱 .lightbox-metadata；CD-75b-3） */
+.search-container .av-card-full-body .info-row,
+.search-container .av-card-full-body .info-cell {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.search-container .av-card-full-body .info-label {
+    flex-shrink: 0;      /* label 不被壓縮 */
+    white-space: nowrap;
+}
+
+.search-container .av-card-full-body .info-value {
+    flex: 1;
+    min-width: 0;        /* 必要：flex min-width:auto 不觸發 text-overflow（CD-75b-10） */
+}
+
+/* US1-75b：雙欄 metadata grid（CD-75b-2） */
+.search-container .av-card-full-body .info-grid-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem 1rem;    /* 縱 0.5rem（8px）、橫 1rem（16px，Fluent 8pt × 2） */
+    margin-bottom: 0.5rem;
+}
+
+/* CD-75b-10：grid cell 內 label/value 截斷 */
+.search-container .av-card-full-body .info-grid-pair .info-label {
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.search-container .av-card-full-body .info-grid-pair .info-value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* 導航按鈕（絕對定位在封面上） */
@@ -484,6 +531,19 @@
         width: 100%;
         min-width: auto;
     }
+
+    /* 75a-US3a: mobile scroll trap 解鎖 —
+     * 桌面 .av-card-full-info 已有 overflow-y:auto，不動。
+     * column-stacked layout 下四層 overflow:hidden + height 鎖定形成 scroll trap。 */
+    .result-area        { overflow: visible; }
+    #resultCard         { overflow: visible; max-height: none; }
+    #resultCard > .av-card-full { overflow: visible; }
+    .search-container   { height: auto; overflow-y: auto; }
+
+    /* US1-75b：≤1024px 全寬單欄時，雙欄 metadata 回單欄（spec §US1 L97/L113 驗收強制，CD-75b-2） */
+    .search-container .av-card-full-body .info-grid-pair {
+        grid-template-columns: 1fr;
+    }
 }
 
 /* Mobile 額外調整 */
@@ -657,8 +717,88 @@
 
 @media (max-width: 480px) {
     .search-grid {
-        grid-template-columns: 1fr;
-        padding: 1rem;
+        grid-template-columns: repeat(3, 1fr);  /* T9-port：search 影片格對齊 showcase 3-col */
+        gap: 0.5rem;
+        padding: 0.75rem;
+    }
+}
+
+/* T9-port：≤480px search 影片格 poster-crop + caption（對齊 showcase T4/T5，Option P 平行）。
+   ★ Codex P2 修正：search grid 是 `<div class="search-grid ds-gallery-composition">`——scope class 在
+   grid 元素「本身」，非祖先（showcase 是 `.showcase-container.ds-gallery-composition` 祖先，故用後代）。
+   故此處用**複合選擇器** `:is(…).search-grid`（無空格，同元素），而非後代 `:is(…) .search-grid`——
+   後者要求 scope 在 .search-grid 的祖先 → search 無此祖先 → 永不命中（poster-crop/caption silent no-op）。
+   :is(#id,…) 仍必要：帶 (1,0,0) 使複合 (1,4,0) 勝基準 :is(…) .av-card-preview-img (1,1,0)；
+   去掉 #id 的純 class 複合僅 (0,4,0) 會輸基準。:not(.hero-card) 排除女優入口 hero 卡。 */
+@media (max-width: 480px) {
+    :is(#ds-gallery-components, .ds-gallery-composition).search-grid .av-card-preview:not(.hero-card) .av-card-preview-img {
+        aspect-ratio: var(--poster-crop-ratio, 0.71);
+        height: auto;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition).search-grid .av-card-preview:not(.hero-card) .av-card-preview-img img {
+        object-position: right center;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition).search-grid .av-card-preview:not(.hero-card) .av-card-preview-footer .footer-default .av-num {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-size: 0.7rem;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition).search-grid .av-card-preview:not(.hero-card) .av-card-preview-footer .footer-default .av-actress {
+        display: none;
+    }
+
+    /* T11：search 頁平行修正（同 showcase）。
+       ★ Codex P2：search grid 的 ds-gallery-composition 在 .search-grid 本身（非祖先）→ 用複合
+       :is(…).search-grid（無空格、同元素）。後代 :is(…) .search-grid 在 search 永不命中（silent no-op）。
+       :is(#id,…) 帶 (1,0,0) 使複合 (1,4,0) 勝 theme.css 基準 :is(…) .av-card-preview-img (1,0,1)。 */
+    :is(#ds-gallery-components, .ds-gallery-composition).search-grid .av-card-preview.hero-card .av-card-preview-img {
+        aspect-ratio: var(--poster-crop-ratio, 0.71);
+        height: auto;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition).search-grid .av-card-preview.hero-card .av-card-preview-img img {
+        object-fit: cover;
+        transform-origin: center center;
+    }
+}
+
+/* T9-port：≤480px ∩ touch 裝置 — search 影片格還原 .footer-default（番號可讀層）。
+   showcase.css 的 @media(pointer:coarse) US3c 把全局 .av-card-preview .footer-default opacity:0，
+   而 showcase 的 ≤480∩coarse 修正只 scope 在 .showcase-grid（L894–902），不涵蓋 .search-grid。
+   故補平行規則：≤480px ∩ coarse ∩ .search-grid 非 hero → 還原 footer-default 番號層。
+   specificity :is(…) ID 帶 (1,0,0) 使 (1,4,0) 勝 US3c .av-card-preview .footer-* (0,2,0)。
+   selector 同用複合 `:is(…).search-grid`（scope 在 grid 本身，見上 Codex P2 註）。 */
+@media (max-width: 480px) and (pointer: coarse) {
+    :is(#ds-gallery-components, .ds-gallery-composition).search-grid .av-card-preview:not(.hero-card) .footer-default {
+        opacity: 1;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition).search-grid .av-card-preview:not(.hero-card) .footer-hover {
+        opacity: 0;
+    }
+}
+
+/* T9-port：≤480px search 影片燈箱封面貼合原圖比例（消 letterbox 死白）。
+   判別子 .search-container 精準限 search 頁——showcase 頁根為 .showcase-container，零波及。
+   容器 + img 皆 gate .has-cover（決策 ①）：search 無 similar-open、無「保低 specificity」顧慮；
+     gate has-cover 後女優模式（has-cover=false）/無封面/404 皆不命中 → 乾淨排除女優燈箱、不塌。
+   specificity（皆自勝、不靠源序）：容器 .search-container .lightbox-cover.has-cover (0,3,0) 勝基準 (0,1,0)；
+     img .search-container .lightbox-cover.has-cover img (0,3,1) 勝基準 .lightbox-cover img (0,1,1)。 */
+@media (max-width: 480px) {
+    /* (b) 容器：有封面才塌到圖盒 */
+    .search-container .lightbox-cover.has-cover {
+        min-height: 0;
+        min-width: 0;
+    }
+    /* (a) img：寬填滿、高隨原圖比例（覆寫 60vh letterbox 源）；同 gate has-cover 排除女優燈箱 */
+    .search-container .lightbox-cover.has-cover img {
+        width: 100%;
+        height: auto;
+        object-fit: contain;
     }
 }
 

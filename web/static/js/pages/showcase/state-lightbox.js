@@ -140,6 +140,7 @@ export function stateLightbox() {
             // ★ C17 step 1: ghost fly — 在 state 變更前捕獲 fromRect
             var fromRect = null;
             var coverSrc = null;
+            var posterCrop = false;
             if (!this.lightboxOpen) {
                 var gridEl = this._getActiveGrid();
                 if (gridEl) {
@@ -160,6 +161,12 @@ export function stateLightbox() {
                         if (imgEl && imgEl.complete && imgEl.getBoundingClientRect().width > 0) {
                             fromRect = imgEl.getBoundingClientRect();
                             coverSrc = imgEl.src;
+                            // US5-T7 (CD-75b-12)：≤480px 影片卡縮圖走 poster-crop（封面右半正面）。
+                            // 非女優模式、非 hero 卡時通知 ghost 對齊裁切 + 落地溶接，
+                            // 避免 cover→contain 內容框法切換的硬切 glitch。裁切細節封裝在 ghost-fly.js。
+                            posterCrop = !this.showFavoriteActresses
+                                && window.innerWidth <= 480
+                                && !cardEl.classList.contains('hero-card');
                         }
                     }
                 }
@@ -182,6 +189,7 @@ export function stateLightbox() {
                     self._lightboxAnimating = true;
                     window.GhostFly.playGridToLightbox(fromRect, lightboxEl, {
                         coverSrc: coverSrc,
+                        posterCrop: posterCrop,
                         onComplete: function () { self._lightboxAnimating = false; }
                     });
                     if (window.ShowcaseAnimations && window.ShowcaseAnimations.playLightboxOpen) {

@@ -91,6 +91,7 @@ export function searchStateGridMode() {
         // ★ C17 step 1: 在 state 變更前捕獲 fromRect（僅 grid → lightbox 首次開啟）
         var fromRect = null;
         var coverSrc = null;
+        var posterCrop = false;   // T9-port: ≤480px search 影片卡 poster-crop 旗標（對齊 showcase state-lightbox.js）
         if (!this.lightboxOpen && this.displayMode === 'grid') {
             var grid = document.querySelector('.search-grid');
             var card = grid ? grid.querySelector('[data-slot="' + index + '"]') : null;
@@ -98,6 +99,9 @@ export function searchStateGridMode() {
             if (img && img.complete && img.getBoundingClientRect().width > 0) {
                 fromRect = img.getBoundingClientRect();
                 coverSrc = img.src;
+                // T9-port：≤480px search 影片卡縮圖走 poster-crop，通知 ghost 對齊裁切 + 落地溶接。
+                // search 無 showFavoriteActresses；openLightbox 路徑的 card 皆為影片卡（hero 走 openActressLightbox）。
+                posterCrop = window.innerWidth <= 480 && !card.classList.contains('hero-card');
             }
         }
 
@@ -120,6 +124,7 @@ export function searchStateGridMode() {
                 self._lightboxAnimating = true;
                 window.GhostFly.playGridToLightbox(fromRect, el, {
                     coverSrc: coverSrc,
+                    posterCrop: posterCrop,   // T9-port
                     onComplete: function () { self._lightboxAnimating = false; }
                 });
                 if (window.SearchAnimations && window.SearchAnimations.playLightboxOpen) {

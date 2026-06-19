@@ -293,11 +293,60 @@
     }
 }
 
-/* ≤480px → 1 column */
+/* ≤480px → 3 column poster 格（US5-75b，比照 .actress-grid 的 ≤480 斷點） */
 @media (max-width: 480px) {
     .showcase-grid {
-        grid-template-columns: 1fr;
-        padding: 1rem;
+        grid-template-columns: repeat(3, 1fr); /* US5-75b：1fr → 3-col（CD-75b-7） */
+        gap: 0.5rem;
+        padding: 0.75rem;
+    }
+
+    /* US5-75b：影片卡切直式 poster 比例。
+       數值來源 = plan-75a US2 poster-crop（--poster-crop-ratio），**不可獨立修改**（單一真理）。
+       Codex P1（specificity）：selector 必帶 :is(#ds-gallery-components, .ds-gallery-composition) scope。
+         :is() 含 #id → a=1（無論其他 arg），:not(.hero-card) 的 .hero-card 計入 b。
+         theme.css 基準 :is(#id,…) .av-card-preview-img = (1,0,1)；本規則 4 個 class（showcase-grid /
+         av-card-preview / .hero-card(:not) / av-card-preview-img）= (1,4,0) 贏。
+         若漏 :is() 前綴 → (0,4,0)，a=0 輸給基準 a=1 → aspect-ratio silent no-op、手機卡仍 3:2。
+       Codex F5：:not(.hero-card) 排除女優精準匹配 hero 卡（其圖 object-fit:contain，不可被裁成 0.71）。
+       .av-card-preview-img 是 <div> → aspect-ratio 寫 div；object-position 只對 replaced element 生效 → 寫子 img。 */
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid .av-card-preview:not(.hero-card) .av-card-preview-img {
+        aspect-ratio: var(--poster-crop-ratio, 0.71);
+        height: auto;   /* aspect-ratio 與 explicit height 互斥，明確 auto 防其他規則殘留高度 */
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid .av-card-preview:not(.hero-card) .av-card-preview-img img {
+        object-position: right center; /* (1,4,1) 贏 theme.css 基準 img (1,0,2)；基準本無 object-position（此為加值）；只露封面正面 */
+    }
+
+    /* US5-75b：3 欄 poster 格 caption（CD-75b-9）——番號單行 ellipsis、女優名次行隱藏。
+       次行 class = .av-actress（非 .av-maker；grid 卡無 .av-maker，誤用會 silent no-op）。
+       同帶 :is(…) scope + :not(.hero-card) 防誤殺 hero footer（其 footer 也有 .av-num/.av-actress，Codex F5）。 */
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid .av-card-preview:not(.hero-card) .av-card-preview-footer .footer-default .av-num {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-size: 0.7rem; /* 略縮字型容納番號（3 欄每欄 ≈107px） */
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid .av-card-preview:not(.hero-card) .av-card-preview-footer .footer-default .av-actress {
+        display: none; /* narrow 下次要資訊，空間不足 */
+    }
+
+    /* T11：≤480px hero 卡（女優精準匹配入口）改直式 poster 比例，對齊同列 0.71 鄰卡 → 消 row 死白/錯位。
+       值引用 --poster-crop-ratio（與鄰卡同源，單一真理）。img 改 object-fit:cover（女優照 0.826 略寬胖，
+       cover 填滿僅輕裁上下、無 letterbox），覆蓋 hero 既有 contain（L2342）。
+       selector 帶 :is(#id,…) scope → (1,4,0) 勝 theme.css 基準 (1,0,1)；showcase 的 ds-gallery-composition
+       在 .showcase-container 祖先 → 用後代 :is(…) .showcase-grid（與 L313 同 pattern）。
+       hero 在女優收藏模式不存在（showFavoriteActresses gate），故只影響 video-mode grid。 */
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid .av-card-preview.hero-card .av-card-preview-img {
+        aspect-ratio: var(--poster-crop-ratio, 0.71);
+        height: auto;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid .av-card-preview.hero-card .av-card-preview-img img {
+        object-fit: cover;             /* 覆蓋 hero 桌面 contain（L2342）；女優照填滿、無 letterbox */
+        transform-origin: center center;
     }
 }
 
@@ -828,6 +877,46 @@
     }
 }
 
+/* 75a-US3c: touch 裝置 hover-only 三處直達（比照 .lightbox-cover .cover-actions 先例，showcase.css:825-829）*/
+@media (pointer: coarse) {
+    /* (1) showcase grid 影片卡 overlay — 常駐顯示 */
+    :is(#ds-gallery-components, .ds-gallery-composition) .av-card-preview-overlay {
+        opacity: 1;
+        pointer-events: auto;
+    }
+    /* (2) 影片卡 footer-hover（標題層）— 常駐顯示，解除 translateY(100%) 入場 transform */
+    .av-card-preview .footer-hover {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    .av-card-preview .footer-default {
+        opacity: 0;    /* touch 裝置：標題層常駐、番號/女優層隱藏 */
+    }
+    /* (3) actress card overlay — 常駐顯示 */
+    .actress-card-overlay {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+
+/* US5-75b fix（Codex P1）：真實觸控 ≤480px poster 格——還原 .footer-default（番號可讀層）、
+ * 壓回上方 75a-US3c 的 footer-hover 常駐。
+ * 衝突來源：US3c 在 @media(pointer:coarse) 無條件把 .footer-default opacity:0 + footer-hover opacity:1
+ * （touch 顯示標題層）；但 US5 的 3 欄 poster 格（≤480px）要顯示「番號 caption」（spec §US5 / CD-75b-9），
+ * 標題在 107px 窄格不可讀。故在 ≤480px ∩ pointer:coarse ∩ poster-grid 非 hero 卡，反轉回 footer-default。
+ * scope :is(#id,…) → a=1 勝 US3c .av-card-preview .footer-* 的 (0,2,0)；:not(.hero-card) 不碰女優入口；
+ * 481px+ touch / pointer:fine 桌面皆不受影響（US3c title-on-touch 行為保留）。
+ * T5 的 .av-num ellipsis / .av-actress display:none 規則此時作用在已可見的 .footer-default 上。 */
+@media (max-width: 480px) and (pointer: coarse) {
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid .av-card-preview:not(.hero-card) .footer-default {
+        opacity: 1;
+    }
+
+    :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid .av-card-preview:not(.hero-card) .footer-hover {
+        opacity: 0;
+    }
+}
+
 /* ─── 56c-T3 / T3fix: Similar Mode 入口按鈕 + Sparkle Burst 預覽 ────────────
  * .lightbox-similar-btn — 玻璃材質圓鈕，與 .lightbox-close 鏡射對稱（左上 1rem/1rem）
  *   尺寸 44×44，與 .lightbox-close 鏡射對稱（同尺寸 + 同距邊 1rem）
@@ -889,7 +978,7 @@
 
 .similar-mobile-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 0.5rem;                  /* --space-2 不存在，用 raw 0.5rem */
 }
 
@@ -912,7 +1001,7 @@
 
 .similar-mobile-card img {
     width: 100%;
-    aspect-ratio: 4/5;
+    aspect-ratio: var(--poster-crop-ratio);
     object-fit: cover;
     object-position: right center;  /* CSS layer crop，右半邊視覺 — 非 ghost-fly cropMode（不違反 lint rule）*/
     /* 圖片載入中骨架：lazy img 在 loaded 前顯示淺灰漸層 */
@@ -935,10 +1024,11 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    display: none;  /* 75a-US4: 77px 卡片寬度無法顯示標題，僅保留番號 */
 }
 
 /* 確保 mobile collapse 只在小螢幕渲染（桌面應永遠 similarModeMobileOpen = false） */
-@media (min-width: 768px) {
+@media (min-width: 960px) {
     .lightbox-similar-mobile {
         display: none !important;   /* 桌面安全網：即使 state 殘留也不顯示 */
     }
@@ -1165,6 +1255,47 @@
     }
 }
 
+/* 75a-US4: 手機相似模式主片封面縮高（僅 similar-open，一般燈箱不縮） */
+/* 特異性升至 (0,4,0)：勝 T8 ≤480 的 .lightbox-cover:has(.lb-full) .lb-full / .lightbox-cover.has-cover:has(.lb-full)
+   (0,3,0)，否則 source order 讓 T8 的 height:auto/min-height:0 在 similar 模式覆寫 → overlay 與 base 40vh 脫鉤/溢出 */
+@media (max-width: 960px) {
+    .showcase-lightbox .lightbox-content.similar-open .lightbox-cover {
+        min-height: min(38vh, 290px);   /* 覆寫容器 min-height: min(58vh, 460px) */
+    }
+    .lightbox-content.similar-open .lightbox-cover img,
+    .lightbox-content.similar-open .lightbox-cover .lb-full {
+        height: 40vh;   /* 覆寫 img/lb-full 的 60vh */
+    }
+}
+
+/* US5-75b-T8: ≤480px 影片燈箱封面貼合原圖比例（消 object-fit:contain 在 60vh 高框的 letterbox 死白）。
+ * :has(.lb-full) 只命中影片 cover（女優 cover 無 .lb-full，showcase.html:569 vs 669）→ 女優燈箱零波及。
+ * make-or-break（live 實證）：須同改 (a) img/.lb-full 尺寸法 + (b) 容器 min-*，只改 img 會把空白留在容器。
+ * 副作用：盒比例=圖比例後 object-fit:cover≈contain，T7 grid→lightbox flight 落地 cover→contain seam 自然消失。
+ * specificity（Codex P3 修正）：:has(.lb-full) 計入其引數一個 class →
+ *   img 規則 .lightbox-cover:has(.lb-full) img = (0,2,1) 勝基準 §667 .lightbox-cover img (0,1,1)，
+ *   容器 .lightbox-cover.has-cover:has(.lb-full) = (0,3,0) 勝基準 .lightbox-cover (0,1,0)；皆靠 specificity（非源序）。無 !important。
+ * Codex P2：容器 min-height:0 只在 .has-cover（有封面）才套——無封面影片若塌到 0 高，補封面入口會壞，
+ *   故無封面保留基準 min-height。img 規則不 gate has-cover（無封面時 img 空 src→height:auto=0 無害），
+ *   且刻意保持 (0,2,1) 不升到 (0,3,1) 以免在 ≤480∩similar-open 與 similar-open img (0,3,1) 撞同權。
+ * similar-open 交互：.lightbox-content.similar-open .lightbox-cover img (0,3,1) 勝本 img 規則 (0,2,1)
+ *   → ≤480px ∩ similar-open 時手機相似主片維持 40vh（本 task 不接管相似模式，刻意）。 */
+@media (max-width: 480px) {
+    /* (b) 容器塌到圖的盒（Codex P2：僅 .has-cover；無封面保留基準 min-height 防塌成 0 高） */
+    .lightbox-cover.has-cover:has(.lb-full) {
+        min-height: 0;
+        min-width: 0;
+    }
+    /* (a) base img + .lb-full overlay 同步：寬填滿、高隨原圖比例（覆寫 60vh）。
+       不 gate has-cover：無封面 img 空 src→height:auto=0 無害，且保 (0,2,1) 不撞 similar-open。 */
+    .lightbox-cover:has(.lb-full) img,
+    .lightbox-cover:has(.lb-full) .lb-full {
+        width: 100%;
+        height: auto;
+        object-fit: contain;   /* 盒=圖比例時與 cover 等價，保留 contain 不裁切語意 */
+    }
+}
+
 /* ==================== Responsive: Toolbar ==================== */
 /* 小螢幕：Toolbar 單欄堆疊 (44c-T8) */
 @media (max-width: 768px) {
@@ -1188,6 +1319,25 @@
     .toolbar-controls .control-group {
         flex-wrap: wrap;
         justify-content: flex-end;
+    }
+}
+
+/* 75a-US3d: tablet toolbar 769–1023px 銜接規則（舊缺失，補齊斷層）
+ * 佈局策略：搜尋框（col2 1fr）填滿中段、控制區（col3 auto）靠右。
+ * 不強制視覺置中——tablet 寬度下真置中需與 controls 等寬的平衡欄，會擠壓 controls
+ * 致換行/溢出；「搜尋框填滿、controls 靠右」是 tablet 慣例且無溢出風險。col1 auto
+ * 無內容會 collapse 成 0（刻意，非 bug）。Codex P2 採「明確布局策略」解。 */
+@media (min-width: 769px) and (max-width: 1023px) {
+    .showcase-toolbar {
+        grid-template-columns: auto 1fr auto;   /* col1 空佔位(0) | 搜尋框填滿 | 控制區靠右 */
+        gap: 0.75rem;
+        padding: 0.75rem 1rem;
+    }
+    .toolbar-search {
+        grid-column: 2;
+    }
+    .toolbar-controls {
+        grid-column: 3;
     }
 }
 
@@ -2829,7 +2979,7 @@ body.sidebar-collapsed .showcase-footer {
  * CSS transition 會與 GSAP tick 賽跑。box-shadow 走 CSS transition 安全。 */
 .similar-slot {
     position: absolute;
-    width: 120px;
+    width: 107px;
     height: 150px;
     transform: translate(-50%, -50%);
     background: var(--color-base-100);
@@ -2870,7 +3020,7 @@ body.sidebar-collapsed .showcase-footer {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    object-position: 100% 20%;
+    object-position: right center;
     display: block;
     border-radius: inherit;
     pointer-events: none;
@@ -2924,7 +3074,7 @@ body.sidebar-collapsed .showcase-footer {
     position: absolute;
     left: 380px;
     top: 185px;
-    width: 200px;
+    width: 178px;
     height: 250px;
     object-fit: cover;
     object-position: right center;  /* 沿用 cropMode: 'right-half' 視覺一致 */

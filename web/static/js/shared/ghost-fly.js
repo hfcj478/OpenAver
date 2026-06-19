@@ -404,6 +404,10 @@
             }
 
             var coverSrc = options.coverSrc || lbImg.src;
+            // US5-75b-T7 (CD-75b-12)：≤480px poster 格縮圖是「封面右半正面」cover 裁切，
+            // 而 lightbox 封面是 contain 完整圖。posterCrop 旗標下：(A) ghost 對齊縮圖右裁
+            // （消起飛 pan），(D) 落地以 crossfade 溶接 cover→contain（藏內容框法硬切 glitch）。
+            var posterCrop = !!options.posterCrop;
             // 71b-T3 (CD-71b-5): 隱/還原對象上移到 .lightbox-cover 容器，一次蓋住
             // base img + T6 .lb-full overlay 兩層（容器 opacity 與各 img 自身 gate 正交）
             var coverEl = lbImg.closest('.lightbox-cover') ||
@@ -415,6 +419,10 @@
             if (!ghost) {
                 if (typeof options.onComplete === 'function') options.onComplete();
                 return null;
+            }
+            // (A) ghost 對齊縮圖的右半裁切（objectFit:cover 已由 createCoverGhost 設定）
+            if (posterCrop) {
+                ghost.style.objectPosition = 'right center';
             }
 
             // 隱藏真實 lightbox 封面容器（ghost 飛行期間，蓋 base + .lb-full 兩層）
@@ -433,7 +441,20 @@
                     x: toRect.left, y: toRect.top, width: toRect.width, height: toRect.height,
                     duration: dur, ease: ease,
                     onComplete: function () {
-                        cleanupGhost(ghost, coverEl);
+                        if (posterCrop && coverEl) {
+                            // (D) 溶接：contain 真圖淡入、ghost(cover,right) 淡出，
+                            // 把 cover→contain 框法切換藏進 ~120ms dissolve（非硬切）。
+                            coverEl.removeAttribute('data-ghost-hidden');
+                            gsap.to(coverEl, { opacity: 1, duration: 0.12 });
+                            gsap.to(ghost, {
+                                opacity: 0, duration: 0.12,
+                                onComplete: function () {
+                                    if (ghost && ghost.parentNode) ghost.remove();
+                                }
+                            });
+                        } else {
+                            cleanupGhost(ghost, coverEl);
+                        }
                         if (typeof options.onComplete === 'function') options.onComplete();
                     }
                 }
