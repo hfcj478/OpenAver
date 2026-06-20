@@ -86,6 +86,7 @@
   --glass-overlay-edge-top:    color-mix(in oklch, white 22%, transparent);
   --glass-overlay-edge-bottom: color-mix(in oklch, black 28%, transparent);
   --glass-overlay-divider:     color-mix(in oklch, white 13%, transparent);   /* metadata hairline (no card-in-card) */
+  --glass-overlay-modal-fill: oklch(0.18 0.025 258 / 0.9);   /* uniform high-opacity fill for modal box (dense text protection, §2.5) */
   /* modal box = overlay glass but with high opacity end (≈0.9 fill) to protect dense text (spec §2.5) */
 
   /* ── Media frame (star space; 77b) ── POC §6 ── */
@@ -598,4 +599,140 @@
     [data-theme="dim"] .actress-card:is(:hover, :focus-within) {
         transform: none;
     }
+}
+
+/* ==========================================================================
+ * B-T2: Glass overlay — lightbox / modal / popover / drawer (dim-only)
+ *
+ * All rules [data-theme="dim"]-scoped (IACVT iron rule).
+ * Technique: padding-box/border-box dual background + transparent border.
+ *   EVERY rule using this technique MUST have `border: 1px solid transparent`
+ *   otherwise the border-box area does not exist and border gradient is invisible.
+ * backdrop-filter ALWAYS double-written with -webkit-backdrop-filter (macOS
+ *   PyWebView WKWebView requires -webkit- prefix).
+ * !important ONLY on .scanner-dir-dropdown (inline style override).
+ * Source: TASK-77b-T2.md T2–T9.
+ * ========================================================================== */
+
+/* Rule 35 — CD-B5: .lightbox-content overlay glass shell (dim)
+ * Specificity: (0,2,0) > showcase.css .lightbox-content (0,1,0); source-order wins.
+ * padding-box/border-box technique: transparent border required.
+ * NO transform / transition — scale 0.95→1 pop-in in showcase.css:L615–L620 preserved. */
+[data-theme="dim"] .lightbox-content {
+    border: 1px solid transparent;
+    background:
+        var(--glass-overlay-fill-gradient) padding-box,
+        var(--glass-overlay-border-gradient) border-box;
+    backdrop-filter: blur(var(--fluent-blur)) saturate(var(--glass-overlay-saturate));
+    -webkit-backdrop-filter: blur(var(--fluent-blur)) saturate(var(--glass-overlay-saturate));
+    box-shadow:
+        inset 0 1px 0 var(--glass-overlay-edge-top),
+        inset 0 -1px 0 var(--glass-overlay-edge-bottom),
+        var(--fluent-shadow-64);
+}
+
+/* Rule 36 — CD-B5: .lightbox-metadata hairline — no card-in-card (dim)
+ * Specificity: (0,2,0) > showcase.css:L721 .lightbox-metadata (0,1,0).
+ * Clears any background to keep metadata as part of the shell, not an inner card.
+ * border-top recolored to glass overlay hairline token. */
+[data-theme="dim"] .lightbox-metadata {
+    background: transparent;
+    border: 0;
+    border-top: 1px solid var(--glass-overlay-divider);
+    border-radius: 0;
+    box-shadow: none;
+}
+
+/* Rule 37 — CD-B5: lightbox controls floating-glass upgrade (dim)
+ * Selector: (0,3,0) — ancestor .showcase-lightbox + :is() — beats showcase.css
+ *   .lightbox-close (0,1,0) and .lightbox-similar-btn (0,1,0).
+ * Upgrades border/background from raw rgba literals to overlay tokens.
+ * Re-declares backdrop-filter (self-contained; does not rely on showcase.css values). */
+[data-theme="dim"] .showcase-lightbox :is(.lightbox-close, .lightbox-similar-btn) {
+    background: var(--glass-edge-highlight-mid);
+    border: 1px solid var(--glass-edge-highlight-strong);
+    backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-overlay-saturate));
+    -webkit-backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-overlay-saturate));
+    box-shadow: var(--fluent-shadow-8);
+}
+
+/* Rule 38 — CD-B7: .fluent-modal-box overlay glass (dim)
+ * Specificity: (0,2,0) > theme.css:L2141 .fluent-modal-box (0,1,0); source-order wins.
+ * theme.css:L2147 !important is on border-radius ONLY — background needs no !important.
+ * Uses uniform --glass-overlay-modal-fill (0.9 alpha) for dense text protection.
+ * Do NOT set border-radius (avoids touching !important chain in theme.css). */
+[data-theme="dim"] .fluent-modal-box {
+    border: 1px solid transparent;
+    background:
+        var(--glass-overlay-modal-fill) padding-box,
+        var(--glass-overlay-border-gradient) border-box;
+    backdrop-filter: blur(var(--fluent-blur)) saturate(var(--glass-overlay-saturate));
+    -webkit-backdrop-filter: blur(var(--fluent-blur)) saturate(var(--glass-overlay-saturate));
+    box-shadow:
+        inset 0 1px 0 var(--glass-overlay-edge-top),
+        inset 0 -1px 0 var(--glass-overlay-edge-bottom),
+        var(--fluent-shadow-28);
+}
+
+/* Rule 39 — CD-B8: .help-popover micro-glass (dim)
+ * Specificity: (0,2,0) > help-popover.css:L28 .help-popover (0,1,0); source-order wins.
+ * Adds backdrop-filter (popover had none upstream). */
+[data-theme="dim"] .help-popover {
+    border: 1px solid transparent;
+    background:
+        var(--glass-overlay-fill-gradient) padding-box,
+        var(--glass-overlay-border-gradient) border-box;
+    backdrop-filter: blur(var(--fluent-blur)) saturate(var(--glass-overlay-saturate));
+    -webkit-backdrop-filter: blur(var(--fluent-blur)) saturate(var(--glass-overlay-saturate));
+    box-shadow:
+        inset 0 1px 0 var(--glass-overlay-edge-top),
+        var(--fluent-shadow-16);
+}
+
+/* Rule 40 — CD-B8: .variable-menu micro-glass (dim; ID scope preserved)
+ * Specificity: (1,2,0) > theme.css:L1878 :is(#settings-components, #ds-settings-components)
+ *   .variable-menu (1,1,0). ID ancestor required to win specificity. */
+[data-theme="dim"] :is(#settings-components, #ds-settings-components) .variable-menu {
+    border: 1px solid transparent;
+    background:
+        var(--glass-overlay-fill-gradient) padding-box,
+        var(--glass-overlay-border-gradient) border-box;
+    backdrop-filter: blur(var(--fluent-blur)) saturate(var(--glass-overlay-saturate));
+    -webkit-backdrop-filter: blur(var(--fluent-blur)) saturate(var(--glass-overlay-saturate));
+    box-shadow:
+        inset 0 1px 0 var(--glass-overlay-edge-top),
+        var(--fluent-shadow-16);
+}
+
+/* Rule 41 — CD-B8: .scanner-dir-dropdown overlay glass (dim)
+ * Specificity: (0,2,0) — but inline style wins over any CSS class.
+ * !important on background, border AND box-shadow (the inline style sets all three:
+ * background:var(--surface-2); border:...; box-shadow:var(--shadow-md) — each must be
+ * countered with !important or the inline value wins regardless of specificity). */
+[data-theme="dim"] .scanner-dir-dropdown {
+    border: 1px solid transparent !important;
+    background:
+        var(--glass-overlay-fill-gradient) padding-box,
+        var(--glass-overlay-border-gradient) border-box !important;
+    backdrop-filter: blur(var(--fluent-blur)) saturate(var(--glass-overlay-saturate));
+    -webkit-backdrop-filter: blur(var(--fluent-blur)) saturate(var(--glass-overlay-saturate));
+    box-shadow:
+        inset 0 1px 0 var(--glass-overlay-edge-top),
+        var(--fluent-shadow-16) !important;
+}
+
+/* Rule 42 — CD-B8: .notification-drawer overlay glass (dim)
+ * Specificity: (0,2,0) > Tailwind utilities bg-base-100/border/border-base-300/
+ *   rounded-xl/shadow-lg each (0,1,0). (0,2,0) beats all.
+ * No !important needed. base.html L701: class appended with "notification-drawer" (B-T2 HTML hook). */
+[data-theme="dim"] .notification-drawer {
+    border: 1px solid transparent;
+    background:
+        var(--glass-overlay-fill-gradient) padding-box,
+        var(--glass-overlay-border-gradient) border-box;
+    backdrop-filter: blur(var(--fluent-blur)) saturate(var(--glass-overlay-saturate));
+    -webkit-backdrop-filter: blur(var(--fluent-blur)) saturate(var(--glass-overlay-saturate));
+    box-shadow:
+        inset 0 1px 0 var(--glass-overlay-edge-top),
+        var(--fluent-shadow-16);
 }

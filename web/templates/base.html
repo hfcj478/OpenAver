@@ -698,7 +698,7 @@
          x-trap.inert="notifBell.drawerOpen"
          @click.outside="closeDrawer()"
          @keydown.escape.window="if (notifBell.drawerOpen) closeDrawer()"
-         class="w-80 bg-base-100 border border-base-300 rounded-xl shadow-lg"
+         class="w-80 bg-base-100 border border-base-300 rounded-xl shadow-lg notification-drawer"
          style="z-index: 1010; position: fixed;"
          role="dialog"
          :aria-label="window.t ? window.t('notif.dialog_label') : '通知中心'">
