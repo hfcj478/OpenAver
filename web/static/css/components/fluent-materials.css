@@ -101,6 +101,38 @@
   --glass-edge-lowlight-soft:    color-mix(in oklch, black 10%, transparent);
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * 77d-T2: Light shell tokens — chrome top-bars ONLY (CD-D2)
+ *
+ * FIRST light-scoped block in this file. light theme renders data-theme="light"
+ *   explicitly (base.html L3 default + Alpine :data-theme binding) → this selector
+ *   matches; the tokens below are consumed by the shell APPLICATION rules (Rule
+ *   10/11/12/13a + desktop 45/47) once those are unscoped (same task).
+ *
+ * SCOPE (D-夾1, iron): ONLY the 6 shell tokens consumed by the chrome top-bars
+ *   (search bar / settings·scanner headers / showcase toolbar). The other shell
+ *   faces (sidebar/offcanvas/top-navbar/footer — Rule 6-9) stay dim-only, so NO
+ *   --glass-shell-edge-left and NO --glass-shell-mobile-* here. The other 4 roles
+ *   (panel/caption/overlay/media-frame) stay dim-only (S-2) — NOT redeclared here.
+ *
+ * DERIVE (D-夾3, parity-first conservative): invert lightness (dark fill → near-white
+ *   fill) + swap highlight↔lowlight logic (white bloom → faint dark hairline) + keep
+ *   fill HIGH-opacity so dark text/icons stay readable (NOT strong transparency).
+ *   Owner tunes toward more-glass at CP-D1 (only while text stays legible).
+ *   Theme-aware: built from the DaisyUI base palette (--color-base-100 / -content),
+ *   no hardcoded oklch literal → tracks the light theme automatically.
+ * ────────────────────────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --glass-shell-gradient: linear-gradient(110deg,
+      color-mix(in oklch, white 40%, transparent) 0%, transparent 42%,
+      color-mix(in oklch, var(--color-base-content) 5%, transparent) 100%);
+  --glass-shell-fill: color-mix(in oklch, var(--color-base-100) 70%, transparent);
+  --glass-shell-saturate: 120%;
+  --glass-shell-edge-top:    color-mix(in oklch, white 60%, transparent);
+  --glass-shell-edge-bottom: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+  --glass-shell-border:      color-mix(in oklch, var(--color-base-content) 14%, transparent);
+}
+
 /* ==========================================================================
  * A-T2: Mica canvas — dim-scoped surface application (CD-A3 / CD-A4)
  *
@@ -263,8 +295,11 @@
  * padding: 1rem 0 — fixes padding-top: 0 bug (was only padding-bottom: 1rem).
  * border-bottom recolored to glass hairline (replaces hard --stroke-subtle line).
  * Q1 resolution: padding is vertical-only; controls flex/gap/font-size untouched.
- * Horizontal surface: top/bottom insets. */
-[data-theme="dim"] .settings-header {
+ * Horizontal surface: top/bottom insets.
+ * 77d-T2: theme-agnostic (was [data-theme="dim"]). Consumes shell tokens which now
+ *   have light values too (77d-T2 light block) → glass material in both themes.
+ *   (0,2,0)→(0,1,0), tying settings.css:211 → source order wins (fluent loads last). */
+.settings-header {
     background: var(--glass-shell-gradient), var(--glass-shell-fill);
     backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
     -webkit-backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
@@ -280,8 +315,10 @@
  * scanner.css:13 .avlist-header (0,1,0) — source-order override.
  * padding: 1rem 0 — fixes padding-top: 0 bug (was only padding-bottom: 1rem).
  * border-bottom recolored to glass hairline (replaces hard --stroke-subtle line).
- * Horizontal surface: top/bottom insets. */
-[data-theme="dim"] .avlist-header {
+ * Horizontal surface: top/bottom insets.
+ * 77d-T2: theme-agnostic (was [data-theme="dim"]). Shell tokens have light values now
+ *   → glass material in both themes. (0,2,0)→(0,1,0), tying scanner.css:13 → source order. */
+.avlist-header {
     background: var(--glass-shell-gradient), var(--glass-shell-fill);
     backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
     -webkit-backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
@@ -299,8 +336,11 @@
  * border-bottom recolored to glass hairline (was hard --border-light line).
  * NO position:relative, NO ::after (Q2 resolution — box-shadow inset only).
  * search-bar is NOT sticky (CD-A7); no scroll-under needed.
- * Horizontal surface: top/bottom insets. */
-[data-theme="dim"] .search-bar {
+ * Horizontal surface: top/bottom insets.
+ * 77d-T2: theme-agnostic (was [data-theme="dim"]). Shell tokens have light values now
+ *   → glass material in both themes. (0,2,0)→(0,1,0), tying search.css:12 → source order
+ *   (fluent loads last); overrides native bg-header/border-light + blur(--fluent-blur). */
+.search-bar {
     background: var(--glass-shell-gradient), var(--glass-shell-fill);
     backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
     -webkit-backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
@@ -327,8 +367,10 @@
  * NO ::after, NO position added (toolbar is already position:sticky in showcase.css).
  * ───────────────────────────────────────────────────────────────────────────── */
 
-/* Rule 13a — base dim (ALL widths): glass material only */
-[data-theme="dim"] .showcase-toolbar {
+/* Rule 13a — base (ALL widths): glass material only
+ * 77d-T2: theme-agnostic (was [data-theme="dim"]). Shell tokens have light values now
+ *   → glass material in both themes. (0,2,0)→(0,1,0), tying showcase.css:21 → source order. */
+.showcase-toolbar {
     background: var(--glass-shell-gradient), var(--glass-shell-fill);
     backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
     -webkit-backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
