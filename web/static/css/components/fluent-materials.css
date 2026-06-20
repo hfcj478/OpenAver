@@ -172,3 +172,140 @@
 [data-theme="dim"] .showcase-container::before {
     display: none;
 }
+
+/* ==========================================================================
+ * A-T3: Glass shell chrome — dim-scoped surface overrides (CD-A5 / CD-A8)
+ *
+ * Technique: owner-approved poc-settings-glass-v3.css recipe, tokenized.
+ * - background: gradient + fill (direction-light over translucent fill)
+ * - backdrop-filter: blur(--fluent-blur-light) saturate(--glass-shell-saturate)
+ *   always double-written with -webkit-backdrop-filter (macOS WebKit / PyWebView)
+ * - border edges: recolor existing hard border to --glass-shell-border (soft hairline)
+ * - edge highlights: box-shadow inset ONLY (no ::after, no position:relative,
+ *   no background-image edge gradients) — orientation-appropriate:
+ *     vertical surfaces  → inset ±1px on left/right
+ *     horizontal surfaces → inset ±1px on top/bottom
+ * - elevation: sidebar/offcanvas = --fluent-shadow-16; headers/toolbar/footer = --fluent-shadow-8
+ * ALL rules are [data-theme="dim"]-scoped (IACVT iron rule).
+ * Opus 審核決議: Q2 → box-shadow inset; Q1 → no flex-wrap change; Q3 → light untouched.
+ * ========================================================================== */
+
+/* Rule 6 — Sidebar: vertical glass shell (dim)
+ * base.html:119 inline <style> sets background-color + base .sidebar backdrop 30px.
+ * Source-order override (fluent-materials.css loads last, same (0,2,0) specificity).
+ * backdrop-filter MUST be explicit to override base .sidebar blur(--fluent-blur) 30px → 12px.
+ * Vertical surface: left+right insets (matching POC sidebar recipe). */
+[data-theme="dim"] .sidebar {
+    background: var(--glass-shell-gradient), var(--glass-shell-fill);
+    backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
+    -webkit-backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
+    border-right-color: var(--glass-shell-border);
+    box-shadow:
+        inset 1px 0 0 var(--glass-shell-edge-left),
+        inset -1px 0 0 var(--glass-shell-edge-left),
+        var(--fluent-shadow-16);
+}
+
+/* Rule 7 — Offcanvas: mobile glass drawer (dim)
+ * base.html:276–277 forces background-color with !important — must counter with !important.
+ * Uses mobile tokens (0.52 fill, 145deg gradient) — slightly thicker for mobile legibility.
+ * Mobile shell: top/bottom insets (matches POC mobile recipe regardless of drawer orientation).
+ * border !important: defensive symmetry with this surface's !important-forced background. */
+[data-theme="dim"] .offcanvas {
+    background: var(--glass-shell-mobile-gradient), var(--glass-shell-mobile-fill) !important;
+    backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate)) !important;
+    -webkit-backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate)) !important;
+    border-right-color: var(--glass-shell-mobile-border) !important;
+    box-shadow:
+        inset 0 1px 0 var(--glass-shell-mobile-edge-top),
+        inset 0 -1px 0 var(--glass-shell-mobile-edge-bottom),
+        var(--fluent-shadow-16);
+}
+
+/* Rule 8 — Mobile top-navbar: glass shell + CSS-only inset (dim; CD-A8 / E1)
+ * Tailwind left-0/right-0 are (0,0,0); DaisyUI .navbar width:100% is (0,1,0).
+ * Our (0,2,0) dim-scoped rule overrides both via source-order.
+ * left/right: 1rem + width: auto → navbar insets 1rem from viewport edges.
+ * body padding-top: 3.5rem (base.html:259) is height-based, unaffected by inset.
+ * Mobile shell uses mobile tokens (145deg, 0.52 fill). */
+[data-theme="dim"] .top-navbar {
+    background: var(--glass-shell-mobile-gradient), var(--glass-shell-mobile-fill);
+    backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
+    -webkit-backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
+    border-bottom-color: var(--glass-shell-mobile-border);
+    box-shadow:
+        inset 0 1px 0 var(--glass-shell-mobile-edge-top),
+        inset 0 -1px 0 var(--glass-shell-mobile-edge-bottom),
+        var(--fluent-shadow-8);
+    left: 1rem;
+    right: 1rem;
+    width: auto;
+}
+
+/* Rule 9 — Showcase footer: horizontal glass shell (dim)
+ * showcase.css:1668 .showcase-footer specificity (0,1,0) — source-order override.
+ * Horizontal surface: top/bottom insets. Do NOT touch position/left/right (sidebar-width linked).
+ * Replaces hard border-top with glass hairline recolor. */
+[data-theme="dim"] .showcase-footer {
+    background: var(--glass-shell-gradient), var(--glass-shell-fill);
+    backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
+    -webkit-backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
+    border-top-color: var(--glass-shell-border);
+    box-shadow:
+        inset 0 1px 0 var(--glass-shell-edge-top),
+        inset 0 -1px 0 var(--glass-shell-edge-bottom),
+        var(--fluent-shadow-8);
+}
+
+/* Rule 10 — Settings header: A full-width shelf (dim)
+ * settings.css:211 .settings-header (0,1,0) — source-order override.
+ * padding: 1rem 0 — fixes padding-top: 0 bug (was only padding-bottom: 1rem).
+ * border-bottom recolored to glass hairline (replaces hard --stroke-subtle line).
+ * Q1 resolution: padding is vertical-only; controls flex/gap/font-size untouched.
+ * Horizontal surface: top/bottom insets. */
+[data-theme="dim"] .settings-header {
+    background: var(--glass-shell-gradient), var(--glass-shell-fill);
+    backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
+    -webkit-backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
+    border-bottom-color: var(--glass-shell-border);
+    box-shadow:
+        inset 0 1px 0 var(--glass-shell-edge-top),
+        inset 0 -1px 0 var(--glass-shell-edge-bottom),
+        var(--fluent-shadow-8);
+    padding: 1rem 0;
+}
+
+/* Rule 11 — Scanner header (.avlist-header): A full-width shelf (dim)
+ * scanner.css:13 .avlist-header (0,1,0) — source-order override.
+ * padding: 1rem 0 — fixes padding-top: 0 bug (was only padding-bottom: 1rem).
+ * border-bottom recolored to glass hairline (replaces hard --stroke-subtle line).
+ * Horizontal surface: top/bottom insets. */
+[data-theme="dim"] .avlist-header {
+    background: var(--glass-shell-gradient), var(--glass-shell-fill);
+    backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
+    -webkit-backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
+    border-bottom-color: var(--glass-shell-border);
+    box-shadow:
+        inset 0 1px 0 var(--glass-shell-edge-top),
+        inset 0 -1px 0 var(--glass-shell-edge-bottom),
+        var(--fluent-shadow-8);
+    padding: 1rem 0;
+}
+
+/* Rule 12 — Search bar: A full-width shelf (dim; CD-A7)
+ * search.css:12 .search-bar (0,1,0) — source-order override.
+ * backdrop changed from --fluent-blur (30px) to --fluent-blur-light (12px) — A shelf role.
+ * border-bottom recolored to glass hairline (was hard --border-light line).
+ * NO position:relative, NO ::after (Q2 resolution — box-shadow inset only).
+ * search-bar is NOT sticky (CD-A7); no scroll-under needed.
+ * Horizontal surface: top/bottom insets. */
+[data-theme="dim"] .search-bar {
+    background: var(--glass-shell-gradient), var(--glass-shell-fill);
+    backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
+    -webkit-backdrop-filter: blur(var(--fluent-blur-light)) saturate(var(--glass-shell-saturate));
+    border-bottom-color: var(--glass-shell-border);
+    box-shadow:
+        inset 0 1px 0 var(--glass-shell-edge-top),
+        inset 0 -1px 0 var(--glass-shell-edge-bottom),
+        var(--fluent-shadow-8);
+}
