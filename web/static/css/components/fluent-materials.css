@@ -507,3 +507,95 @@
     background: var(--glass-panel-header-tint);
     border-color: var(--glass-panel-header-border);
 }
+
+/* ============================================================
+ * B-T1 Glass caption — 底部標題條玻璃（dim-only）
+ * All rules: [data-theme="dim"]-scoped.
+ * No backdrop-filter on caption (90-card perf, spec §7.4 #3).
+ * CD-B1/B2/B3/B4 per plan-77b.
+ * ============================================================ */
+
+/* Rule 27 — CD-B1: av-card-preview shell transparent + glass border (dim override)
+ * Specificity (1,3,0) — beats theme.css:1006 (1,1,0) via :is(#id,...).
+ * :not(.hero-card) preserves hero-card's existing overlay rules. */
+[data-theme="dim"] :is(#ds-gallery-components, .ds-gallery-composition) .av-card-preview:not(.hero-card) {
+    background: transparent;
+    border: 1px solid var(--glass-edge-highlight-strong);
+    box-shadow:
+        inset 0 1px 0 var(--glass-caption-edge-top),
+        0 0 0 1px var(--glass-edge-lowlight-strong),
+        var(--fluent-shadow-16);
+}
+
+/* Rule 28 — CD-B1: av-card-preview footer glass base layer (no backdrop-filter)
+ * Specificity (1,4,0) — beats showcase.css:509 (.showcase-grid .av-card-preview-footer, (0,2,0))
+ * and theme.css:1085 (:is(#ds-gallery-components,...) .av-card-preview-footer, (1,1,0)).
+ * Absolutely no backdrop-filter here: 90-card perf constraint. */
+[data-theme="dim"] :is(#ds-gallery-components, .ds-gallery-composition) .av-card-preview:not(.hero-card) > .av-card-preview-footer {
+    background: var(--glass-caption-gradient), var(--glass-caption-fill);
+    border-top: 1px solid var(--glass-caption-border-top);
+    box-shadow:
+        inset 0 1px 0 var(--glass-caption-edge-top),
+        inset 0 -1px 0 var(--glass-caption-edge-bottom);
+}
+
+/* Rule 29 — CD-B1: footer-hover glass (raised opacity on hover entry)
+ * Only overrides background — transform/opacity/transition managed by showcase.css:L532–L534.
+ * Beats showcase.css:L530 (var(--surface-1) solid fill). */
+[data-theme="dim"] :is(#ds-gallery-components, .ds-gallery-composition) .av-card-preview:not(.hero-card) > .av-card-preview-footer .footer-hover {
+    background: var(--glass-caption-gradient), var(--glass-caption-fill-hover);
+}
+
+/* Rule 30 — CD-B2: av-card-preview hover dim override — neutralise accent glow
+ * Specificity (1,4,0) — must beat theme.css:1036 (1,2,0) which sets accent ring + glow-primary.
+ * Converged transform values (from POC -4px/1.012 → -2px/1.006).
+ * No new transition — reuses theme.css:L1013 (transform, box-shadow, border-color).
+ * No var(--accent) ring, no var(--glow-primary) glow. */
+[data-theme="dim"] :is(#ds-gallery-components, .ds-gallery-composition) .av-card-preview:not(.hero-card):hover {
+    transform: translateY(-2px) scale(1.006);
+    border-color: var(--glass-caption-border-top);
+    box-shadow:
+        inset 0 1px 0 var(--glass-caption-edge-top),
+        0 0 0 1px var(--glass-edge-highlight-soft),
+        var(--fluent-shadow-16);
+}
+
+/* Rule 31 — CD-B1 + CD-B2: actress-card hover converged (flat dim-scoped)
+ * Specificity (0,3,0) — beats showcase.css:L382 (.actress-card:hover, (0,2,0)).
+ * Keeps fluent-shadow-8 (actress hover has no accent glow, only transform convergence). */
+[data-theme="dim"] .actress-card:hover {
+    transform: translateY(-2px) scale(1.006);
+    box-shadow: var(--fluent-shadow-8);
+}
+
+/* Rule 32 — CD-B1: actress-card footer glass base (flat dim-scoped, no backdrop-filter)
+ * Same glass caption recipe as Rule 28. */
+[data-theme="dim"] .actress-card > .actress-card-footer {
+    background: var(--glass-caption-gradient), var(--glass-caption-fill);
+    border-top: 1px solid var(--glass-caption-border-top);
+    box-shadow:
+        inset 0 1px 0 var(--glass-caption-edge-top),
+        inset 0 -1px 0 var(--glass-caption-edge-bottom);
+}
+
+/* Rule 33 — CD-B1: actress-card footer-hover glass (raised opacity on hover entry)
+ * Base-state selector (no :hover on ancestor) — symmetric with Rule 29 for av-card;
+ * footer-hover is opacity:0/translateY(100%) until shown, so glassing it in both
+ * states is visually identical to hover-only but keeps the pattern consistent. */
+[data-theme="dim"] .actress-card > .actress-card-footer .footer-hover {
+    background: var(--glass-caption-gradient), var(--glass-caption-fill-hover);
+}
+
+/* Rule 34 — CD-B4: reduced-motion — suppress hover displacement (dim-only)
+ * border-color + box-shadow transitions remain active (only motion/scale is suppressed).
+ * av-card: ID-matched to guarantee (1,4,0) beats theme.css:1036 hover rule.
+ * actress: flat (0,3,0) beats showcase.css:L382 (0,2,0). */
+@media (prefers-reduced-motion: reduce) {
+    [data-theme="dim"] :is(#ds-gallery-components, .ds-gallery-composition) .av-card-preview:not(.hero-card):is(:hover, :focus-within) {
+        transform: none;
+    }
+
+    [data-theme="dim"] .actress-card:is(:hover, :focus-within) {
+        transform: none;
+    }
+}
