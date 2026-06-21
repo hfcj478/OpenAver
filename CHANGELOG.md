@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 🔒 **依賴版本鎖定（可重現建置）**：`requirements.txt` 全面精確鎖版（exact-pin）到已測版本，`requirements-test.txt` 與 macOS 打包都改為繼承 / 安裝同一份鎖版——同一版本號每次都打包出**相同的依賴版本**，避免上游套件靜默升級造成非預期行為。
 
 ### Fixed
+- 🔒 修正 Windows 上透過 `/static` 特製路徑可能觸發對外 SMB/NTLM 連線、洩漏帳號雜湊的安全問題（Starlette CVE-2026-48818，鎖版升級至已修補的 1.1.0）。
 - 修正精簡版 / 部分第三方工具處理過的 Windows 上，某些頁面（如掃描頁）按鈕失效、顯示異常的問題（MIME 強制宣告，issue #66）。
 - 修正影片燈箱開啟刪除確認框時，按 Esc 會連燈箱一起關、方向鍵會跳到下一部影片的問題。
 - 修正掃描頁在模組未載入時顯示 `[object HTMLElement]` 的小問題（改為乾淨空白）。
