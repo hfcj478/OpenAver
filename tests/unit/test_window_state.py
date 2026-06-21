@@ -5,7 +5,6 @@ windows/window_state.py の load/save/attach 行為テスト
 pywebview は Windows/macOS 専用。すべての window/events をモックする。
 """
 import json
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -37,11 +36,13 @@ def test_load_state_no_file_returns_default(state_module):
     assert s["x"] is None
     assert s["y"] is None
     assert s["maximized"] is False
+    assert s["close_action"] == "ask"
 
 
 def test_load_state_valid_file(state_module):
     state_module.STATE_PATH.write_text(json.dumps({
-        "width": 1600, "height": 1000, "x": 100, "y": 50, "maximized": True
+        "width": 1600, "height": 1000, "x": 100, "y": 50,
+        "maximized": True, "close_action": "tray"
     }), encoding="utf-8")
     s = state_module.load_state()
     assert s["width"] == 1600
@@ -49,6 +50,21 @@ def test_load_state_valid_file(state_module):
     assert s["x"] == 100
     assert s["y"] == 50
     assert s["maximized"] is True
+    assert s["close_action"] == "tray"
+
+
+def test_load_state_old_file_defaults_close_action_to_ask(state_module):
+    state_module.STATE_PATH.write_text(json.dumps({
+        "width": 1200, "height": 800, "x": None, "y": None, "maximized": False
+    }), encoding="utf-8")
+    assert state_module.load_state()["close_action"] == "ask"
+
+
+def test_load_state_invalid_close_action_falls_back_to_ask(state_module):
+    state_module.STATE_PATH.write_text(json.dumps({
+        "width": 1200, "height": 800, "close_action": "destroy-everything"
+    }), encoding="utf-8")
+    assert state_module.load_state()["close_action"] == "ask"
 
 
 def test_load_state_corrupted_json_falls_back(state_module):

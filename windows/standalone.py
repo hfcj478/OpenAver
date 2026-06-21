@@ -11,6 +11,7 @@ import urllib.request
 import urllib.error
 import logging
 import traceback
+from pathlib import Path
 
 # 確保專案根目錄在 sys.path 中
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,6 +26,7 @@ if WINDOWS_DIR not in sys.path:
 from core.logger import setup_logging, get_logger
 import webview
 from pywebview_api import api, bind_events
+from tray import DesktopLifecycle, NativeTrayIcon
 
 # 配置
 CLIENT_HOST = "127.0.0.1"  # 桌面 App 自連：find_free_port、health 探活、WebView URL（loopback only）
@@ -345,9 +347,27 @@ def main():
     # app-quit guard: when the main window is closing (app is quitting), let the JL
     # window close normally so we don't trap the shutdown sequence.
     _app_state = {"quitting": False}
+    lifecycle = None
+    if sys.platform == 'win32':
+        lifecycle = DesktopLifecycle(
+            window,
+            jl_win,
+            saved,
+            window_state.save_state,
+        )
+        tray_icon = NativeTrayIcon(
+            Path(APP_DIR) / "web" / "static" / "favicon.png",
+            lifecycle.handle_tray_command,
+            lifecycle.get_close_action,
+        )
+        lifecycle.attach_tray(tray_icon)
 
     def _on_main_closing():
-        # main window closing = app is quitting → let JL window close normally
+        if lifecycle is not None:
+            result = lifecycle.on_window_closing()
+            _app_state["quitting"] = lifecycle.quitting
+            return result
+        # Non-Windows launchers keep the original close-to-exit behaviour.
         _app_state["quitting"] = True
         if jl_win is not None:
             try:
@@ -361,7 +381,8 @@ def main():
         # (destroyed window → dead transport → JL broken until restart). Hide instead.
         # Return False to cancel the close (pywebview: closing handler returning False
         # cancels). During app quit, allow the close so we don't trap shutdown.
-        if not _app_state["quitting"]:
+        quitting = lifecycle.quitting if lifecycle is not None else _app_state["quitting"]
+        if not quitting:
             jl_win.hide()
             return False
         # app quitting → return None (allow close)
@@ -373,6 +394,9 @@ def main():
     def startup(w):
         bind_events(w)
         live = window_state.attach(w, saved)
+        if lifecycle is not None:
+            lifecycle.replace_state(live)
+            lifecycle.start_tray()
         if saved['maximized']:
             try:
                 w.maximize()
@@ -384,10 +408,14 @@ def main():
 
     # 5. 開始 GUI 事件循環（阻塞直到窗口關閉）
     # 根據平台選擇 GUI 後端
-    if sys.platform == 'darwin':
-        webview.start(startup, window)  # macOS 使用預設 (Cocoa/WebKit)
-    else:
-        webview.start(startup, window, gui='edgechromium')  # Windows
+    try:
+        if sys.platform == 'darwin':
+            webview.start(startup, window)  # macOS 使用預設 (Cocoa/WebKit)
+        else:
+            webview.start(startup, window, gui='edgechromium')  # Windows
+    finally:
+        if lifecycle is not None:
+            lifecycle.shutdown_after_loop()
 
 
 if __name__ == '__main__':

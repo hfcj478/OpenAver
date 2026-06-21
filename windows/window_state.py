@@ -19,6 +19,7 @@ DEFAULT_HEIGHT = 800
 # Sane bounds（防止 corrupted state 或惡意檔案讓視窗變成 1x1 / 99999x99999）
 MIN_W, MIN_H = 640, 480
 MAX_W, MAX_H = 8000, 8000
+CLOSE_ACTIONS = {"ask", "tray", "exit"}
 
 
 def _default_state() -> dict:
@@ -28,6 +29,7 @@ def _default_state() -> dict:
         "x": None,
         "y": None,
         "maximized": False,
+        "close_action": "ask",
     }
 
 
@@ -74,6 +76,11 @@ def load_state() -> dict:
         "x": x,
         "y": y,
         "maximized": bool(data.get("maximized", False)),
+        "close_action": (
+            data.get("close_action")
+            if data.get("close_action") in CLOSE_ACTIONS
+            else "ask"
+        ),
     }
 
 

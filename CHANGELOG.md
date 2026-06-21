@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Windows：啟動即顯示系統匣圖示；關閉主視窗時可選擇退出、最小化到系統匣或取消，並可記住選擇。系統匣選單可重新開啟視窗、切換關閉行為或完整退出 OpenAver。
+
 ## [0.10.7] - 2026-06-21
 
 本版主軸：**LAN 伺服器模式**——讓你在桌面 App 一鍵把這台機器開放給「同一個 Wi-Fi / 區網」的手機、平板、別台電腦，用瀏覽器連進來瀏覽封面牆、線上看片、查番號（feature/80 A 群）。預設仍是「單機」，行為與舊版完全相同。
