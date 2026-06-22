@@ -875,7 +875,9 @@ class TestShowcaseKeyboardGuard:
     def test_sample_gallery_keyboard_has_prevent_default(self):
         """sample gallery keyboard 分支應有 e.preventDefault()"""
         content = self.CORE_JS.read_text(encoding='utf-8')
-        block = self._extract_block(content, 'if (this.sampleGalleryOpen)')
+        # 用鍵盤 handler 特有的註釋行作為錨，避免誤中 swipe handler 的
+        # `if (this.sampleGalleryOpen)` 短路（81c-T2 起 swipe 也含此條件）。
+        block = self._extract_block(content, '// 4. Sample Gallery 開啟時的快捷鍵')
         assert 'e.preventDefault()' in block, \
             "sample gallery keyboard 分支缺少 e.preventDefault()"
 
@@ -3709,13 +3711,18 @@ class TestShowcaseSwipeGuard:
         return SHOWCASE_LIGHTBOX_JS.read_text(encoding="utf-8")
 
     def _lb_touch_end_block(self):
-        """抽出 _lbTouchEnd method 區塊（到下一個 method 定義為止）。"""
+        """抽出 _lbTouchEnd method 區塊（brace-depth 匹配，與方法擺放位置無關）。"""
         js = self._js()
         start = js.index("_lbTouchEnd(e) {")
-        # 切到下一個 method（'_lb...' 結束後第一個 sibling 'comment / method'）
-        tail = js[start:]
-        end = tail.index("// ==================== End Sample Gallery Methods")
-        return tail[:end]
+        depth = 0
+        for i in range(js.index("{", start), len(js)):
+            if js[i] == "{":
+                depth += 1
+            elif js[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return js[start:i + 1]
+        raise AssertionError("_lbTouchEnd: unbalanced braces")
 
     def test_container_has_touch_bindings(self):
         """`.showcase-lightbox` 容器有 @touchstart.passive + @touchend.passive"""
@@ -3792,13 +3799,18 @@ class TestSearchSwipeGuard:
         return GRID_MODE_JS.read_text(encoding="utf-8")
 
     def _lb_touch_end_block(self):
-        """抽出 _lbTouchEnd method 區塊（到下一個 method 定義為止）。"""
+        """抽出 _lbTouchEnd method 區塊（brace-depth 匹配，與方法擺放位置無關）。"""
         js = self._js()
         start = js.index("_lbTouchEnd(e) {")
-        tail = js[start:]
-        # _lbTouchEnd 後緊接 prevLightboxVideo 的 doc comment（「Lightbox 上一部」）
-        end = tail.index("Lightbox 上一部")
-        return tail[:end]
+        depth = 0
+        for i in range(js.index("{", start), len(js)):
+            if js[i] == "{":
+                depth += 1
+            elif js[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return js[start:i + 1]
+        raise AssertionError("_lbTouchEnd: unbalanced braces")
 
     def test_container_has_touch_bindings(self):
         """search.html `.showcase-lightbox` 容器有 @touchstart.passive + @touchend.passive"""
@@ -3874,13 +3886,18 @@ class TestDetailSwipeGuard:
         return NAVIGATION_JS.read_text(encoding="utf-8")
 
     def _dt_touch_end_block(self):
-        """抽出 _dtTouchEnd method 區塊（到區段結束標記為止）。"""
+        """抽出 _dtTouchEnd method 區塊（brace-depth 匹配，與方法擺放位置無關）。"""
         js = self._js()
         start = js.index("_dtTouchEnd(e) {")
-        tail = js[start:]
-        # _dtTouchEnd 後緊接區段結束標記
-        end = tail.index("End Detail Cover Swipe")
-        return tail[:end]
+        depth = 0
+        for i in range(js.index("{", start), len(js)):
+            if js[i] == "{":
+                depth += 1
+            elif js[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return js[start:i + 1]
+        raise AssertionError("_dtTouchEnd: unbalanced braces")
 
     def test_container_has_touch_bindings(self):
         """search.html `.av-card-full-cover` 容器有 @touchstart.passive + @touchend.passive"""

@@ -427,61 +427,6 @@ export function stateLightbox() {
             }
         },
 
-        // ==================== Lightbox Swipe (81c-T2) ====================
-
-        _lbTouchStart(e) {
-            if (e.touches && e.touches.length > 0) {
-                this._lbTouchStartX = e.touches[0].clientX;
-                this._lbTouchStartY = e.touches[0].clientY;
-            }
-        },
-
-        _lbTouchEnd(e) {
-            if (this._lbTouchStartX === null) return;
-            var endX = e.changedTouches && e.changedTouches.length > 0
-                ? e.changedTouches[0].clientX
-                : null;
-            var endY = e.changedTouches && e.changedTouches.length > 0
-                ? e.changedTouches[0].clientY
-                : null;
-            if (endX === null || endY === null) {
-                this._lbTouchStartX = null;
-                this._lbTouchStartY = null;
-                return;
-            }
-            // CD-5 攔截短路串（比照 handleKeydown 優先序）
-            if (this.similarModeOpen || this.similarModeMobileOpen) {
-                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
-            }
-            if (this.removeActressModalOpen) {
-                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
-            }
-            if (this._pickerOpen) {
-                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
-            }
-            if (this.rescrapeOpen) {
-                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
-            }
-            if (this.deleteVideoModalOpen) {
-                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
-            }
-            if (this.sampleGalleryOpen) {   // 劇照由 _sgTouchEnd 處理
-                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
-            }
-            if (!this.lightboxOpen) {        // 燈箱沒開不換片
-                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
-            }
-            var dir = detectSwipe(this._lbTouchStartX, this._lbTouchStartY, endX, endY, 50);
-            this._lbTouchStartX = null;
-            this._lbTouchStartY = null;
-            // CD-3 分流（CD-4 方向）
-            if (dir === 'left') {           // 左滑 → 下一
-                this.showFavoriteActresses ? this.nextActressLightbox() : this.nextLightboxVideo();
-            } else if (dir === 'right') {   // 右滑 → 上一
-                this.showFavoriteActresses ? this.prevActressLightbox() : this.prevLightboxVideo();
-            }
-        },
-
         // ==================== End Sample Gallery Methods ====================
 
         // Metadata 點擊搜尋 (M3f)
@@ -653,6 +598,63 @@ export function stateLightbox() {
                         if (!tl) self._lightboxAnimating = false;
                     }
                 });
+            }
+        },
+
+        // ==================== Lightbox Swipe (81c-T2) ====================
+        // 置於 prev/nextLightboxVideo 定義之後：避免本 handler 內的 this.*LightboxVideo()
+        // 呼叫點搶在方法定義前出現，誤導以 first-occurrence 定位方法體的既有 sentinel 守衛。
+
+        _lbTouchStart(e) {
+            if (e.touches && e.touches.length > 0) {
+                this._lbTouchStartX = e.touches[0].clientX;
+                this._lbTouchStartY = e.touches[0].clientY;
+            }
+        },
+
+        _lbTouchEnd(e) {
+            if (this._lbTouchStartX === null) return;
+            var endX = e.changedTouches && e.changedTouches.length > 0
+                ? e.changedTouches[0].clientX
+                : null;
+            var endY = e.changedTouches && e.changedTouches.length > 0
+                ? e.changedTouches[0].clientY
+                : null;
+            if (endX === null || endY === null) {
+                this._lbTouchStartX = null;
+                this._lbTouchStartY = null;
+                return;
+            }
+            // CD-5 攔截短路串（比照 handleKeydown 優先序）
+            if (this.similarModeOpen || this.similarModeMobileOpen) {
+                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
+            }
+            if (this.removeActressModalOpen) {
+                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
+            }
+            if (this._pickerOpen) {
+                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
+            }
+            if (this.rescrapeOpen) {
+                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
+            }
+            if (this.deleteVideoModalOpen) {
+                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
+            }
+            if (this.sampleGalleryOpen) {   // 劇照由 _sgTouchEnd 處理
+                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
+            }
+            if (!this.lightboxOpen) {        // 燈箱沒開不換片
+                this._lbTouchStartX = null; this._lbTouchStartY = null; return;
+            }
+            var dir = detectSwipe(this._lbTouchStartX, this._lbTouchStartY, endX, endY, 50);
+            this._lbTouchStartX = null;
+            this._lbTouchStartY = null;
+            // CD-3 分流（CD-4 方向）
+            if (dir === 'left') {           // 左滑 → 下一
+                this.showFavoriteActresses ? this.nextActressLightbox() : this.nextLightboxVideo();
+            } else if (dir === 'right') {   // 右滑 → 上一
+                this.showFavoriteActresses ? this.prevActressLightbox() : this.prevLightboxVideo();
             }
         },
 
