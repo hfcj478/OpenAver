@@ -1395,3 +1395,17 @@ class TestMigrationCloseAction:
         assert "close_action" in data.get("general", {}), \
             "config.default.json general 缺 close_action 鍵"
         assert data["general"]["close_action"] == "ask"
+
+    def test_invalid_persisted_close_action_coerced_to_ask(self, tmp_path, monkeypatch):
+        """config.json general.close_action 含非法值 → migration 修正為 'ask' 並寫回檔案"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"general": {"close_action": "destroy-everything"}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert result.get("general", {}).get("close_action") == "ask"
+        # migration must have persisted the corrected value
+        written = _read_config(config_path)
+        assert written.get("general", {}).get("close_action") == "ask"

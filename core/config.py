@@ -138,6 +138,12 @@ class ShowcaseConfig(BaseModel):
     player: str = ""  # 播放器路徑，空字串使用系統預設
 
 
+# Valid values for the window close-action preference（feature/82, single source of truth）.
+# Used by GeneralConfig._coerce_close_action (model_validate) AND the additive migration in
+# load_config() so that invalid-or-missing values are always normalised to "ask".
+_CLOSE_ACTIONS = ("ask", "tray", "exit")
+
+
 class GeneralConfig(BaseModel):
     default_page: str = "search"  # 預設開啟頁面: search, gallery, showcase
     theme: str = "light"  # 主題模式: light, dark
@@ -151,7 +157,7 @@ class GeneralConfig(BaseModel):
     @field_validator("close_action", mode="before")
     @classmethod
     def _coerce_close_action(cls, v):
-        return v if v in ("ask", "tray", "exit") else "ask"
+        return v if v in _CLOSE_ACTIONS else "ask"
 
 
 class AppConfig(BaseModel):
@@ -427,7 +433,7 @@ def _load_config_unlocked() -> dict:
         if not isinstance(gen, dict):
             gen = {}
             raw_config['general'] = gen
-        if 'close_action' not in gen:
+        if gen.get('close_action') not in _CLOSE_ACTIONS:
             gen['close_action'] = 'ask'
             need_save = True
 

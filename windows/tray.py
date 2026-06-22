@@ -158,11 +158,16 @@ class DesktopLifecycle:
 
     def get_close_action(self) -> str:
         if self.read_close_action is not None:
+            # A session-local override exists only after a persist failure; it wins for this
+            # session and is cleared on the next successful write (config re-authoritative).
+            override = self.state.get("close_action")
+            if override in CLOSE_ACTIONS:
+                return override
             try:
                 action = self.read_close_action()
             except Exception:
-                logger.warning("read_close_action failed; falling back to state", exc_info=True)
-                action = self.state.get("close_action", CLOSE_ASK)
+                logger.warning("read_close_action failed; falling back to ask", exc_info=True)
+                action = CLOSE_ASK
             return action if action in CLOSE_ACTIONS else CLOSE_ASK
         action = self.state.get("close_action", CLOSE_ASK)
         return action if action in CLOSE_ACTIONS else CLOSE_ASK
@@ -171,7 +176,15 @@ class DesktopLifecycle:
         if action not in CLOSE_ACTIONS:
             raise ValueError("invalid close action")
         if self.write_close_action is not None:
-            self.write_close_action(action)
+            try:
+                self.write_close_action(action)
+                # Persist succeeded → config is authoritative; drop any session-local override
+                self.state.pop("close_action", None)
+            except Exception:
+                # Best-effort persist failed → keep a session-local override so this session
+                # still reflects the change (restores pre-T4 in-memory semantics).
+                logger.warning("failed to persist close_action; keeping session-local value", exc_info=True)
+                self.state["close_action"] = action
         else:
             self.state["close_action"] = action
             self.save_state(self.state)

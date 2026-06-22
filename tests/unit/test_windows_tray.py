@@ -393,3 +393,124 @@ def test_minimize_path_does_not_run_cleanup():
     lc.state["close_action"] = CLOSE_TRAY
     lc.on_window_closing()
     cleanup.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# P1 regression: set_close_action / on_window_closing best-effort persistence
+# ---------------------------------------------------------------------------
+
+def test_set_close_action_swallows_write_failure():
+    """set_close_action must NOT raise when write_close_action raises (best-effort);
+    the new action must also be readable via get_close_action (session-local fallback)."""
+    def _raising_write(action):
+        raise RuntimeError("disk full")
+
+    window = MagicMock()
+    lc = DesktopLifecycle(
+        window, MagicMock(),
+        {"width": 1200, "height": 800, "x": None, "y": None, "maximized": False},
+        lambda v: None,
+        read_close_action=lambda: CLOSE_ASK,
+        write_close_action=_raising_write,
+    )
+    # Must not raise even though write_close_action raises
+    lc.set_close_action(CLOSE_TRAY)
+    # Session-local override must be readable so the preference change is not lost
+    assert lc.get_close_action() == CLOSE_TRAY
+
+
+def test_set_close_action_invalid_still_raises_value_error():
+    """set_close_action with a bogus action must still raise ValueError (programming-error guard)."""
+    window = MagicMock()
+    lc = DesktopLifecycle(
+        window, MagicMock(),
+        {"width": 1200, "height": 800, "x": None, "y": None, "maximized": False},
+        lambda v: None,
+        write_close_action=lambda a: None,
+    )
+    with pytest.raises(ValueError):
+        lc.set_close_action("destroy-everything")
+
+
+def test_on_window_closing_remember_best_effort_with_raising_write():
+    """on_window_closing() must NOT raise when remember=True and write_close_action raises;
+    returns False (hides window), AND the session-local value survives for this session."""
+    def _raising_write(action):
+        raise RuntimeError("sync-software lock")
+
+    window = MagicMock()
+    lc = DesktopLifecycle(
+        window, MagicMock(),
+        {"width": 1200, "height": 800, "x": None, "y": None, "maximized": False},
+        lambda v: None,
+        read_close_action=lambda: CLOSE_ASK,
+        write_close_action=_raising_write,
+    )
+    lc.prompt = lambda: CloseDecision(CLOSE_TRAY, remember=True)
+    lc.tray_available = True
+
+    result = lc.on_window_closing()
+    # Must not raise; window is hidden (returns False) and write failure is swallowed
+    assert result is False
+    window.hide.assert_called_once_with()
+    # Session-local fallback: preference change must survive for the rest of this session
+    assert lc.get_close_action() == CLOSE_TRAY
+
+
+def test_session_override_cleared_on_successful_write():
+    """After a failed write the session override is set; after a successful write it is cleared
+    and config becomes authoritative again (self-healing: no sticky shadow)."""
+    store = {"value": CLOSE_ASK}
+    should_fail = [True]  # togglable; first writes raise, then succeed
+
+    def _togglable_write(action):
+        if should_fail[0]:
+            raise IOError("transient failure")
+        store["value"] = action
+
+    window = MagicMock()
+    lc = DesktopLifecycle(
+        window, MagicMock(),
+        {"width": 1200, "height": 800, "x": None, "y": None, "maximized": False},
+        lambda v: None,
+        read_close_action=lambda: store["value"],
+        write_close_action=_togglable_write,
+    )
+
+    # Phase 1: write fails → session-local override active, store unchanged
+    lc.set_close_action(CLOSE_EXIT)
+    assert lc.get_close_action() == CLOSE_EXIT  # override visible
+    assert store["value"] == CLOSE_ASK  # store unchanged (write failed)
+
+    # Phase 2: write succeeds → override cleared, config authoritative
+    should_fail[0] = False
+    lc.set_close_action(CLOSE_TRAY)
+    assert store["value"] == CLOSE_TRAY  # write went through
+    assert lc.get_close_action() == CLOSE_TRAY  # reads from config (no override)
+    assert "close_action" not in lc.state  # override was popped
+
+
+def test_successful_write_does_not_shadow_external_config_change():
+    """A successful set_close_action must pop any session-local override so that a later
+    external Settings change (PUT /api/config) is visible via get_close_action (no shadow)."""
+    store = {"value": CLOSE_ASK}
+
+    window = MagicMock()
+    lc = DesktopLifecycle(
+        window, MagicMock(),
+        {"width": 1200, "height": 800, "x": None, "y": None, "maximized": False},
+        lambda v: None,
+        read_close_action=lambda: store["value"],
+        write_close_action=lambda a: store.__setitem__("value", a),
+    )
+
+    # Successful write: set to CLOSE_TRAY
+    lc.set_close_action(CLOSE_TRAY)
+    assert store["value"] == CLOSE_TRAY
+    assert "close_action" not in lc.state  # override was popped — config is authoritative
+
+    # External Settings change (e.g. PUT /api/config while app runs)
+    store["value"] = CLOSE_EXIT
+
+    # get_close_action must see the external change (NOT a stale self.state value)
+    assert lc.get_close_action() == CLOSE_EXIT
