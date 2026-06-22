@@ -675,18 +675,19 @@
    修正 T1 的 flex-shrink letterbox bug（CDP 實測：cover box 1139×610 AR=1.869≠圖 AR 1.481
    → img object-fit:contain 只佔 903px → 左右各 118px 暗死白）。
    修法 A — flex-shrink:0（禁止 cover 被壓縮）：配合 width-formula 確保 cover 高不超 content。
-   修法 B — width-formula 用正確 vreserve（15rem≈240px = metadata≈175px + padding 48px + gap 16px）：
+   修法 B — width-formula 對齊 content max-height:90vh（vreserve=15rem≈240px）：
      width = min(90vw, (90dvh − 15rem) × AR) → cover 高 = width/AR；
-     cover 高 + 15rem = min(90vw/AR, 90dvh) ≤ 90dvh → 不捲動、不依賴 max-height 壓縮。
-   T1 用 flex-grow:1（height-driven）無效因為 content 無 explicit height → cover 塌 0×0。
+     cover 高 + 15rem ≤ 90dvh = content max-height → 不捲動。
+     T1 錯用 100dvh：cover 高 = dvh−15rem，content max-height=90vh < dvh → 溢出捲動。
+   T1fix1 就是把 100dvh/100vh 改 90dvh/90vh 這一行，其餘不變。
    guard：:not(.similar-open) — similar-open 禁區（83b）完全不動。 */
 .lightbox-content:not(.similar-open) .lightbox-cover.has-cover {
     flex-shrink: 0;
     min-width: 0;
     min-height: 0;
     aspect-ratio: var(--lb-cover-ar, 1.5);
-    width: min(90vw, calc((100vh - 15rem) * var(--lb-cover-ar, 1.5)));
-    width: min(90vw, calc((100dvh - 15rem) * var(--lb-cover-ar, 1.5)));
+    width: min(90vw, calc((90vh - 15rem) * var(--lb-cover-ar, 1.5)));
+    width: min(90vw, calc((90dvh - 15rem) * var(--lb-cover-ar, 1.5)));
     height: auto;
 }
 
