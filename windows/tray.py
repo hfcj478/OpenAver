@@ -195,6 +195,14 @@ class DesktopLifecycle:
             return None
 
         action = self.get_close_action()
+        # A remembered "minimize to tray" cannot be honoured if the tray icon never
+        # registered — there is no tray menu to recover and the prompt would be skipped,
+        # trapping the app at the X button. Downgrade to a prompt so the user can still
+        # exit/cancel. The CLOSE_TRAY guard below shows the unavailable notice if tray is
+        # (still) the chosen action.
+        if action == CLOSE_TRAY and not self.tray_available:
+            action = CLOSE_ASK
+
         if action == CLOSE_ASK:
             try:
                 decision = self.prompt()

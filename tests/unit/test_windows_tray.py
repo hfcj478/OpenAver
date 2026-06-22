@@ -187,18 +187,47 @@ def test_tray_contract_supports_hover_single_and_double_click():
     assert {0x0202, 0x0203, 0x0400}.issubset(TRAY_OPEN_EVENTS)
 
 
-def test_unavailable_tray_never_hides_window(desktop, monkeypatch):
-    lifecycle, window, _jl_window, tray, _saved, ca_store, _ca_writes = desktop
-    tray.start.return_value = False
-    lifecycle.start_tray()
-    # inject tray action directly into the injected store
+def test_unavailable_tray_remembered_downgrades_to_prompt_exit(desktop):
+    """Remembered CLOSE_TRAY with tray unavailable must downgrade to prompt; exit path works."""
+    lifecycle, window, _jl_window, _tray, _saved, ca_store, _ca_writes = desktop
     ca_store["value"] = CLOSE_TRAY
+    _tray.start.return_value = False
+    lifecycle.start_tray()
+    lifecycle.prompt = lambda: CloseDecision(CLOSE_EXIT)
+
+    result = lifecycle.on_window_closing()
+    assert result is None
+    assert lifecycle.quitting is True
+    window.hide.assert_not_called()
+
+
+def test_unavailable_tray_remembered_downgrades_to_prompt_cancel(desktop):
+    """Remembered CLOSE_TRAY with tray unavailable must downgrade to prompt; cancel keeps window open."""
+    lifecycle, window, _jl_window, _tray, _saved, ca_store, _ca_writes = desktop
+    ca_store["value"] = CLOSE_TRAY
+    _tray.start.return_value = False
+    lifecycle.start_tray()
+    lifecycle.prompt = lambda: CloseDecision(CLOSE_CANCEL)
+
+    result = lifecycle.on_window_closing()
+    assert result is False
+    window.hide.assert_not_called()
+
+
+def test_unavailable_tray_picked_in_prompt_notifies_and_cancels(desktop, monkeypatch):
+    """User insisting on CLOSE_TRAY in prompt while tray is unavailable → notice shown, window not hidden."""
+    lifecycle, window, _jl_window, _tray, _saved, ca_store, _ca_writes = desktop
+    ca_store["value"] = CLOSE_TRAY
+    _tray.start.return_value = False
+    lifecycle.start_tray()
+    lifecycle.prompt = lambda: CloseDecision(CLOSE_TRAY)
     unavailable = MagicMock()
     monkeypatch.setattr("windows.tray.show_tray_unavailable", unavailable)
 
-    assert lifecycle.on_window_closing() is False
-    window.hide.assert_not_called()
+    result = lifecycle.on_window_closing()
+    assert result is False
     unavailable.assert_called_once_with(window)
+    window.hide.assert_not_called()
 
 
 def test_native_tray_has_taskbar_created_recovery():
