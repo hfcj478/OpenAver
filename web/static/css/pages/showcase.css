@@ -1086,6 +1086,123 @@
     }
 }
 
+/* ===================================================================
+ * 83b-T1: 行動相似探索面板（Mobile Photo Picker 爆射）
+ * 全螢幕獨立面板（.showcase-lightbox 外側 sibling），<960px only。
+ * Core 無轉場：default-hidden（opacity/visibility/pointer-events）+ .show 直顯/直隱。
+ * cover + cards layout-isolated（position:absolute）→ BurstPicker 內部 getBCR()
+ * 在爆射並行期間讀到穩定 rect（R1 緩解，模組無 rect 注入口 CD-12）。
+ * =================================================================== */
+@media (max-width: 959px) {
+    .similar-mobile-panel {
+        position: fixed;
+        inset: 0;
+        z-index: 1502;  /* > .similar-stage 1501 > .showcase-lightbox 1000 */
+        /* default-hidden（非 bare x-show）：Alpine boot 前 overlay 不閃現（FOUC，D10/AC-8） */
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+    }
+
+    .similar-mobile-panel.show {
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+    }
+
+    /* scrim：overlay 30px 模糊完全遮住 lightbox（CD-10；雙寫 -webkit-，禁硬編碼 px） */
+    .similar-mobile-scrim {
+        position: absolute;
+        inset: 0;
+        background-color: var(--overlay-modal);
+        backdrop-filter: blur(var(--fluent-blur));
+        -webkit-backdrop-filter: blur(var(--fluent-blur));
+    }
+
+    /* stage：爆射 origin frame（cover 在中央，cards 從中央爆射） */
+    .similar-mobile-stage {
+        position: absolute;
+        inset: 0;
+    }
+
+    /* 中央主圖：layout-isolated（爆射卡 out of flow 不 reflow 它，R1 根本緩解） */
+    .similar-mobile-cover {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 44vw;
+        max-width: 320px;
+        overflow: hidden;
+        border-radius: var(--fluent-radius-lg);
+        cursor: pointer;
+    }
+
+    .similar-mobile-cover img {
+        display: block;
+        width: 100%;
+        aspect-ratio: var(--poster-crop-ratio);   /* 單一真理，禁硬編碼 4/5 */
+        object-fit: cover;
+        object-position: right center;             /* 右半裁切 */
+    }
+
+    /* cards 容器：absolute 覆蓋 stage，爆射卡定位其內 */
+    .similar-mobile-cards {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;   /* 容器不擋；卡片各自 pointer-events:auto */
+    }
+
+    /* 爆射卡：GSAP-only（opacity:0 + transition:none 防 1-frame paint glitch，mirror .picker-candidate-card） */
+    .similar-mobile-burst-card {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 26vw;
+        max-width: 150px;
+        overflow: hidden;
+        border-radius: var(--fluent-radius-lg);
+        cursor: pointer;
+        pointer-events: auto;
+        opacity: 0;
+        transition: none;
+    }
+
+    .similar-mobile-burst-card img {
+        display: block;
+        width: 100%;
+        aspect-ratio: var(--poster-crop-ratio);
+        object-fit: cover;
+        object-position: right center;
+    }
+
+    /* 右上 ✕ 關閉鈕（x-trap Tab 目標） */
+    .similar-mobile-panel-close {
+        position: absolute;
+        top: max(1rem, env(safe-area-inset-top));
+        right: max(1rem, env(safe-area-inset-right));
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 2.75rem;
+        height: 2.75rem;
+        border: none;
+        border-radius: var(--radius-pill);
+        background: rgba(0, 0, 0, 0.35);
+        color: var(--text-primary);
+        font-size: 1.25rem;
+        cursor: pointer;
+    }
+}
+
+/* 桌面安全網：即使 flag 殘留（matchMedia reset 未及）也不顯示（mirror 既有 .lightbox-similar-mobile） */
+@media (min-width: 960px) {
+    .similar-mobile-panel {
+        display: none !important;
+    }
+}
+
 /* 56c-T3fix: Sparkle burst overlay — 10 顆四角星 ring 分佈，GSAP 操作 opacity/scale/rotation
  * 容器 .sparkle-burst 與 .lightbox-cover 內 <img> 同層 absolute overlay；
  * inset:0 自動覆蓋封面區（不擴及 metadata），無需 hardcoded size。

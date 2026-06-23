@@ -1200,6 +1200,20 @@ export function stateLightbox() {
                 return;
             }
 
+            // 83b-T1：行動相似面板開啟時鍵盤獨佔（高於 lightbox keydown 路由）。
+            // x-trap.inert 只陷焦點，全域 window keydown 仍觸發 → 必須在此攔截，
+            // 否則 Esc 穿透到 lightbox 分支關 lightbox、左右箭頭切底層影片（違反 AC-5/AC-8）。
+            // closeMobilePanel 屬 state-similar，main.js mergeState 同 this 可達。
+            if (this.similarModeMobileOpen) {
+                const mobileKey = (e.key || '').toUpperCase();
+                if (mobileKey === 'ESCAPE') {
+                    e.preventDefault();
+                    this.closeMobilePanel();
+                }
+                // ArrowLeft/Right 及其他鍵：面板無 prev/next → 吞掉，防底層 lightbox 切片
+                return;
+            }
+
             // T3.3: Remove Actress modal 開啟時，Esc 優先關閉 modal
             if (e.key === 'Escape' && this.removeActressModalOpen) {
                 this.cancelRemoveActressModal();

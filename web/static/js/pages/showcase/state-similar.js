@@ -46,6 +46,20 @@ import { BreathingManager } from '@/shared/constellation/breathing.js';
 // T6 (CD-T6-1)：hover corridor half-width（與 motion-lab host 同值 40px）
 const HOVER_DISTANCE = 40;
 
+// 83b-T1: 行動 Photo Picker 爆射參數（CD-2）。
+// 複製 stateLightbox 閉包私有的 _PICKER_PARAMS 7 個 baseline 值——
+// _PICKER_PARAMS 未 export、不在 this 上，stateSimilar 直接引用會 ReferenceError，故自帶一份。
+// 不含 reducedMotionSim（mirror _PICKER_PARAMS；PRM 走 window.OpenAver.prefersReducedMotion）。
+const _MOBILE_PICKER_PARAMS = {
+  arcOvershoot: 1.3,
+  arcDuration: 0.75,
+  floatAmplY: 8,
+  floatAmplRot: 2.5,
+  floatDuration: 1.5,
+  hoverScale: 1.08,
+  exitGravity: 1200,
+};
+
 /**
  * pointToSegmentDist — 點到線段最短距離（T6 CD-T6-1）
  * 與 motion-lab/constellation-host.js 內 helper 同義；shared/constellation/anchors.js
@@ -98,7 +112,13 @@ export function stateSimilar() {
     _similarMainBreathTween: null,
     _similarLastDrilledNumber: null,   // T5/T6 closeSimilarMode silent switch 用（T4 不讀）
     _similarLastDrilledItem: null,    // 56c-fix-v2：snapshot clickedItem，避免 similarResults 替換後找不到
-    similarModeMobileOpen: false,     // 56c-T7：手機 x-collapse toggle
+    similarModeMobileOpen: false,     // 56c-T7→83b-T1：語義改為「全螢幕行動面板開」（CD-7 沿用 flag）
+
+    // 83b-T1: 行動相似探索面板 state（similarModeMobileOpen 沿用既有 flag，不新增）
+    _mobilePanelRunId: 0,             // drill burst race token（每次 drill ++）
+    _mobileFloatTweens: [],           // 爆射後 float timeline sink（drill / close 時 kill）
+    _mobileLastDrilledNumber: null,   // close 時 3-tier silent-switch 還原 lightbox 用
+    _mobileLastDrilledItem: null,     // snapshot 被點卡資料（tier2/3 fallback；similarResults 已被替換時仍可取）
 
     // 揭露給 Alpine template（x-for="anchor in SIMILAR_ANCHORS"）
     SIMILAR_ANCHORS,
@@ -226,23 +246,10 @@ export function stateSimilar() {
       if (this.showFavoriteActresses) return;     // CD-56C-13 fail-safe
       if (!this.currentLightboxVideo) return;     // 無 lightbox video metadata 時 no-op
 
-      // 56c-T7：手機降級 — viewport < 960px 不進 constellation
+      // 83b-T1：手機 <960px → 全螢幕行動相似探索面板（Mobile Photo Picker 爆射）。
+      // 取代舊 x-collapse 寄生 block。Core 無轉場（飛行轉場留 T3）。
       if (window.innerWidth < 960) {
-        if (this.similarModeAnimating) return;
-        if (this.similarModeMobileOpen) {
-          this.similarModeMobileOpen = false;   // toggle：再點收合
-          return;
-        }
-        this.similarModeAnimating = true;
-        try {
-          const data = await this._fetchSimilarResults(this.currentLightboxVideo.number);
-          this.similarResults = data.results;
-          this.similarQueryVideo = data.query_video;
-          this.similarModeMobileOpen = true;    // 展開 x-collapse
-        } catch (_err) {
-          // _fetchSimilarResults 已 showToast；similarModeMobileOpen 保持 false
-        }
-        this.similarModeAnimating = false;
+        await this._openMobilePanel();
         return;
       }
 
@@ -1217,57 +1224,204 @@ export function stateSimilar() {
       }
     },
 
-    // ── T5 新增 method ─────────────────────────────────────────────────────
+    // ── 83b-T1: 行動相似探索面板（Mobile Photo Picker 爆射）──────────────────
 
     /**
-     * onSimilarMobileCardClick — 手機 mobile card 點擊：fetch 新一批 + swap + silent switch
-     * 56c-T7 CD-56C-8：手機無動畫 takeover，直接 reactive swap + silent switch（同 CD-56C-12 邏輯）
+     * _openMobilePanel — openSimilarMode 的 <960px 分支：fetch → preload → 顯示面板 → 6 卡爆射。
+     * Core 無轉場（直顯；飛行轉場留 T3）。lock-before-await + stale-check（面板開期間 lightbox 已關則中止）。
      */
-    onSimilarMobileCardClick(item) {
-      if (this.similarModeAnimating) return;
-      if (!item) return;
-      // T7 codex-fix1: 對齊 onSimilarCardClick race guard，fetch 前鎖定防連點覆蓋
-      this.similarModeAnimating = true;
-      this._fetchSimilarResults(item.number).then(data => {
-        this.similarResults = data.results;
-        this.similarQueryVideo = data.query_video;
-        // Alpine x-for 自動 reactive，畫面 swap
+    async _openMobilePanel() {
+      this.similarModeAnimating = true;   // await 前鎖
+      let data;
+      try {
+        data = await this._fetchSimilarResults(this.currentLightboxVideo.number);
+      } catch (_err) {
+        this.similarModeAnimating = false;   // _fetchSimilarResults 已 showToast
+        return;
+      }
+      const items = data.results.slice(0, 6);   // CD-6 固定 6 張
+      await this._preloadImages(items.map(r => r.cover_url));
 
-        // BUGfix-mobile-similar-stale-cover: 三層 fallback（tier 1→2→3）
-        // tier 1: 命中 _filteredVideos → _setLightboxIndex（含自動清 similarExitVideo=null）
-        if (!this._silentSwitchLightboxByNumber(item.number)) {
-          // tier 2: 在 _videos（庫內、被 filter 排除）→ standalone，完整 metadata + path
-          const vIdx = _videos.findIndex(v => v.number === item.number);
-          if (vIdx >= 0) {
-            this.similarExitVideo = _videos[vIdx];
-          } else {
-            // tier 3: 孤兒列 / demo — 前端只有 similar API 的 5 欄 snapshot
-            const actressStr = Array.isArray(item.actresses)
-              ? item.actresses.join(', ') : (item.actresses || '');
-            this.similarExitVideo = {
-              number: item.number, title: item.title,
-              cover_url: item.cover_url,
-              cover_full_url: item.cover_full_url || '',  // 必帶 || ''：確保 .lb-full @load fire
-              actresses: actressStr,
-              // path 故意 undefined → play/open-folder/user-tags 靠 ?. guard 靜默不渲染
-            };
-          }
-          // tier 2 + 3 共用收尾：standalone housekeeping + blur-up reset
-          this.currentLightboxVideo = this.similarExitVideo;
-          this.currentLightboxActress = null;
-          this._videoChipsExpanded = false;
-          this.addingLbTag = false;
-          this._refreshLbFullBlurUp();
-        }
-
-        // P3: _similarLastDrilled* 在 fetch 成功後設（非 fetch 前），退場 exit 目標正確
-        this._similarLastDrilledNumber = item.number;
-        this._similarLastDrilledItem = item;
-      }).catch(() => {
-        // _fetchSimilarResults 已 showToast；x-for 不刷新，留原 4 張
-      }).finally(() => {
+      // stale-check：await 期間 lightbox 已關 → 中止（不顯示面板）。
+      // closeLightbox() 同步翻 lightboxOpen=false，但 currentLightboxVideo 走 250ms timer 才清，
+      // 故須查 lightboxOpen（否則 fetch/preload 空窗期關 lightbox 會漏接）。
+      if (!this.lightboxOpen || !this.currentLightboxVideo) {
         this.similarModeAnimating = false;
-      });
+        return;
+      }
+
+      // 填資料 + 重置 drill 歷史
+      this.similarResults = items;
+      this.similarQueryVideo = data.query_video;
+      this._mobileLastDrilledNumber = null;
+      this._mobilePanelRunId++;
+
+      // 設中央主圖 src（FlipReplace 落點 + Burst 原點）
+      const coverEl = this.$refs.mobilePanelCoverImg;
+      if (coverEl) coverEl.src = this.currentLightboxVideo.cover_url || '';
+
+      // 顯示面板：flag（trigger x-trap）+ DOM .show（CSS default-hidden → 顯示）
+      this.similarModeMobileOpen = true;
+      const panelEl = document.querySelector('.similar-mobile-panel');
+      if (panelEl) panelEl.classList.add('show');
+
+      // 等 x-for 渲染 6 卡 → collect → 爆射
+      await this.$nextTick();
+      const cards = [...document.querySelectorAll('.similar-mobile-burst-card')];
+      const runId = this._mobilePanelRunId;
+      if (window.BurstPicker && !window.BurstPicker.shouldSkip(_MOBILE_PICKER_PARAMS)) {
+        await window.BurstPicker.playPickerBurst(cards, coverEl, _MOBILE_PICKER_PARAMS, {
+          streamMode: 'instant',
+          floatTimerSink: this._mobileFloatTweens,
+          runId,
+          getRunId: () => this._mobilePanelRunId,
+        });
+      } else if (window.BurstPicker) {
+        // PRM：shouldSkip 內建瞬顯，仍呼叫以確保卡片 opacity:1 終態
+        await window.BurstPicker.playPickerBurst(cards, coverEl, _MOBILE_PICKER_PARAMS, { streamMode: 'instant' });
+      }
+
+      this.similarModeAnimating = false;
+    },
+
+    /**
+     * onMobileDrillClick — 點相似卡：被點卡 FlipReplace 回中央 + 舊卡墜落 + 新 6 卡爆射（三者同時，CD-5）。
+     * lock-before-await + stale-check + old/new card partition（R2）+ float tween kill（R5）。
+     * commit（3-tier silent-switch）延到 Promise.all resolve 後（裁決 2）。
+     * @param {object} item   被點卡資料（含 number / cover_url）
+     * @param {Event}  $event @click 事件（currentTarget = 被點 .similar-mobile-burst-card）
+     */
+    async onMobileDrillClick(item, $event) {
+      if (this.similarModeAnimating) return;   // lock-before-await 防連點空窗
+      if (!item) return;
+      this.similarModeAnimating = true;
+      this._mobilePanelRunId++;
+
+      const pickedCard = $event.currentTarget;
+      const coverEl = this.$refs.mobilePanelCoverImg;
+      // await 前 snapshot oldCards（partition 用，R2）
+      const oldCards = [...document.querySelectorAll('.similar-mobile-burst-card')];
+
+      let data;
+      try {
+        data = await this._fetchSimilarResults(item.number);
+      } catch (_err) {
+        this.similarModeAnimating = false;   // _fetchSimilarResults 已 showToast；面板維持當前狀態
+        return;
+      }
+      const items = data.results.slice(0, 6);   // CD-6
+      await this._preloadImages(items.map(r => r.cover_url));
+
+      // stale-check：await 期間關面板 → 中止、不 commit
+      if (!this.similarModeMobileOpen) {
+        this.similarModeAnimating = false;
+        return;
+      }
+
+      // kill 舊 float tweens（R5）
+      this._mobileFloatTweens.forEach(t => t && t.kill && t.kill());
+      this._mobileFloatTweens = [];
+
+      const runId = this._mobilePanelRunId;
+      const skip = window.BurstPicker && window.BurstPicker.shouldSkip(_MOBILE_PICKER_PARAMS);
+      const oldOtherCards = oldCards.filter(c => c !== pickedCard);
+
+      // 三動畫並行（不 await 個別）
+      const flip = (window.BurstPicker && coverEl)
+        ? window.BurstPicker.playPickerFlipReplace(pickedCard, coverEl, _MOBILE_PICKER_PARAMS)
+        : Promise.resolve();
+      const exit = window.BurstPicker
+        ? window.BurstPicker.playPickerExitAll(oldOtherCards, _MOBILE_PICKER_PARAMS)
+        : Promise.resolve();
+
+      // reactive swap → 新卡 DOM
+      this.similarResults = items;
+      // 中央主圖 src 換成被點卡封面（drill 落點）。BurstPicker 在場時 playPickerFlipReplace
+      // 已在 ghost 抵達時 swap coverImg.src（含 cache-bust），這裡再設會觸發第二次冗餘 fetch；
+      // 故只在 no-BurstPicker fallback（flip 退化成 Promise.resolve）才手動補設。
+      if (!(window.BurstPicker && coverEl) && coverEl && item.cover_url) {
+        coverEl.src = item.cover_url;
+      }
+      await this.$nextTick();
+      const newCards = [...document.querySelectorAll('.similar-mobile-burst-card')]
+        .filter(el => !oldCards.includes(el));
+      const burst = window.BurstPicker
+        ? window.BurstPicker.playPickerBurst(newCards, coverEl, _MOBILE_PICKER_PARAMS, {
+            streamMode: 'instant',
+            floatTimerSink: skip ? undefined : this._mobileFloatTweens,
+            runId,
+            getRunId: () => this._mobilePanelRunId,
+          })
+        : Promise.resolve();
+
+      await Promise.all([flip, exit, burst]);
+
+      // commit（onComplete 後）：3-tier silent-switch 還原底層 lightbox（裁決 2）
+      this._mobileSilentSwitch(item);
+      this._mobileLastDrilledNumber = item.number;
+
+      this.similarModeAnimating = false;
+    },
+
+    /**
+     * closeMobilePanel — 點主圖 / ✕ / Esc 關面板。Core 無轉場（直隱）。
+     * 絕對不呼叫 closeSimilarMode()（CD-4 / R3：桌面 close 在 similarCards={} 時 await playExit 永不 resolve → 凍結）。
+     */
+    closeMobilePanel() {
+      // kill float tweens（R5）
+      this._mobileFloatTweens.forEach(t => t && t.kill && t.kill());
+      this._mobileFloatTweens = [];
+
+      // 直隱面板（移 .show + flag false → lightbox trap 重新生效、焦點還原）
+      const panelEl = document.querySelector('.similar-mobile-panel');
+      if (panelEl) panelEl.classList.remove('show');
+      this.similarModeMobileOpen = false;
+
+      // 3-tier silent-switch 還原 lightbox 到最後 drill 那片（mirror closeSimilarMode tail）
+      if (this._mobileLastDrilledNumber && this._mobileLastDrilledItem) {
+        this._mobileSilentSwitch(this._mobileLastDrilledItem);
+      }
+
+      // reset
+      this._mobileLastDrilledNumber = null;
+      this._mobileLastDrilledItem = null;
+      this.similarModeAnimating = false;
+      // 焦點回 lightbox：x-trap 因 similarModeMobileOpen=false 自動還原（L548 trap 重新生效）
+    },
+
+    /**
+     * _mobileSilentSwitch — 3-tier silent-switch（複用 closeSimilarMode / 舊 onSimilarMobileCardClick
+     * 已驗證的 tier1→2→3 邏輯，CD-3 不重新發明資料層）。把底層 lightbox 切到 item 那片影片。
+     * tier1: _filteredVideos 命中 → _setLightboxIndex；tier2: _videos standalone；tier3: 5 欄 snapshot。
+     */
+    _mobileSilentSwitch(item) {
+      if (!item) return;
+      // 記 snapshot 供 close-tail 還原（mirror _similarLastDrilledItem）
+      this._mobileLastDrilledItem = item;
+      // tier 1: 命中 _filteredVideos → _setLightboxIndex（含自動清 similarExitVideo=null）
+      if (this._silentSwitchLightboxByNumber(item.number)) return;
+      // tier 2: 在 _videos（庫內、被 filter 排除）→ standalone，完整 metadata + path
+      const vIdx = _videos.findIndex(v => v.number === item.number);
+      if (vIdx >= 0) {
+        this.similarExitVideo = _videos[vIdx];
+      } else {
+        // tier 3: 孤兒列 / demo — 前端只有 similar API 的 5 欄 snapshot
+        const actressStr = Array.isArray(item.actresses)
+          ? item.actresses.join(', ') : (item.actresses || '');
+        this.similarExitVideo = {
+          number: item.number, title: item.title,
+          cover_url: item.cover_url,
+          cover_full_url: item.cover_full_url || '',  // 必帶 || ''：確保 .lb-full @load fire
+          actresses: actressStr,
+          // path 故意 undefined → play/open-folder/user-tags 靠 ?. guard 靜默不渲染
+        };
+      }
+      // tier 2 + 3 共用收尾：standalone housekeeping + blur-up reset
+      this.currentLightboxVideo = this.similarExitVideo;
+      this.currentLightboxActress = null;
+      this._videoChipsExpanded = false;
+      this.addingLbTag = false;
+      this._refreshLbFullBlurUp();
     },
 
     /**
