@@ -14360,3 +14360,139 @@ class TestSettingsCloseActionSelect:
                 f"settings.system.{key} value mismatch: "
                 f"expected {value!r}, got {system[key]!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# feature/83a T2: Lightbox modal-hug contract guards (8 guards, pure additive)
+# ---------------------------------------------------------------------------
+
+class TestLightboxModalHugContract:
+    """83a-T2: 固化 T1/T1fix1 modal-hug 契約（8 條純加法守衛）
+
+    #1 has-cover 含 aspect-ratio:var(--lb-cover-ar)
+    #2 has-cover 含 flex-shrink:0（防 T1 letterbox 主因回歸）
+    #3 has-cover 含 min-width:0 AND min-height:0
+    #4 width formula 含 90dvh 且整塊不含 100dvh/100vh（T1fix1 FHD 捲動修正）
+    #5 has-cover img 填滿盒（position:absolute + width/height:100%）
+    #6 has-cover .lb-full 填滿盒（width/height:100% + margin:0）
+    #7 .lightbox-metadata 不含 max-width:600px
+    #8 state-lightbox.js _setCoverAspect + closest + setProperty 三元素存在
+    """
+
+    def _css(self):
+        # Reuse module-level constant declared at line 3474
+        return SHOWCASE_CSS.read_text(encoding="utf-8")
+
+    def _js(self):
+        # Reuse module-level constant declared at line 91
+        return SHOWCASE_LIGHTBOX_JS.read_text(encoding="utf-8")
+
+    def _has_cover_block(self, css):
+        """擷取 .lightbox-content:not(.similar-open) .lightbox-cover.has-cover { ... } 塊內容"""
+        m = re.search(
+            r'\.lightbox-content:not\(\.similar-open\)\s+\.lightbox-cover\.has-cover\s*\{([^}]*)\}',
+            css, re.DOTALL
+        )
+        return m.group(1) if m else None
+
+    def _has_cover_img_block(self, css):
+        m = re.search(
+            r'\.lightbox-content:not\(\.similar-open\)\s+\.lightbox-cover\.has-cover\s+img\s*\{([^}]*)\}',
+            css, re.DOTALL
+        )
+        return m.group(1) if m else None
+
+    def _has_cover_lb_full_block(self, css):
+        m = re.search(
+            r'\.lightbox-content:not\(\.similar-open\)\s+\.lightbox-cover\.has-cover\s+\.lb-full\s*\{([^}]*)\}',
+            css, re.DOTALL
+        )
+        return m.group(1) if m else None
+
+    def _metadata_block(self, css):
+        m = re.search(r'\.lightbox-metadata\s*\{([^}]*)\}', css, re.DOTALL)
+        return m.group(1) if m else None
+
+    def test_has_cover_aspect_ratio_set(self):
+        """modal-hug 主規則含 aspect-ratio:var(--lb-cover-ar)（無此行盒不跟圖比例）"""
+        block = self._has_cover_block(self._css())
+        assert block is not None, (
+            "showcase.css 找不到 .lightbox-content:not(.similar-open) .lightbox-cover.has-cover 規則"
+        )
+        assert re.search(r'aspect-ratio\s*:\s*var\(--lb-cover-ar', block), (
+            ".lightbox-cover.has-cover 缺少 aspect-ratio: var(--lb-cover-ar)（modal-hug 核心）"
+        )
+
+    def test_has_cover_flex_shrink_zero(self):
+        """.lightbox-cover.has-cover 含 flex-shrink:0（T1 letterbox 主 bug 的修正守衛）"""
+        block = self._has_cover_block(self._css())
+        assert block is not None, (
+            "showcase.css 找不到 .lightbox-content:not(.similar-open) .lightbox-cover.has-cover 規則"
+        )
+        assert re.search(r'flex-shrink\s*:\s*0', block), (
+            ".lightbox-cover.has-cover 缺少 flex-shrink:0（此為 T1 letterbox 主 bug 的修正守衛）"
+        )
+
+    def test_has_cover_floor_zeroed(self):
+        """.lightbox-cover.has-cover 含 min-width:0 且 min-height:0（floor 歸零讓 AR 完整掌控尺寸）"""
+        block = self._has_cover_block(self._css())
+        assert block is not None, (
+            "showcase.css 找不到 .lightbox-content:not(.similar-open) .lightbox-cover.has-cover 規則"
+        )
+        assert re.search(r'min-width\s*:\s*0', block), ".lightbox-cover.has-cover 缺少 min-width:0"
+        assert re.search(r'min-height\s*:\s*0', block), ".lightbox-cover.has-cover 缺少 min-height:0"
+
+    def test_has_cover_width_formula_uses_90dvh(self):
+        """width formula 含 90dvh 且整塊不含 100dvh/100vh（T1fix1 FHD 捲動修正）"""
+        block = self._has_cover_block(self._css())
+        assert block is not None, (
+            "showcase.css 找不到 .lightbox-content:not(.similar-open) .lightbox-cover.has-cover 規則"
+        )
+        assert '90dvh' in block, (
+            ".lightbox-cover.has-cover width formula 缺少 90dvh（T1fix1 FHD 捲動修正）"
+        )
+        assert '100dvh' not in block, (
+            ".lightbox-cover.has-cover 含 100dvh，應為 90dvh（T1fix1 FHD 捲動修正）"
+        )
+        assert '100vh' not in block, (
+            ".lightbox-cover.has-cover 含 100vh，應為 90vh/90dvh"
+        )
+
+    def test_has_cover_img_fills_box(self):
+        """.has-cover img 填滿盒（position:absolute + width/height:100%）"""
+        block = self._has_cover_img_block(self._css())
+        assert block is not None, (
+            "showcase.css 找不到 .lightbox-content:not(.similar-open) .lightbox-cover.has-cover img 規則"
+        )
+        assert re.search(r'position\s*:\s*absolute', block), ".has-cover img 缺少 position:absolute"
+        assert re.search(r'width\s*:\s*100%', block), ".has-cover img 缺少 width:100%"
+        assert re.search(r'height\s*:\s*100%', block), ".has-cover img 缺少 height:100%"
+
+    def test_has_cover_lb_full_fills_box(self):
+        """.has-cover .lb-full 填滿盒（width/height:100% + margin:0）"""
+        block = self._has_cover_lb_full_block(self._css())
+        assert block is not None, (
+            "showcase.css 找不到 .lightbox-content:not(.similar-open) .lightbox-cover.has-cover .lb-full 規則"
+        )
+        assert re.search(r'width\s*:\s*100%', block), ".has-cover .lb-full 缺少 width:100%"
+        assert re.search(r'height\s*:\s*100%', block), ".has-cover .lb-full 缺少 height:100%"
+        assert re.search(r'margin\s*:\s*0', block), ".has-cover .lb-full 缺少 margin:0"
+
+    def test_metadata_no_max_width_600(self):
+        """.lightbox-metadata 不含 max-width:600px（T1 M4 已移除，勿復原）"""
+        block = self._metadata_block(self._css())
+        assert block is not None, "showcase.css 找不到 .lightbox-metadata 規則"
+        assert not re.search(r'max-width\s*:\s*600px', block), (
+            ".lightbox-metadata 含 max-width:600px（T1 M4 已移除，勿復原）"
+        )
+
+    def test_set_cover_aspect_js_contract(self):
+        """state-lightbox.js 含 _setCoverAspect + closest('.lightbox-cover') + setProperty('--lb-cover-ar') 三元素"""
+        js = self._js()
+        assert '_setCoverAspect' in js, "state-lightbox.js 缺少 _setCoverAspect 函數"
+        assert "closest('.lightbox-cover')" in js, (
+            "state-lightbox.js 缺少 closest('.lightbox-cover') 呼叫"
+        )
+        assert "setProperty('--lb-cover-ar'" in js, (
+            "state-lightbox.js 缺少 setProperty('--lb-cover-ar') 呼叫"
+        )
