@@ -326,13 +326,17 @@
                 <button class="btn btn-sm btn-outline btn-primary" id="btnAddFolder" @click="addFolder()">
                     <i class="bi bi-folder-plus"></i> {{ t('search.action.add_folder') }}
                 </button>
-                <button class="btn btn-sm btn-outline btn-warning" id="btnFavorite" @click="loadFavorite()" :disabled="isLoadingFavorite" title="{{ t('search.action.load_favorite') }}">
+                <button class="btn btn-sm btn-outline btn-warning" id="btnFavorite" @click="loadFavorite()" :disabled="isLoadingFavorite" title="{{ t('search.empty.favorite_note') }}">
                     <template x-if="!isLoadingFavorite"><i class="bi bi-star-fill"></i></template>
                     <span x-show="isLoadingFavorite" class="loading loading-spinner loading-sm"></span>
                     <span x-text="isLoadingFavorite ? '' : t('search.action.favorite')">{{ t('search.action.favorite') }}</span>
                 </button>
             </div>
             <small class="state-page-hint">{{ t('search.empty.drag_hint') }}</small>
+            <div class="empty-explainer">
+                <p class="empty-explainer-line">{{ t('search.empty.explainer_lookup') }}</p>
+                <p class="empty-explainer-line">{{ t('search.empty.explainer_organize') }}</p>
+            </div>
         </div>
 
         <!-- 載入中 - 進度指示器 -->

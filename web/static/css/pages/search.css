@@ -361,6 +361,36 @@
     display: none !important;
 }
 
+/* === 空狀態：查資料 vs 動檔案 說明區塊 === */
+.empty-explainer {
+    max-width: 34em;
+    margin: 0.75rem auto 0;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--stroke-subtle);
+    text-align: center;
+}
+
+.empty-explainer-line {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    opacity: 0.75;
+    line-height: 1.6;
+    margin: 0;
+    padding: 0;
+}
+
+.empty-explainer-line + .empty-explainer-line {
+    margin-top: 0.3em;
+}
+
+@media (max-width: 480px) {
+    .empty-explainer {
+        max-width: 100%;
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+}
+
 /* 搜尋提示 */
 .search-hint {
     font-size: 0.75rem;

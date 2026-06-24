@@ -76,7 +76,10 @@
     },
     "empty": {
       "hint": "Enter an ID to search, or add video files",
-      "drag_hint": "You can also drag and drop files or folders"
+      "drag_hint": "You can also drag and drop files or folders",
+      "explainer_lookup": "Typing an ID / actress name, clicking an actress, or dragging in a video only looks up data.",
+      "explainer_organize": "Only \"Organize\" or \"Batch Organize\" touches your files (rename, create folders, download cover/stills, and write NFO per your settings).",
+      "favorite_note": "\"Favorites\" is your frequently-used video folder path, not favorite actresses."
     },
     "error": {
       "hint": "Please check the ID format or try again later",
