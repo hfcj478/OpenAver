@@ -200,6 +200,12 @@
       "instruction": "Go to <strong>Settings → Advanced Scrape Settings → Version Tags</strong>, add keywords and make sure the file naming format includes the <code class=\"badge badge-sm\">{suffix}</code> variable.",
       "acknowledge": "Got it",
       "go_settings": "Go to Settings"
+    },
+    "auto_pill": {
+      "tooltip": "Click to select source"
+    },
+    "source_pill": {
+      "tooltip": "Click to change source"
     }
   },
   "settings": {
@@ -259,8 +265,6 @@
       "dmm_proxy_required_hint": "DMM requires a proxy to work — enable a proxy in Settings first"
     },
     "advanced_search": {
-      "toggle_label": "Advanced Search (Beta)",
-      "help": "When enabled, long-press the search button on the Search page to pick a single source (including disabled ones) for a one-time override.",
       "metatube_keyword_hint": "Metatube sources do not support actress/keyword search — enter a full ID for best results.",
       "group_metatube_empty": "No Metatube sources yet"
     },
@@ -302,7 +306,10 @@
       "no_lan_ip": "Could not detect local LAN IP automatically. Check your system network settings for your IP and connect manually.",
       "listener_down": "LAN server is not running. Switch back to Local mode and re-enable Server mode.",
       "toggle_failed": "Failed to start LAN server. Please try again later.",
-      "autostart_failed": "LAN server mode could not start automatically after restart. Go to Settings to re-enable it."
+      "autostart_failed": "LAN server mode could not start automatically after restart. Go to Settings to re-enable it.",
+      "no_lan_ip_with_port": "Unable to detect local LAN IP automatically. Please check your IP in System Network Settings, then connect using that IP:{port}.",
+      "disable_failed": "Failed to stop the LAN server. Please try again later.",
+      "remote_only": "Server mode can only be toggled from the host computer running OpenAver."
     },
     "section": {
       "search": "Search & Scrape",
@@ -471,6 +478,14 @@
       "no_directories": "No Scanner folders configured",
       "linked_text": "✓ Linked to Scanner",
       "not_linked_text": "⚠ Not linked to Scanner"
+    },
+    "server_mode_confirm": {
+      "title": "Switch Server Mode",
+      "title_on": "Enable Server Mode?",
+      "body_on": "Once enabled, any phone, tablet, or computer on the same Wi-Fi or LAN can open OpenAver in a browser. There is no username/password protection — any device on the same network can connect. Only use this on networks you fully trust.",
+      "body_off": "After switching back to standalone mode, LAN devices will immediately lose access. Confirm switch?",
+      "confirm": "Confirm",
+      "confirm_on": "Enable Anyway"
     }
   },
   "scanner": {
@@ -856,7 +871,8 @@
       "up_to_date": "You are up to date",
       "ai_instruction": "Paste to AI agent to control OpenAver",
       "ai_hint_unsupported": "Not supported in web chat",
-      "ai_tools": "Paste to any AI agent to operate OpenAver — Claude Code · Cursor · Codex etc."
+      "ai_tools": "Paste to any AI agent to operate OpenAver — Claude Code · Cursor · Codex etc.",
+      "copy_curl": "Copy Command"
     },
     "workflow": {
       "title": "First time? Follow these 3 steps",
@@ -1130,6 +1146,40 @@
       "h6_manage": "Tips",
       "manage_enable": "No configuration needed — works out of the box",
       "manage_scanner": "After adding videos, the index updates automatically when Scanner generates the webpage — no manual steps needed"
+    },
+    "server_mode": {
+      "title": "Server Mode — Access from Phone/Tablet",
+      "h6_what": "What Is This",
+      "what_single": "Default \"standalone\" mode: only this computer can use it.",
+      "what_server": "Switch to \"server\" mode: phones, tablets, and other computers on the same Wi-Fi / LAN can open the URL shown on screen in a browser to browse covers, watch videos, and look up titles.",
+      "what_where": "The toggle is in the \"Standalone | Server\" capsule at the top right of the Settings page.",
+      "h6_how": "How to Use",
+      "how_url": "After switching to \"server\" mode, a connection URL will appear below (e.g. <code>http://192.168.1.50:50123</code>).",
+      "how_copy": "Tap \"Copy\" to send the URL to your phone, or use your browser's built-in \"Send to device\" feature, then open it in your mobile browser.",
+      "how_off": "Switching back to \"standalone\" fully closes external access — LAN devices disconnect immediately.",
+      "h6_security": "Security Notice",
+      "security_lan": "Use only on trusted Wi-Fi / LAN networks (no username/password protection, LAN-only).",
+      "security_vpn": "For remote access, configure a VPN yourself (e.g. Tailscale); this app does not expose itself to the internet.",
+      "h6_firewall": "Firewall Prompt on First Launch",
+      "firewall_allow": "The first time you switch to \"server\" mode, Windows (or macOS) will show a firewall prompt asking whether to allow network access → click \"<strong>Allow</strong>\". You only need to do this once; the system will remember.",
+      "firewall_why": "This is required so other devices can connect — the OS needs your permission (same as Plex and similar LAN tools). <strong>Standalone mode will not trigger this prompt.</strong>",
+      "h6_recover": "Accidentally Clicked \"Cancel / Block\"?",
+      "recover_win_intro": "Steps to recover on Windows:",
+      "recover_win_1": "Press <code>Win + R</code>, type <code>wf.msc</code> and press Enter to open \"Windows Defender Firewall with Advanced Security\".",
+      "recover_win_2": "Click \"Inbound Rules\" in the left panel.",
+      "recover_win_3": "Find rules where \"Program\" is <code>python.exe</code> (or named Python / OpenAver) and \"Action\" is \"Block\" — typically two entries (Public + Private).",
+      "recover_win_4": "Right-click to delete those rules, restart OpenAver, then switch to \"server\" mode and click \"Allow\".",
+      "recover_mac": "macOS recovery: System Settings → Network → Firewall → Options, find this app and set it to \"Allow incoming connections\"."
+    },
+    "update_modal": {
+      "trigger_btn": "Update",
+      "title": "Opening Installer",
+      "case_a_body": "Once the installer opens, follow the on-screen instructions to close OpenAver first, then continue with the update.",
+      "case_b_body": "You are not installed in the default location.\nThe installer will install the new version to the default directory. You do not need to close the current OpenAver during installation.\n\nAfter installation, please follow these steps:\n1. Close OpenAver\n2. Delete the python folder in the old installation directory\n3. Copy all files from the new version to overwrite your original installation location\n\nOpenAver does not need to be reinstalled or reconfigured — simply overwrite the files.",
+      "cancel_btn": "Cancel",
+      "confirm_btn": "Confirm Update",
+      "toast_success": "Installer opened. Follow the on-screen instructions to complete the update.",
+      "toast_error": "Failed to launch the installer. Please run the installation script manually."
     }
   },
   "tutorial": {
