@@ -38,6 +38,14 @@ class TestShowcaseScrollCollapse:
         content = self._read_state_base()
         assert "_toolbarOpenY" in content
 
+    def test_scroll_collapse_resets_baseline_on_auto_close(self):
+        """auto-close 後必須立即 reset _toolbarOpenY，防止 reopen 時 stale baseline 立即再收"""
+        content = self._read_state_base()
+        # toolbarOpen = false 之後的 80 字元內必須有 _toolbarOpenY = null
+        idx_close = content.index("toolbarOpen = false")
+        idx_reset = content.index("_toolbarOpenY = null", idx_close)
+        assert idx_reset < idx_close + 120, "auto-close 後未在同一 block 立即 reset _toolbarOpenY"
+
     def test_scroll_listener_cleanup(self):
         """cleanup callback 必須移除 scroll listener"""
         content = self._read_state_base()

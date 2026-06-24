@@ -269,6 +269,7 @@ export function stateBase() {
                 if (this.search !== '' || this.actressSearch !== '') return  // actressSearch 來自 state-actress.js merge
                 if (window.scrollY - _toolbarOpenY > COLLAPSE_THRESHOLD) {
                     Alpine.store('ui').toolbarOpen = false
+                    _toolbarOpenY = null  // reset: 下次 reopen 從新基準計，防 stale baseline 立即再收
                 }
             }
             window.addEventListener('scroll', _scrollHandler, { passive: true })
