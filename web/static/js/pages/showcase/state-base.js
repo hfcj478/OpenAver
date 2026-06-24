@@ -216,6 +216,7 @@ export function stateBase() {
                         if (this.lightboxOpen) document.body.classList.remove('overflow-hidden');
                         this._resetPicker();                                  // 53a-T1: 清場 picker 狀態
                         window.GhostFly?.cleanupStaleGhosts?.();              // 53a-T1: 移除殘留 ghost（沿 v0.8.1 T4 optional-chaining pattern）
+                        if (this._scrollHideHandler) window.removeEventListener('scroll', this._scrollHideHandler);  // T1: cleanup scroll collapse listener
                     }
                 });
             }
@@ -256,6 +257,22 @@ export function stateBase() {
                     }
                 });
             }
+
+            // T1: Mobile scroll-to-collapse — 往下滾超過 50px（相對 toolbar 展開當下 Y）自動收合（≤480px，搜尋空白時）
+            let _toolbarOpenY = null
+            const COLLAPSE_THRESHOLD = 50
+            const _scrollHandler = () => {
+                if (!window.matchMedia('(max-width: 480px)').matches) return
+                const isOpen = Alpine.store('ui').toolbarOpen
+                if (!isOpen) { _toolbarOpenY = null; return }
+                if (_toolbarOpenY === null) _toolbarOpenY = window.scrollY
+                if (this.search !== '' || this.actressSearch !== '') return  // actressSearch 來自 state-actress.js merge
+                if (window.scrollY - _toolbarOpenY > COLLAPSE_THRESHOLD) {
+                    Alpine.store('ui').toolbarOpen = false
+                }
+            }
+            window.addEventListener('scroll', _scrollHandler, { passive: true })
+            this._scrollHideHandler = _scrollHandler
         },
 
         // --- 狀態恢復 (M2c) ---
