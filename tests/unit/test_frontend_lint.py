@@ -8926,6 +8926,146 @@ class TestRescrapeStateGuard:
         )
 
 
+class TestRescrapeVersionStateGuard:
+    """86-T3: state-rescrape.js candidates 短狀態 + routing + confirm contract。"""
+
+    SHARED_DIR = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "shared"
+    SEARCH_STATE_DIR = (
+        Path(__file__).parent.parent.parent
+        / "web" / "static" / "js" / "pages" / "search" / "state"
+    )
+    STATE_RESCRAPE_JS = SHARED_DIR / "state-rescrape.js"
+    ADVANCED_PICKER_JS = SEARCH_STATE_DIR / "advanced-picker.js"
+
+    def _rescrape(self):
+        return self.STATE_RESCRAPE_JS.read_text(encoding="utf-8")
+
+    def _picker(self):
+        return self.ADVANCED_PICKER_JS.read_text(encoding="utf-8")
+
+    # ── (B) advanced-picker.js: _commitSearchResults helper ──
+
+    def test_commit_search_results_helper_exists(self):
+        """CD-86-14: _commitSearchResults method 必須存在於 advanced-picker.js。"""
+        src = self._picker()
+        assert "_commitSearchResults" in src, (
+            "CD-86-14 違規：advanced-picker.js 缺少 _commitSearchResults helper"
+        )
+
+    def test_advanced_search_delegates_to_helper(self):
+        """CD-86-14: advancedSearch 成功分支必須委派給 _commitSearchResults，不 inline 賦值。
+        element-bound：確認 advancedSearch body 內呼叫 _commitSearchResults（不靠字串存在性）。
+        """
+        src = self._picker()
+        m = re.search(
+            r"async\s+advancedSearch\s*\([^)]*\)\s*\{.*?this\._commitSearchResults\s*\(",
+            src, re.DOTALL,
+        )
+        assert m, (
+            "CD-86-14 違規：advancedSearch body 中未找到 this._commitSearchResults( 呼叫"
+        )
+
+    # ── (B) state-rescrape.js: candidates 短狀態 ──
+
+    def test_candidates_state_keys_present(self):
+        """86-T3: rescrapeCandidates / rescrapeVersionIdx 必須平鋪定義。"""
+        src = self._rescrape()
+        for key in ("rescrapeCandidates", "rescrapeVersionIdx"):
+            assert key in src, f"state-rescrape.js missing state key: {key}"
+
+    def test_version_methods_present(self):
+        """86-T3: rescrapeHasVersions / rescrapeVersionGo 必須存在。"""
+        src = self._rescrape()
+        for method in ("rescrapeHasVersions", "rescrapeVersionGo"):
+            assert method in src, f"state-rescrape.js missing method: {method}"
+
+    # ── (B) routing: search 入口 javlib 不早 return ──
+
+    def test_search_javlib_does_not_early_return_advancedSearch(self):
+        """CD-86-8: rescrapeWithSource search+javlib 分支不得無條件 early return advancedSearch。
+        守衛：search early return 必須帶 sourceId !== 'javlibrary' 的判斷（只有非 javlib 才走 advancedSearch）。
+        element-bound：檢測 search 條件 if-block 的前 400 字元內有 javlibrary（防 file-wide false GREEN）。
+        """
+        src = self._rescrape()
+        # 先找 search 分支位置，再在其後 400 字元內確認 javlibrary 出現（不跨函式）
+        m_search = re.search(
+            r"rescrapeEntryPoint\s*===\s*['\"]search['\"]",
+            src,
+        )
+        assert m_search, "rescrapeWithSource 中未見 rescrapeEntryPoint === 'search' 判斷"
+        # 取 search 分支後 400 字元（足夠涵蓋 if block body，不跨到 _pollCfThenRetry）
+        window = src[m_search.start():m_search.start() + 400]
+        assert "javlibrary" in window, (
+            "CD-86-8 違規：rescrapeWithSource search 分支（前 400 字元）未見 javlibrary 判斷——"
+            "search+javlib 可能仍走早 return advancedSearch 路徑"
+        )
+
+    # ── (B) switch-source 取 candidates[0] ──
+
+    def test_switch_source_takes_candidates_first(self):
+        """CD-86-6: switch-source 收到 candidates 時取 [0]（非 [1]，非整個陣列）。"""
+        src = self._rescrape()
+        # element-bound：在 switch-source if-block 附近找 candidates[0]
+        m = re.search(
+            r"rescrapeEntryPoint\s*===\s*['\"]switch-source['\"].*?candidates\s*\[\s*0\s*\]",
+            src, re.DOTALL,
+        )
+        assert m, (
+            "CD-86-6 違規：switch-source 分支未見 candidates[0] 取用"
+        )
+
+    # ── (B) confirm: detail_url 取值 .url ──
+
+    def test_confirm_lightbox_detail_url_from_url_field(self):
+        """CD-86-13: rescrapeConfirm lightbox 分支 detail_url 值必須來自 rescrapePreview.url。"""
+        src = self._rescrape()
+        # 確認 .url 在 confirm context 存在
+        assert re.search(
+            r"rescrapeConfirm.*?detail_url.*?rescrapePreview.*?\.url",
+            src, re.DOTALL,
+        ), (
+            "CD-86-13: rescrapeConfirm 中未見 rescrapePreview.url 取值（detail_url 欄位值）"
+        )
+
+    # ── (B) confirm: search 走 helper 非 inline ──
+
+    def test_confirm_search_calls_commit_helper(self):
+        """CD-86-14: rescrapeConfirm search 分支必須呼叫 _commitSearchResults，禁 inline。
+        element-bound：rescrapeConfirm body 內找 search 分支 + helper 呼叫。
+        """
+        src = self._rescrape()
+        m = re.search(
+            r"rescrapeConfirm.*?rescrapeEntryPoint.*?['\"]search['\"].*?_commitSearchResults",
+            src, re.DOTALL,
+        )
+        assert m, (
+            "CD-86-14 違規：rescrapeConfirm search 分支未呼叫 _commitSearchResults helper"
+        )
+
+    # ── lifecycle 對稱：close/back reset candidates ──
+
+    def test_close_rescrape_resets_candidates(self):
+        """lifecycle 對稱：closeRescrape 必須 reset rescrapeCandidates。
+        element-bound：在 closeRescrape method 體內找 rescrapeCandidates（允許內層 if block）。
+        """
+        src = self._rescrape()
+        # closeRescrape 函式體可能含有內層 if {...} block，故使用 .*? 而非 [^}]*
+        m = re.search(
+            r"closeRescrape\s*\(\s*\)\s*\{.*?rescrapeCandidates",
+            src, re.DOTALL,
+        )
+        assert m, "closeRescrape 必須 reset rescrapeCandidates（lifecycle 對稱）"
+
+    def test_back_to_pick_resets_candidates(self):
+        """lifecycle 對稱：rescrapeBackToPick 必須 reset rescrapeCandidates。"""
+        src = self._rescrape()
+        m = re.search(
+            r"rescrapeBackToPick\s*\(\s*\)\s*\{[^}]*rescrapeCandidates",
+            src, re.DOTALL,
+        )
+        assert m, "rescrapeBackToPick 必須 reset rescrapeCandidates（lifecycle 對稱）"
+
+
 class TestRescrapeEntryGuard:
     """62b-1 → 74b US4：守衛 Showcase 進階重刮入口接線 contract。
 
