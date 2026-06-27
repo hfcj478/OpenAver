@@ -1,0 +1,36 @@
+name: Sync Fork - OpenAver
+
+on:
+  schedule:
+    # UTC 时间 16:00 对应北京时间每天凌晨 00:00
+    - cron: '0 16 * * *'
+  workflow_dispatch: # 允许在 Actions 页面手动点击运行
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 必须赋予 GitHub Actions 推送代码的权限
+
+    steps:
+      - name: 检出当前仓库
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 获取所有提交记录以避免合并报错
+
+      - name: 同步 slive777/OpenAver 更新
+        run: |
+          # 1. 配置 Git 机器人身份
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          # 2. 添加指定的原仓库地址并抓取 (已更新为 slive777/OpenAver)
+          git remote add upstream https://github.com/slive777/OpenAver.git
+          git fetch upstream
+          
+          # 3. 切换到主分支并合并原仓库更新
+          git checkout main
+          git merge upstream/main
+          
+          # 4. 推送到你的仓库
+          git push origin main
