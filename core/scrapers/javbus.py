@@ -255,14 +255,14 @@ class JavBusScraper(BaseScraper):
         URL 格式：
           第 1 頁：/search/{keyword}
           第 N 頁：/search/{keyword}/{N}
-          前綴搜尋：上述 URL 後加 &type=1
+          前綴搜尋：上述 URL 後加 ?type=1
         """
         prefix = self._get_lang_prefix()
         base = f"{self.BASE_URL}{prefix}/search/{keyword}"
         if page > 1:
             base += f"/{page}"
         if search_type > 0:
-            base += f"&type={search_type}"
+            base += f"?type={search_type}"
         return base
 
     def _parse_search_ids(self, soup) -> list[str]:
@@ -294,7 +294,7 @@ class JavBusScraper(BaseScraper):
         Args:
             keyword: 搜尋關鍵字或前綴
             page: 頁碼（從 1 開始）
-            search_type: 0=一般搜尋，1=前綴搜尋（&type=1）
+            search_type: 0=一般搜尋，1=前綴搜尋（?type=1）
 
         Returns:
             番號列表（list[str]）

@@ -598,12 +598,12 @@ class TestGetIdsFromSearch:
             scraper_zh.get_ids_from_search("SNOS")
 
     def test_search_type_1_url(self, scraper_zh):
-        """BC-18: search_type=1 URL 包含 &type=1"""
+        """BC-18: search_type=1 URL 包含 ?type=1"""
         url = scraper_zh._build_search_url("SONE", page=1, search_type=1)
-        assert "&type=1" in url
+        assert "?type=1" in url
         assert "/search/SONE" in url
         # page=1 不應出現 /1
-        assert "/1" not in url.split("/search/SONE")[1].split("&")[0]
+        assert "/1" not in url.split("/search/SONE")[1].split("?")[0]
 
     def test_page_2_url(self, scraper_zh):
         """BC-19a: page=2 URL 包含 /2"""
@@ -612,9 +612,9 @@ class TestGetIdsFromSearch:
         assert "&type=" not in url
 
     def test_page_2_type_1_url(self, scraper_zh):
-        """BC-19b: page=2 + type=1 URL 正確（番號/2&type=1）"""
+        """BC-19b: page=2 + type=1 URL 正確（番號/2?type=1）"""
         url = scraper_zh._build_search_url("SONE", page=2, search_type=1)
-        assert "/search/SONE/2&type=1" in url
+        assert "/search/SONE/2?type=1" in url
 
 
 # ============================================================
