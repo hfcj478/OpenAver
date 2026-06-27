@@ -2,6 +2,7 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 from .models import Video, ScraperConfig
+from core.scrapers.utils import normalize_number_impl
 
 
 class BaseScraper(ABC):
@@ -77,28 +78,5 @@ class BaseScraper(ABC):
         return any(re.match(p, number.upper()) for p in patterns)
 
     def normalize_number(self, number: str) -> str:
-        """
-        正規化番號（統一大寫、格式）
-
-        Args:
-            number: 番號
-
-        Returns:
-            正規化後的番號
-        """
-        import re
-        number = number.strip()
-        # 清理常見後綴（需有分隔符，避免誤刪 JUC-123 等合法前綴）
-        number = re.sub(
-            r'[-_](UC|UNCEN|UNCENSORED|LEAK|LEAKED)(?=[-_.\s]|$)',
-            '', number, flags=re.IGNORECASE
-        )
-        number = number.upper()
-        # 單字母 + 恰 4 位（如 N0762, K0150）→ Tokyo Hot 無碼番號，不插 hyphen
-        if re.match(r'^[A-Z]\d{4}$', number):
-            return number
-        # ABC123 → ABC-123
-        match = re.match(r'^([A-Z]+)(\d+)$', number)
-        if match:
-            return f"{match.group(1)}-{match.group(2)}"
-        return number
+        """正規化番號（統一大寫、格式）"""
+        return normalize_number_impl(number)

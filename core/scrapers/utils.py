@@ -330,6 +330,46 @@ def format_number(number: str) -> str:
     return number.upper().strip()
 
 
+def normalize_number_impl(number: str) -> str:
+    """
+    正規化番號（統一大寫、格式）— standalone 實作，無 I/O、無網路。
+
+    BaseScraper.normalize_number 委派此函式；core.scraper.normalize_number
+    module-level wrapper 同樣委派此函式，不再需要實例化 JavBusScraper。
+
+    Args:
+        number: 原始番號（可含空白、UC/UNCEN 後綴）
+
+    Returns:
+        正規化後的番號
+
+    Examples:
+        >>> normalize_number_impl("sone103")
+        'SONE-103'
+        >>> normalize_number_impl("n0762")
+        'N0762'
+        >>> normalize_number_impl("ABC-123-UC")
+        'ABC-123'
+        >>> normalize_number_impl("  SONE-103  ")
+        'SONE-103'
+    """
+    number = number.strip()
+    # 清理常見後綴（需有分隔符，避免誤刪 JUC-123 等合法前綴）
+    number = re.sub(
+        r'[-_](UC|UNCEN|UNCENSORED|LEAK|LEAKED)(?=[-_.\s]|$)',
+        '', number, flags=re.IGNORECASE
+    )
+    number = number.upper()
+    # 單字母 + 恰 4 位（如 N0762, K0150）→ Tokyo Hot 無碼番號，不插 hyphen
+    if re.match(r'^[A-Z]\d{4}$', number):
+        return number
+    # ABC123 → ABC-123
+    match = re.match(r'^([A-Z]+)(\d+)$', number)
+    if match:
+        return f"{match.group(1)}-{match.group(2)}"
+    return number
+
+
 # ============================================================
 # 來源配置常數
 # ============================================================

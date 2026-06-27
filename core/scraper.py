@@ -22,7 +22,7 @@ from core.scrapers import (
     JavLibraryScraper,          # T3 新增
     Video, ScraperConfig, BaseScraper
 )
-from core.scrapers.utils import extract_number as _new_extract_number, FUZZY_SEARCH_SOURCES
+from core.scrapers.utils import extract_number as _new_extract_number, FUZZY_SEARCH_SOURCES, normalize_number_impl
 from core.maker_mapping import get_maker_by_prefix
 from core.source_merger import merge_results
 from core.source_config import validate_source_id
@@ -74,7 +74,7 @@ def extract_number(filename: str) -> Optional[str]:
 
 def normalize_number(number: str) -> str:
     """標準化番號格式"""
-    return JavBusScraper().normalize_number(number)
+    return normalize_number_impl(number)
 
 
 def is_number_format(s: str) -> bool:

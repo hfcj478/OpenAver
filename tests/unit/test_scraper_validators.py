@@ -182,8 +182,8 @@ def _install_scraper_spies(monkeypatch):
     for attr in _SCRAPER_ATTRS:
         monkeypatch.setattr(scraper_mod, attr, make_spy(attr))
 
-    # normalize_number() constructs a real JavBusScraper at module scope (unrelated
-    # to routing). Stub it to identity so the spies don't break it and no network runs.
+    # normalize_number() was previously proxied through JavBusScraper(); now it calls
+    # normalize_number_impl() directly. Stub to identity so scraper spies remain isolated.
     monkeypatch.setattr(scraper_mod, 'normalize_number', lambda n: n)
 
     return constructed
@@ -299,7 +299,7 @@ class TestTokyoHotSearchJavIntegration:
 
         # Subclass the REAL JavBusScraper so the inherited (real) normalize_number
         # runs through the production module-level wrapper
-        # (scraper.py:78 → JavBusScraper().normalize_number()); only .search() is
+        # (scraper.py → normalize_number_impl()); only .search() is
         # overridden to capture. No normalize_number patching → the full real
         # normalize path is exercised, not a stand-in wrapper.
         from core.scrapers import JavBusScraper as _RealJavBusScraper

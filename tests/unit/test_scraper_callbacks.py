@@ -728,8 +728,8 @@ class TestDisabledSourceRouting:
         """回傳一組 (patch context managers, searched tracker) — 每個 scraper class
         被 patch 成 mock：instance.search() 記錄被搜尋的來源並回 None。
 
-        以 .search() 而非建構為準：normalize_number() 會建立一個 JavBusScraper 但不呼叫
-        .search()，用建構計數會誤報 javbus。"""
+        以 .search() 而非建構為準（T1c 後 normalize_number() 不再建立 JavBusScraper）：
+        用建構計數仍可能誤報其他 scraper，故以 .search() 側錄為準。"""
         instantiated = []
 
         def make_cls(name):
