@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from core.cf_transport import CfChallengeRequired, CfTransportUnavailable
-from core.scrapers.javlibrary import JavLibraryScraper
+from core.scrapers.javlibrary import JavLibraryScraper, _extract_all_detail_urls
 from core.scrapers.models import Video
 
 # ──────────────────────────────────────
@@ -346,3 +346,224 @@ def test_search_multi_result_correct_number_returns_video():
         f"number 相符的多命中路徑應回 Video，got: {result!r}"
     )
     assert result.number == "TCD-332"
+
+
+# ──────────────────────────────────────
+# T1：_extract_all_detail_urls + search_all_versions + fetch_by_detail_url
+# ──────────────────────────────────────
+
+# 多版本列表頁（模擬 MIDV-010 風格）
+# ─ 含 2 個 MIDV-010 框（各 1 主連結 + 3 href 空的動作連結）
+# ─ 另含 1 個前綴鄰號框（MIDV-100，boundary-match 測試用）
+MULTI_VERSION_LIST_HTML = """\
+<html><head><title>品番検索結果</title></head><body>
+  <div class="video">
+    <a href="./javlidaori.html" title="MIDV-010 Angel Kiss ビアンたちの愛情物語">MIDV-010 Angel Kiss</a>
+    <a href="">これが欲しい</a><a href="">見た</a><a href="">持ってる</a>
+  </div>
+  <div class="video">
+    <a href="./javme3bu7e.html" title="MIDV-010 連続中出しオーガズムSP">MIDV-010 連続...</a>
+    <a href="">これが欲しい</a><a href="">見た</a><a href="">持ってる</a>
+  </div>
+  <div class="video">
+    <a href="./javmidv100.html" title="MIDV-100 隣のお姉さん">MIDV-100 隣の...</a>
+    <a href="">これが欲しい</a><a href="">見た</a><a href="">持ってる</a>
+  </div>
+</body></html>"""
+
+# 舊片 detail（date=2009-12-01）
+OLD_DETAIL_HTML = """\
+<html><head><title>MIDV-010 Angel Kiss</title></head><body>
+  <h3 class="post-title">MIDV-010 Angel Kiss ビアンたちの愛情物語</h3>
+  <div id="video_id"><table><tr><td class="text">MIDV-010</td></tr></table></div>
+  <div id="video_date"><table><tr><td class="text">2009-12-01</td></tr></table></div>
+  <div id="video_maker"><table><tr><td class="text"><span><a>グラフィティジャパン</a></span></td></tr></table></div>
+  <img id="video_jacket_img" src="//pics.dmm.co.jp/mono/midv010old.jpg" />
+</body></html>"""
+
+# 新片 detail（date=2021-12-07）
+NEW_DETAIL_HTML = """\
+<html><head><title>MIDV-010 連続中出し</title></head><body>
+  <h3 class="post-title">MIDV-010 連続中出しオーガズムSP</h3>
+  <div id="video_id"><table><tr><td class="text">MIDV-010</td></tr></table></div>
+  <div id="video_date"><table><tr><td class="text">2021-12-07</td></tr></table></div>
+  <div id="video_maker"><table><tr><td class="text"><span><a>MOODYZ</a></span></td></tr></table></div>
+  <img id="video_jacket_img" src="//pics.dmm.co.jp/mono/midv010new.jpg" />
+</body></html>"""
+
+
+def test_extract_all_detail_urls_collects_all():
+    """
+    多相符 + href 空濾掉 + 前綴鄰號 boundary 濾掉 + 無相符回 []。
+    """
+    base = "https://www.javlibrary.com/ja"
+
+    # 主案例：MIDV-010 多版本列表，MIDV-100 須被 boundary 濾掉
+    urls = _extract_all_detail_urls(MULTI_VERSION_LIST_HTML, "MIDV-010", base)
+    assert len(urls) == 2, f"應收 2 個相符 url（MIDV-100 被 boundary 過濾），got {urls}"
+    assert any("javlidaori" in u for u in urls), "舊片 url 應被收進"
+    assert any("javme3bu7e" in u for u in urls), "新片 url 應被收進"
+    assert not any("javmidv100" in u for u in urls), "MIDV-100 應被 boundary-match 濾掉"
+
+    # href 空的動作連結濾掉
+    href_null_html = """\
+<html><body>
+  <div class="video">
+    <a href="./javtest.html" title="MIDV-010 テスト">MIDV-010 テスト</a>
+    <a href="">これが欲しい</a>
+    <a>見た</a>
+  </div>
+</body></html>"""
+    urls2 = _extract_all_detail_urls(href_null_html, "MIDV-010", base)
+    assert urls2 == [f"{base}/javtest.html"], f"動作連結不應被收進，got {urls2}"
+
+    # 無相符 → []（不 fallback links[0]）
+    no_match_html = """\
+<html><body>
+  <div class="video">
+    <a href="./javother.html" title="ZZZ-999 他の映像">ZZZ-999</a>
+  </div>
+</body></html>"""
+    urls3 = _extract_all_detail_urls(no_match_html, "MIDV-010", base)
+    assert urls3 == [], f"無相符應回 []，got {urls3}"
+
+
+def test_search_all_versions_multi():
+    """
+    多版本列表 → 2 筆相符 detail → 新片在 index 0（date desc）。
+    * index 0 = MOODYZ 2021（新），index 1 = グラフィティ 2009（舊）
+    * MIDV-100 框應被 boundary-match 濾掉（不收進 urls）
+    * href 空的動作連結不收
+    """
+    # fetch 呼叫順序：列表頁 → old detail（javlidaori）→ new detail（javme3bu7e）
+    transport = _make_transport(MULTI_VERSION_LIST_HTML, OLD_DETAIL_HTML, NEW_DETAIL_HTML)
+    with patch(PATCH_TARGET, return_value=transport):
+        scraper = JavLibraryScraper()
+        versions = scraper.search_all_versions("MIDV-010")
+
+    assert len(versions) == 2
+    assert versions[0].date == "2021-12-07", f"新片應在 index 0，got {versions[0].date!r}"
+    assert versions[1].date == "2009-12-01", f"舊片應在 index 1，got {versions[1].date!r}"
+    assert versions[0].maker == "MOODYZ"
+    # transport.fetch 呼叫：1（列表）+ 2（detail × 2）= 3 次
+    assert transport.fetch.call_count == 3
+
+
+def test_search_all_versions_single_hit_302():
+    """
+    302 單一命中（首次 fetch 已是 detail page）→ 回 1-element list，
+    fetch 只呼叫一次。
+    """
+    transport = _make_transport(DETAIL_HTML)  # 含 #video_id
+    with patch(PATCH_TARGET, return_value=transport):
+        scraper = JavLibraryScraper()
+        versions = scraper.search_all_versions("TCD-332")
+
+    assert len(versions) == 1
+    assert isinstance(versions[0], Video)
+    assert transport.fetch.call_count == 1
+
+
+def test_fetch_by_detail_url():
+    """
+    直接給 detail_url → 正確回傳 Video，detail_url 落地在 Video.detail_url。
+    """
+    transport = _make_transport(DETAIL_HTML)
+    with patch(PATCH_TARGET, return_value=transport):
+        scraper = JavLibraryScraper()
+        result = scraper.fetch_by_detail_url(
+            "https://www.javlibrary.com/ja/javmezzbqu.html",
+            "TCD-332",
+        )
+
+    assert isinstance(result, Video)
+    assert result.detail_url == "https://www.javlibrary.com/ja/javmezzbqu.html"
+    assert transport.fetch.call_count == 1
+
+
+# ── helper 抽取後 search() 行為零回歸 ──
+
+def test_search_unchanged_regression_single_hit():
+    """helper 抽取後 search() 的 single-hit 行為不變。"""
+    transport = _make_transport(DETAIL_HTML)
+    with patch(PATCH_TARGET, return_value=transport):
+        result = JavLibraryScraper().search("TCD-332")
+    assert isinstance(result, Video)
+    assert result.detail_url == ""  # FIX-4
+
+
+def test_search_unchanged_regression_multi_result():
+    """helper 抽取後 search() 的 multi-result 行為不變。"""
+    transport = _make_transport(SEARCH_RESULT_HTML, DETAIL_HTML)
+    with patch(PATCH_TARGET, return_value=transport):
+        result = JavLibraryScraper().search("TCD-332")
+    assert isinstance(result, Video)
+    assert transport.fetch.call_count == 2
+
+
+def test_search_unchanged_regression_not_found():
+    """helper 抽取後 no match → None。"""
+    transport = _make_transport(NO_RESULT_HTML)
+    with patch(PATCH_TARGET, return_value=transport):
+        result = JavLibraryScraper().search("TCD-332")
+    assert result is None
+
+
+def test_search_unchanged_regression_empty_parse():
+    """helper 抽取後 title+cover 空 → None。"""
+    transport = _make_transport(EMPTY_DETAIL_HTML)
+    with patch(PATCH_TARGET, return_value=transport):
+        result = JavLibraryScraper().search("TCD-332")
+    assert result is None
+
+
+def test_search_unchanged_regression_number_mismatch():
+    """helper 抽取後 FIX-5 番號不符 → None。"""
+    transport = _make_transport(SEARCH_RESULT_MISMATCH_HTML, WRONG_NUMBER_DETAIL_HTML)
+    with patch(PATCH_TARGET, return_value=transport):
+        result = JavLibraryScraper().search("TCD-332")
+    assert result is None
+
+
+# ── CF 案例 ──
+
+def test_search_all_versions_list_cf_challenge_raises():
+    """search_all_versions：列表頁遇 CF challenge → CfChallengeRequired。"""
+    transport = _make_transport(CF_CHALLENGE_HTML)
+    with patch(PATCH_TARGET, return_value=transport):
+        with pytest.raises(CfChallengeRequired):
+            JavLibraryScraper().search_all_versions("MIDV-010")
+
+
+def test_search_all_versions_detail_cf_challenge_raises():
+    """search_all_versions：detail fetch 遇 CF challenge → CfChallengeRequired。"""
+    transport = _make_transport(MULTI_VERSION_LIST_HTML, CF_CHALLENGE_HTML)
+    with patch(PATCH_TARGET, return_value=transport):
+        with pytest.raises(CfChallengeRequired):
+            JavLibraryScraper().search_all_versions("MIDV-010")
+
+
+def test_search_all_versions_transport_none_raises():
+    """get_cf_transport() None → CfTransportUnavailable。"""
+    with patch(PATCH_TARGET, return_value=None):
+        with pytest.raises(CfTransportUnavailable):
+            JavLibraryScraper().search_all_versions("MIDV-010")
+
+
+def test_fetch_by_detail_url_cf_challenge_raises():
+    """fetch_by_detail_url：detail fetch 遇 CF challenge → CfChallengeRequired。"""
+    transport = _make_transport(CF_CHALLENGE_HTML)
+    with patch(PATCH_TARGET, return_value=transport):
+        with pytest.raises(CfChallengeRequired):
+            JavLibraryScraper().fetch_by_detail_url(
+                "https://www.javlibrary.com/ja/javtest.html", "TCD-332"
+            )
+
+
+def test_fetch_by_detail_url_transport_none_raises():
+    """fetch_by_detail_url：transport None → CfTransportUnavailable。"""
+    with patch(PATCH_TARGET, return_value=None):
+        with pytest.raises(CfTransportUnavailable):
+            JavLibraryScraper().fetch_by_detail_url(
+                "https://www.javlibrary.com/ja/javtest.html", "TCD-332"
+            )
