@@ -321,7 +321,7 @@ def _write_extrafanart(
     return written_uris
 
 
-def enrich_single(  # noqa: ranker-invalidate (only updates nfo_mtime, not a corpus field; corpus writes go via _db_upsert → repo.upsert which already has invalidate)
+def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpus field; corpus writes go via _db_upsert → repo.upsert which already has invalidate)
     file_path: str,
     number: str,
     mode: str = "fill_missing",
