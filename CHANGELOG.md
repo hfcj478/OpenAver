@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-06-27
+
+本版主軸：**JavBus 過度泛用清償 + exact 番號搜尋改優先序 cascade**（feature/85，spec-85）——技術債清償與行為修正，預期淨刪碼、不新增使用者功能。核心是讓「來源優先序」這個既有設定**真的被尊重**：以前直接搜番號時，只要 JavBus 有啟用就會搶先回結果（即使你把 DMM 排第一），現在改成嚴格依你拖曳的優先順序逐一查、命中即回。並移除依賴已死端點的 JavBus variant（同番號多版本）探查死碼。
+
+### Changed
+#### 🎯 exact 番號搜尋尊重來源優先序（行為分水嶺）
+- **直接搜番號改為「優先序串接」**：以前 exact 番號走 fan-out 全打再 merge，且 JavBus 以「是否啟用」為門檻搶先短路——把 DMM 排第一也可能拿到 JavBus 的結果。現在改為依來源優先順序逐一查（cascade），第一個命中的來源即回，DMM 排第一就真的先查 DMM。fuzzy / partial / actress 等其他模式行為不變（已加護欄鎖定不波及）。
+- **`/api/search/sources` 依設定回來源順序**：搜尋燈箱的 ⟳ 手動換源輪替順序，現在跟著你在設定頁拖曳的來源優先順序走（以前固定不變）。輪替集合維持 8 個內建來源。
+
+### Fixed
+- **DMM 在掃描產生頁 / 單片補資料時不再缺席**：`generate-from-ids` 與 `scrape_single` 路徑先前漏傳 proxy 設定，導致需要 proxy 的 DMM 在資料庫未命中時無法進場；現補齊透傳。
+- **JavBus 前綴搜尋的篩選參數真正生效**：前綴搜尋 URL 的 `type` 參數先前用錯接法（`&type=` 落在路徑而非查詢字串），伺服器不解析、前綴過濾從未生效；改為正確的 `?type=`。
+
+### Removed
+- **拔除 JavBus variant（同番號多版本）維度死碼**：variant 探查依賴 JavBus 已改版回 404 的搜尋端點，永遠撈不到東西卻每次多打一次請求、增加被 ban 風險。全棧移除——後端 variant 探查與 `/api/search` 的 `variant_id` 參數、前端燈箱的 variant 輪替維度、相關死碼常數，並加 ESLint 語法樹守衛防止回流。對使用者無可見功能損失（該功能本就壞著）。
+
+### Internal
+- `normalize_number` 解耦為獨立函式，番號正規化不再無謂實例化 JavBusScraper。
+- `D7` 來源順序 helper（`get_switchable_source_ids_ordered`）採 present-then-append + 限縮正規 8 內建來源：partial 設定檔下補齊缺席來源、且過濾掉 schema 合法但不可切換的未知 builtin id（避免前端輪到時打到無效來源吃 400）。
+- `D8` `JavBusScraper.search_by_keyword` 補 docstring 標明非生產主路徑（介面履約的循序參考實作，不可刪）。
+- 新增 `core/scrapers/README.md` 記錄各來源能力矩陣、碰撞行為與搜尋路由決策。
+
+### 測試
+- 全套 pytest **4747 passed, 2 skipped**（unit + integration，排除 smoke / e2e，較 0.10.11 的 4735 +12：cascade exact 路由 / fuzzy-partial 護欄 / proxy_url 透傳 / D7 switchable 來源 present-then-append 與未知 builtin 排除 / partial-config API order / D9 URL 格式）+ `ruff check .` 綠 + `npm run lint`（eslint + stylelint）綠。
+- 來源金絲雀：**8 源全 PASS**（pre-merge live 健康檢查）。
+- Gemini 3.1 Pro 整支 branch 第二意見：LGTM、零 P1/P2。
+- Codex 評估期 P1 × 2（D7 partial-config 集合縮小 / D7 未過濾未知 builtin id）已於評估階段修正並補守衛測試。
+
 ## [0.10.11] - 2026-06-24
 
 本版主軸：**Windows 一鍵安裝捷徑 + Help 頁更新按鈕**（feature/84）——兩條並行：84a 新增 `OpenAver-Windows-Setup.bat` 雙擊即可觸發 PowerShell 安裝流程（配合 `chcp 65001` 確保中文正常顯示）；84b 在 Help 頁（限桌面 App）新增「更新」按鈕，偵測安裝路徑後以 confirm modal 導引用戶操作（情況 A 預設路徑 / 情況 B 非預設路徑），確認後開外部終端執行安裝腳本。
