@@ -8926,6 +8926,267 @@ class TestRescrapeStateGuard:
         )
 
 
+class TestRescrapeVersionStateGuard:
+    """86-T3: state-rescrape.js candidates 短狀態 + routing + confirm contract。"""
+
+    SHARED_DIR = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "shared"
+    SEARCH_STATE_DIR = (
+        Path(__file__).parent.parent.parent
+        / "web" / "static" / "js" / "pages" / "search" / "state"
+    )
+    STATE_RESCRAPE_JS = SHARED_DIR / "state-rescrape.js"
+    ADVANCED_PICKER_JS = SEARCH_STATE_DIR / "advanced-picker.js"
+
+    def _rescrape(self):
+        return self.STATE_RESCRAPE_JS.read_text(encoding="utf-8")
+
+    def _picker(self):
+        return self.ADVANCED_PICKER_JS.read_text(encoding="utf-8")
+
+    # ── (B) advanced-picker.js: _commitSearchResults helper ──
+
+    def test_commit_search_results_helper_exists(self):
+        """CD-86-14: _commitSearchResults method 必須存在於 advanced-picker.js。"""
+        src = self._picker()
+        assert "_commitSearchResults" in src, (
+            "CD-86-14 違規：advanced-picker.js 缺少 _commitSearchResults helper"
+        )
+
+    def test_advanced_search_delegates_to_helper(self):
+        """CD-86-14: advancedSearch 成功分支必須委派給 _commitSearchResults，不 inline 賦值。
+        element-bound：確認 advancedSearch body 內呼叫 _commitSearchResults（不靠字串存在性）。
+        """
+        src = self._picker()
+        m = re.search(
+            r"async\s+advancedSearch\s*\([^)]*\)\s*\{.*?this\._commitSearchResults\s*\(",
+            src, re.DOTALL,
+        )
+        assert m, (
+            "CD-86-14 違規：advancedSearch body 中未找到 this._commitSearchResults( 呼叫"
+        )
+
+    # ── (B) state-rescrape.js: candidates 短狀態 ──
+
+    def test_candidates_state_keys_present(self):
+        """86-T3: rescrapeCandidates / rescrapeVersionIdx 必須平鋪定義。"""
+        src = self._rescrape()
+        for key in ("rescrapeCandidates", "rescrapeVersionIdx"):
+            assert key in src, f"state-rescrape.js missing state key: {key}"
+
+    def test_version_methods_present(self):
+        """86-T3: rescrapeHasVersions / rescrapeVersionGo 必須存在。"""
+        src = self._rescrape()
+        for method in ("rescrapeHasVersions", "rescrapeVersionGo"):
+            assert method in src, f"state-rescrape.js missing method: {method}"
+
+    # ── (B) routing: search 入口 javlib 不早 return ──
+
+    def test_search_javlib_does_not_early_return_advancedSearch(self):
+        """CD-86-8: rescrapeWithSource search+javlib 分支不得無條件 early return advancedSearch。
+        守衛：search early return 必須帶 sourceId !== 'javlibrary' 的判斷（只有非 javlib 才走 advancedSearch）。
+        element-bound：檢測 search 條件 if-block 的前 400 字元內有 javlibrary（防 file-wide false GREEN）。
+        """
+        src = self._rescrape()
+        # 先找 search 分支位置，再在其後 400 字元內確認 javlibrary 出現（不跨函式）
+        m_search = re.search(
+            r"rescrapeEntryPoint\s*===\s*['\"]search['\"]",
+            src,
+        )
+        assert m_search, "rescrapeWithSource 中未見 rescrapeEntryPoint === 'search' 判斷"
+        # 取 search 分支後 400 字元（足夠涵蓋 if block body，不跨到 _pollCfThenRetry）
+        window = src[m_search.start():m_search.start() + 400]
+        assert "javlibrary" in window, (
+            "CD-86-8 違規：rescrapeWithSource search 分支（前 400 字元）未見 javlibrary 判斷——"
+            "search+javlib 可能仍走早 return advancedSearch 路徑"
+        )
+
+    # ── (B) switch-source 多版本切換器（T7） ──
+
+    def test_switch_source_takes_candidates_first(self):
+        """T7（語意反轉）: switch-source 多版本（candidates.length > 1）進 rescrapeStep='preview'，
+        不再直接取 candidates[0] 靜默替換；candidates[0] 僅作單版本 fallback。
+        element-bound: switch-source + candidates.length > 1 後 900 字元內必有 rescrapeStep='preview'
+        （900 < showcase block 距離，mutation A 移除後 next occurrence 在 4000+ 字元外 → RED）。
+        """
+        src = self._rescrape()
+        m = re.search(
+            r"rescrapeEntryPoint\s*===\s*['\"]switch-source['\"]"
+            r".*?data\.candidates\s*&&\s*data\.candidates\.length\s*>\s*1",
+            src, re.DOTALL,
+        )
+        assert m, (
+            "T7 違規：switch-source 分支缺 candidates.length > 1 多版本分叉"
+        )
+        # element-bound 900-char window（switch-source multiversion block ~773 chars）
+        window = src[m.end():m.end() + 900]
+        assert re.search(r"rescrapeStep\s*=\s*['\"]preview['\"]", window), (
+            "T7 違規：switch-source candidates.length > 1 分叉（900 字元窗口內）缺 rescrapeStep='preview'——"
+            "多版本應進 preview 切換器，不直接取 candidates[0] 靜默替換"
+        )
+
+    def test_switch_source_multiversion_enters_preview(self):
+        """T7: switch-source 分支 candidates.length > 1 → rescrapeStep = 'preview'。
+        element-bound: 先找 switch-source if-block 起點，再在 900 字元窗口內斷言 rescrapeStep='preview'。
+        （防 DOTALL 跨 block 假綠；showcase block 的 rescrapeStep 距離 4000+ 字元外）
+        """
+        src = self._rescrape()
+        m = re.search(
+            r"rescrapeEntryPoint\s*===\s*['\"]switch-source['\"]"
+            r".*?if\s*\(\s*data\.candidates\s*&&\s*data\.candidates\.length\s*>\s*1\s*\)",
+            src, re.DOTALL,
+        )
+        assert m, (
+            "T7 違規：switch-source if-block 缺 candidates.length > 1 多版本分叉"
+        )
+        # 900-char window covers multiversion block body but stops before showcase block
+        window = src[m.end():m.end() + 900]
+        assert re.search(r"rescrapeStep\s*=\s*['\"]preview['\"]", window), (
+            "T7 違規：switch-source candidates.length > 1 if-block body（900 字元內）缺 rescrapeStep='preview'"
+        )
+
+    def test_switch_source_confirm_branch_present(self):
+        """T7: rescrapeConfirm 必須有 switch-source 分支，body 含 t.arr[t.idx] in-place 替換，
+        不含 _commitSearchResults（in-place 替換語意，非搜尋結果提交）。
+        element-bound: 鎖定 rescrapeConfirm 的 switch-source 分支起點後 800 字元。
+        """
+        src = self._rescrape()
+        m = re.search(
+            r"rescrapeConfirm\s*\(\s*\).*?rescrapeEntryPoint\s*===\s*['\"]switch-source['\"]",
+            src, re.DOTALL,
+        )
+        assert m, (
+            "T7 違規：rescrapeConfirm 中未見 rescrapeEntryPoint === 'switch-source' 分支"
+        )
+        # m.end() 是 switch-source 條件字串結尾，從此往後 800 字元是分支 body
+        block = src[m.end():m.end() + 800]
+        assert re.search(r"t\.arr\s*\[\s*t\.idx\s*\]", block), (
+            "T7 違規：rescrapeConfirm switch-source 分支缺 t.arr[t.idx] in-place 替換"
+        )
+        assert "_commitSearchResults" not in block, (
+            "T7 違規：rescrapeConfirm switch-source 分支不得呼叫 _commitSearchResults"
+            "（in-place 替換語意，非搜尋結果提交）"
+        )
+
+    # ── (B) confirm: detail_url 取值 .url ──
+
+    def test_confirm_lightbox_detail_url_from_url_field(self):
+        """CD-86-13: rescrapeConfirm lightbox 分支 detail_url 值必須來自 rescrapePreview.url。"""
+        src = self._rescrape()
+        # 確認 .url 在 confirm context 存在
+        assert re.search(
+            r"rescrapeConfirm.*?detail_url.*?rescrapePreview.*?\.url",
+            src, re.DOTALL,
+        ), (
+            "CD-86-13: rescrapeConfirm 中未見 rescrapePreview.url 取值（detail_url 欄位值）"
+        )
+
+    # ── (B) confirm: search 走 helper 非 inline ──
+
+    def test_confirm_search_calls_commit_helper(self):
+        """CD-86-14: rescrapeConfirm search 分支必須呼叫 _commitSearchResults，禁 inline。
+        element-bound：rescrapeConfirm body 內找 search 分支 + helper 呼叫。
+        """
+        src = self._rescrape()
+        m = re.search(
+            r"rescrapeConfirm.*?rescrapeEntryPoint.*?['\"]search['\"].*?_commitSearchResults",
+            src, re.DOTALL,
+        )
+        assert m, (
+            "CD-86-14 違規：rescrapeConfirm search 分支未呼叫 _commitSearchResults helper"
+        )
+
+    # ── lifecycle 對稱：close/back reset candidates ──
+
+    def test_close_rescrape_resets_candidates(self):
+        """lifecycle 對稱：closeRescrape 必須 reset rescrapeCandidates。
+        element-bound：在 closeRescrape method 體內找 rescrapeCandidates（允許內層 if block）。
+        """
+        src = self._rescrape()
+        # closeRescrape 函式體可能含有內層 if {...} block，故使用 .*? 而非 [^}]*
+        m = re.search(
+            r"closeRescrape\s*\(\s*\)\s*\{.*?rescrapeCandidates",
+            src, re.DOTALL,
+        )
+        assert m, "closeRescrape 必須 reset rescrapeCandidates（lifecycle 對稱）"
+
+    def test_back_to_pick_resets_candidates(self):
+        """lifecycle 對稱：rescrapeBackToPick 必須 reset rescrapeCandidates。"""
+        src = self._rescrape()
+        m = re.search(
+            r"rescrapeBackToPick\s*\(\s*\)\s*\{[^}]*rescrapeCandidates",
+            src, re.DOTALL,
+        )
+        assert m, "rescrapeBackToPick 必須 reset rescrapeCandidates（lifecycle 對稱）"
+
+    # ── CD-86-P2: javlib search 採用路徑同步 currentQuery ──
+
+    def test_javlib_single_version_search_falls_through_to_preview(self):
+        """86 修正（取代過時的 ..._syncs_current_query 守衛）：rescrapeWithSource 的單版本
+        分支（data.success）不再於 search 入口靜默 _commitSearchResults + closeRescrape
+        early-return，而是 fall through 進 preview 卡（rescrapeStep='preview'）。
+
+        為何過時：原守衛斷言「rescrapeWithSource 單版本 search 分支在 _commitSearchResults
+        前同步 currentQuery」。該 search-entry 早 return commit 已移除（單版本 search 一閃
+        就關被使用者回報「直接跳過」），採用改由 rescrapeConfirm 的 search 分支負責（query
+        同步由 test_javlib_confirm_search_syncs_current_query 涵蓋）。
+
+        element-bound：鎖定 data.success 分支區塊（到 not-found else 的 rescrapeNotFound=true
+        為止），斷言 (a) 進入 preview（rescrapeStep='preview'），(b) 該區塊不含
+        _commitSearchResults / closeRescrape（單版本不再於 rescrapeWithSource commit/關窗）。
+        mutation 驗證：把 _commitSearchResults + closeRescrape 早 return 加回 → RED。
+        """
+        src = self._rescrape()
+        # 取 rescrapeWithSource 內 data.success else-if 區塊（至 not-found else 的 rescrapeNotFound）
+        m_ctx = re.search(
+            r"else\s+if\s*\(\s*data\s*&&\s*data\.success\s*\)\s*\{(.*?)this\.rescrapeNotFound\s*=\s*true",
+            src, re.DOTALL,
+        )
+        assert m_ctx, (
+            "86 修正：未找到 rescrapeWithSource 的 data.success 單版本分支區塊"
+        )
+        block = m_ctx.group(1)
+        # (a) 單版本 fall through 進 preview
+        assert re.search(r"rescrapeStep\s*=\s*['\"]preview['\"]", block), (
+            "86 修正違規：data.success 單版本分支未進 preview（rescrapeStep='preview' 不可達）"
+        )
+        # (b) 不再於 rescrapeWithSource 單版本分支 commit / 關窗（已移交 rescrapeConfirm）
+        # 比對「呼叫」語法（含 ?. optional chain），避免誤判註解中提及的字串。
+        assert not re.search(r"_commitSearchResults\s*\??\.?\s*\(", block), (
+            "86 修正違規：data.success 單版本分支仍呼叫 _commitSearchResults——"
+            "search 單版本應 fall through 進 preview，採用由 rescrapeConfirm 負責"
+        )
+        assert not re.search(r"\bcloseRescrape\s*\(", block), (
+            "86 修正違規：data.success 單版本分支仍呼叫 closeRescrape early return——"
+            "search 單版本應 fall through 進 preview（一閃就關是回報的 bug）"
+        )
+
+    def test_javlib_confirm_search_syncs_current_query(self):
+        """CD-86-P2: rescrapeConfirm search 採用路徑，在 _commitSearchResults 前
+        必須同步 currentQuery（對齊非 javlib 路徑，防 session restore 回舊 query）。
+
+        element-bound：在 rescrapeConfirm 的 search 分支找 currentQuery 賦值，
+        確認在同一 if(search) block 的 _commitSearchResults 呼叫之前。
+        mutation 驗證：移除補的同步 → RED。
+        """
+        src = self._rescrape()
+        # 鎖定 rescrapeConfirm 函式體中 search 分支，_commitSearchResults 呼叫前的 currentQuery 賦值
+        m_ctx = re.search(
+            r"rescrapeConfirm\b.*?"
+            r"rescrapeEntryPoint\s*===\s*['\"]search['\"]"
+            r"(.*?)_commitSearchResults",
+            src, re.DOTALL,
+        )
+        assert m_ctx, (
+            "CD-86-P2 違規（rescrapeConfirm）：未在 search 分支 _commitSearchResults 前 "
+            "找到 currentQuery 同步——多版本 confirm 採用後 session restore 殘留舊 query"
+        )
+        block = m_ctx.group(1)
+        assert re.search(r"\bthis\.currentQuery\s*=", block), (
+            "CD-86-P2 違規（rescrapeConfirm）：_commitSearchResults 前缺少 "
+            "this.currentQuery = ... 賦值（對齊 advancedSearch :38 的同步語意）"
+        )
+
+
 class TestRescrapeEntryGuard:
     """62b-1 → 74b US4：守衛 Showcase 進階重刮入口接線 contract。
 
@@ -11066,6 +11327,29 @@ class TestJavlibraryCfFlowT6Guard:
         assert cf_pos < notfound_pos, \
             "70-T6 違規：cf_needed check 必須在 rescrapeNotFound = true 之前"
 
+    # (5b) P2-2（Codex PR#89）：rescrapeConfirm lightbox 寫檔分支接 cf_needed / cf_unavailable
+    def test_rescrape_confirm_handles_cf(self):
+        """P2-2：rescrapeConfirm 的 lightbox 寫檔分支必須接 result.cf_needed / result.cf_unavailable。
+
+        T2 後 javlibrary && detail_url 走後端 detail 重抓分支，若預覽→確認間 CF session 過期，
+        後端回 {cf_needed} / {cf_unavailable}（已 begin_solve）。confirm 不接 → 卡在模糊「失敗」
+        且不啟動 CF 流程。element-bound：鎖定 rescrapeConfirm body（至 _pollCfThenRetry 定義前）。
+        mutation：拿掉 CF 接法 → RED。
+        """
+        import re as _re
+        js = _STATE_RESCRAPE_JS.read_text(encoding="utf-8")
+        m = _re.search(r"rescrapeConfirm\s*\(\s*\)\s*\{", js)
+        assert m is not None, "P2-2 違規：找不到 rescrapeConfirm() 定義"
+        # _pollCfThenRetry(number) 是其後的方法定義（call site 用 this.rescrapeNumber.trim() 不匹配）
+        end = js.index("_pollCfThenRetry(number)", m.start())
+        body = js[m.start():end]
+        assert "result.cf_unavailable" in body, (
+            "P2-2 違規：rescrapeConfirm lightbox 分支未接 result.cf_unavailable（CF session 過期靜默卡死）"
+        )
+        assert "result.cf_needed" in body, (
+            "P2-2 違規：rescrapeConfirm lightbox 分支未接 result.cf_needed（CF flow 不啟動）"
+        )
+
     # (6) closeRescrape 含 clearInterval（清 CF poll）
     def test_close_rescrape_clears_interval(self):
         js = _STATE_RESCRAPE_JS.read_text(encoding="utf-8")
@@ -11148,46 +11432,250 @@ class TestJavlibraryCfFlowT6Guard:
         )
 
 
-# ── FIX-2 frontend guard: search 入口隱藏 JL pill ──
+# ── CD-86-7 frontend guard: search 入口 JL pill gate 改用 isJlUnavailable ──
 
 class TestRescrapeModalSearchHideJlPillGuard:
     """
-    FIX-2：_rescrape_modal.html builtin pill 在 search 入口隱藏 manual_only && is_beta pill。
+    CD-86-7：_rescrape_modal.html builtin pill 在 search 入口不再隱藏，改由 isJlUnavailable gate。
 
-    B2-P3-1 hardening: anchor on the full x-show expression from _rescrape_modal.html ~L49
-    instead of the three component strings individually. Each component string exists
-    elsewhere in the modal independently, so individual checks are comment-foolable.
-    Exact expression: x-show="!(s.manual_only && s.is_beta && rescrapeEntryPoint === 'search')"
+    86-T4 rewrite: 舊 search-hide x-show 表達式（FIX-2）已移除（CD-86-7），
+    改交 isJlUnavailable 統一管可點性（非桌面仍 aria-disabled，AC8 不回歸）。
     """
-
-    # The full load-bearing x-show expression (from _rescrape_modal.html ~L49).
-    _XSHOW_EXPR = 'x-show="!(s.manual_only && s.is_beta && rescrapeEntryPoint === \'search\')"'
 
     def _html(self):
         return _MODAL_HTML_70.read_text(encoding="utf-8")
 
-    def test_modal_builtin_pill_has_search_hide_condition(self):
-        """_rescrape_modal.html builtin pill 含 search 入口 x-show 隱藏條件。
-
-        B2-P3-1: anchored on the full x-show expression so removing/changing the
-        condition fails the guard, even if the component strings remain as comments.
+    def test_modal_builtin_pill_search_gate_uses_isJlUnavailable(self):
+        """CD-86-7: search 入口 javlib pill 不再由 manual_only+is_beta+search 隱藏，
+        改由 isJlUnavailable 統一 gate（非桌面仍 aria-disabled）。
+        舊 search-hide 表達式必須已移除。
         """
         html = self._html()
-        assert self._XSHOW_EXPR in html, (
-            "FIX-2 違規：_rescrape_modal.html builtin pill 缺完整 x-show 隱藏表達式 "
-            f"{self._XSHOW_EXPR!r}（~L49）"
+        OLD_HIDE = "s.manual_only && s.is_beta && rescrapeEntryPoint === 'search'"
+        assert OLD_HIDE not in html, (
+            "CD-86-7 違規：_rescrape_modal.html builtin pill 仍含舊 search 入口隱藏條件—"
+            "應已移除，改交 isJlUnavailable gate"
+        )
+        assert "isJlUnavailable" in html, (
+            "CD-86-7 違規：_rescrape_modal.html 移除 search-hide 後必須保留 isJlUnavailable gate"
         )
 
-    def test_modal_builtin_pill_hide_references_manual_only_and_is_beta(self):
-        """_rescrape_modal.html builtin pill x-show 同時含 manual_only 和 is_beta。
-
-        B2-P3-1: also anchored via the full expression (backward-compat assertion —
-        the full x-show expression implicitly covers both; kept for readable error messages).
+    def test_modal_builtin_pill_jl_gate_preserves_aria_disabled(self):
+        """CD-86-7 + AC8: search 入口 javlib pill x-show 放開後，
+        isJlUnavailable gate 必須仍帶 aria-disabled 綁定（非桌面不可點語義不回歸）。
         """
+        import re
         html = self._html()
-        assert self._XSHOW_EXPR in html, (
-            "FIX-2 違規：_rescrape_modal.html builtin pill 完整 x-show 表達式（含 manual_only "
-            "及 is_beta）遺失"
+        assert "isJlUnavailable" in html, (
+            "AC8 違規：_rescrape_modal.html 缺 isJlUnavailable gate"
+        )
+        assert "aria-disabled" in html, (
+            "AC8 違規：_rescrape_modal.html builtin pill 缺 aria-disabled 綁定"
+        )
+        # element-bound: 確認 isJlUnavailable 和 aria-disabled 在同一 template 上下文（pill 區）
+        m = re.search(
+            r"isJlUnavailable.*?aria-disabled|aria-disabled.*?isJlUnavailable",
+            html, re.DOTALL,
+        )
+        assert m, (
+            "AC8 違規：isJlUnavailable 與 aria-disabled 未出現在 pill 相近上下文"
+        )
+
+
+# ── 86-T4 frontend guard: 版本切換器 + i18n + entry-point gate ──
+
+class TestRescrapeVersionSwitcherGuard:
+    """86-T4: _rescrape_modal.html 版本切換器 + i18n + gate 靜態守衛。"""
+
+    TEMPLATES_DIR = Path(__file__).parent.parent.parent / "web" / "templates"
+    LOCALES_DIR = Path(__file__).parent.parent.parent / "locales"
+    MODAL_HTML = TEMPLATES_DIR / "_rescrape_modal.html"
+    ZH_TW_JSON = LOCALES_DIR / "zh_TW.json"
+
+    def _html(self):
+        return self.MODAL_HTML.read_text(encoding="utf-8")
+
+    def _locale(self):
+        import json
+        return json.loads(self.ZH_TW_JSON.read_text(encoding="utf-8"))
+
+    # ── 切換器 x-show binding ──
+
+    def test_version_switcher_uses_rescrapeHasVersions(self):
+        """切換器 ‹ › 鈕必須綁 x-show="rescrapeHasVersions()"（element-bound，防 comment 假陽性）。"""
+        html = self._html()
+        # element-bound: 要求完整屬性綁定出現在非注釋上下文
+        BINDING = 'x-show="rescrapeHasVersions()"'
+        assert html.count(BINDING) >= 2, (
+            f"86-T4 違規：_rescrape_modal.html 缺足夠的 {BINDING!r} 綁定（切換器 ‹ › 各一）"
+        )
+
+    def test_version_switcher_uses_rescrapeVersionGo(self):
+        """切換器 ‹ › 鈕必須綁 @click rescrapeVersionGo。"""
+        html = self._html()
+        assert "rescrapeVersionGo(-1)" in html, (
+            "86-T4 違規：_rescrape_modal.html 缺 rescrapeVersionGo(-1)（‹ 鈕）"
+        )
+        assert "rescrapeVersionGo(1)" in html, (
+            "86-T4 違規：_rescrape_modal.html 缺 rescrapeVersionGo(1)（› 鈕）"
+        )
+
+    # ── versions_found 走 t() 非硬編碼 ──
+
+    def test_versions_found_uses_t_function(self):
+        """「找到 X 部」文字必須走 t('showcase.rescrape.versions_found')，禁硬編碼繁中。"""
+        html = self._html()
+        assert "showcase.rescrape.versions_found" in html, (
+            "86-T4 違規：_rescrape_modal.html 缺 showcase.rescrape.versions_found t() 呼叫"
+        )
+        # 禁止硬編碼
+        assert "找到" not in html, (
+            "86-T4 違規：_rescrape_modal.html 含硬編碼「找到」文字（應走 i18n）"
+        )
+
+    # ── 不可逆警告 entry-point gate ──
+
+    def test_overwrite_warning_gated_by_lightbox_entrypoint(self):
+        """不可逆警告 rescrape-caption 必須以 rescrapeEntryPoint === 'lightbox' gate。"""
+        import re
+        html = self._html()
+        # element-bound: 在同一個 tag 內找 rescrape-caption 和 lightbox gate
+        m = re.search(
+            r'rescrape-caption[^>]*rescrapeEntryPoint[^>]*lightbox'
+            r'|rescrapeEntryPoint[^>]*lightbox[^>]*rescrape-caption',
+            html,
+        )
+        assert m, (
+            "CD-86-9 違規：rescrape-caption（不可逆警告）缺 rescrapeEntryPoint === 'lightbox' gate"
+        )
+
+    # 註：search 入口 javlib gate 改 isJlUnavailable 的回歸守衛（CD-86-7 + AC8）
+    # 由 TestRescrapeModalSearchHideJlPillGuard 兩條改寫守衛涵蓋，此處不重複。
+
+    # ── i18n key 存在性守衛 ──
+
+    def test_i18n_versions_found_key_exists(self):
+        """showcase.rescrape.versions_found key 必須存在於 zh_TW.json，且含 {count} 插值。"""
+        data = self._locale()
+        key_val = data.get("showcase", {}).get("rescrape", {}).get("versions_found", None)
+        assert key_val is not None, (
+            "86-T4 違規：locales/zh_TW.json 缺 showcase.rescrape.versions_found key"
+        )
+        assert "{count}" in key_val, (
+            "CD-86-11 違規：showcase.rescrape.versions_found 缺 {count} 插值"
+        )
+
+    def test_i18n_version_nav_aria_keys_exist(self):
+        """切換器 prev/next aria key 必須存在於 zh_TW.json。"""
+        data = self._locale()
+        rescrape = data.get("showcase", {}).get("rescrape", {})
+        for key in ("version_prev_aria", "version_next_aria"):
+            assert key in rescrape, (
+                f"86-T4 違規：locales/zh_TW.json 缺 showcase.rescrape.{key} key"
+            )
+
+    def test_i18n_adopt_version_key_exists(self):
+        """search 入口「採用此版本」key 必須存在於 zh_TW.json。"""
+        data = self._locale()
+        rescrape = data.get("showcase", {}).get("rescrape", {})
+        assert "adopt_version" in rescrape, (
+            "86-T4 違規：locales/zh_TW.json 缺 showcase.rescrape.adopt_version key"
+        )
+
+    # ── 86-T6: search adopt 鈕 icon 化 + 琥珀色守衛 ──
+
+    def test_search_adopt_btn_uses_check_icon(self):
+        """86-T6: search 入口 adopt 鈕必須用 bi-check-lg icon，禁 x-text 文字（破版防回流）。
+        element-bound：守衛綁 rescrapeEntryPoint === 'search' 的 confirm-row block。
+        aria-label 必須走 adopt_version key（螢幕報讀不退化）。
+        """
+        import re
+        html = self._html()
+
+        # 截出 search confirm-row block（class=rescrape-confirm-row + search gate 的 div 到 </div>）
+        m = re.search(
+            r'<div[^>]*rescrape-confirm-row[^>]*rescrapeEntryPoint\s*===\s*[\'"]search[\'"][^>]*>(.*?)</div>',
+            html,
+            re.DOTALL,
+        )
+        assert m, (
+            "86-T6 違規：_rescrape_modal.html 缺 rescrapeEntryPoint === 'search' confirm-row block"
+        )
+        block = m.group(0)
+
+        # adopt 鈕含 bi-check-lg icon
+        assert "bi-check-lg" in block, (
+            "86-T6 違規：search adopt 鈕缺 bi-check-lg icon（應鏡射 lightbox ✓ 鈕寫法）"
+        )
+        # 禁 x-text（防文字溢出破版回流）
+        assert "x-text" not in block, (
+            "86-T6 違規：search adopt 鈕不得含 x-text（文字溢出 48px 圓鈕破版）"
+        )
+        # aria-label 走 adopt_version key
+        assert "adopt_version" in block, (
+            "86-T6 違規：search adopt 鈕缺 adopt_version aria-label（螢幕報讀退化）"
+        )
+
+    def test_version_status_uses_warning_color(self):
+        """86-T6: .rescrape-version-status 與 .rescrape-ver-indicator 的 color 必須為 var(--color-warning)。
+        CSS 守衛（正向 require 值：stylelint 不易 require 特定 token 值，pytest 正向斷言合適）。
+        element-bound：綁定該 selector block，避免誤命中其他 selector。
+        """
+        import re
+        css_path = (
+            Path(__file__).parent.parent.parent
+            / "web" / "static" / "css" / "components" / "rescrape-modal.css"
+        )
+        css = css_path.read_text(encoding="utf-8")
+
+        def extract_block(selector: str, text: str) -> str:
+            """擷取 selector 對應的 { ... } block 內容。"""
+            pattern = re.escape(selector) + r"\s*\{([^}]*)\}"
+            m = re.search(pattern, text)
+            assert m, f"86-T6 違規：rescrape-modal.css 缺 {selector!r} selector block"
+            return m.group(1)
+
+        status_block = extract_block(".rescrape-version-status", css)
+        assert "var(--color-warning)" in status_block, (
+            "86-T6 違規：.rescrape-version-status 的 color 未使用 var(--color-warning)（撞號提示應為琥珀色）"
+        )
+
+        indicator_block = extract_block(".rescrape-ver-indicator", css)
+        assert "var(--color-warning)" in indicator_block, (
+            "86-T6 違規：.rescrape-ver-indicator 的 color 未使用 var(--color-warning)（N/M 指示應為琥珀色）"
+        )
+
+    # ── T7: switch-source confirm-row ──
+
+    def test_switch_source_modal_confirm_row(self):
+        """T7: _rescrape_modal.html 必須有 rescrapeEntryPoint === 'switch-source' confirm-row，
+        含 bi-check-lg icon，且不含 overwrite_warning（只替換結果列 slot，不寫檔）。
+        element-bound: 在 switch-source confirm-row block 內驗 icon + 排除 overwrite_warning。
+        """
+        import re as _re
+        html = self._html()
+        m = _re.search(
+            r'<div[^>]*rescrape-confirm-row[^>]*rescrapeEntryPoint\s*===\s*[\'"]switch-source[\'"][^>]*>(.*?)</div>',
+            html,
+            _re.DOTALL,
+        )
+        assert m, (
+            "T7 違規：_rescrape_modal.html 缺 rescrapeEntryPoint === 'switch-source' confirm-row"
+        )
+        block = m.group(0)
+        assert "bi-check-lg" in block, (
+            "T7 違規：switch-source confirm-row 缺 bi-check-lg icon"
+        )
+        assert "overwrite_warning" not in block, (
+            "T7 違規：switch-source confirm-row 不得含 overwrite_warning（非寫檔操作）"
+        )
+
+    def test_i18n_adopt_switch_source_key_exists(self):
+        """T7: showcase.rescrape.adopt_switch_source key 必須存在於 zh_TW.json。"""
+        data = self._locale()
+        rescrape = data.get("showcase", {}).get("rescrape", {})
+        assert "adopt_switch_source" in rescrape, (
+            "T7 違規：locales/zh_TW.json 缺 showcase.rescrape.adopt_switch_source key"
         )
 
 
@@ -11567,6 +12055,48 @@ class TestSearchAutoSourcePill:
         )
         assert "rescrapeNumber =" in call, (
             f"search-auto-pill @click 缺 rescrapeNumber = 預填；call: {call!r}"
+        )
+
+    def test_auto_pill_xshow_contains_can_reopen_source_pick(self):
+        """自動膠囊 x-show 含 canReopenSourcePick()（CD-86-P2 修正：exact 結果頁再開入口）。
+
+        JavLibrary 採用後 searchQuery == currentQuery → isComposing() false，
+        需要 canReopenSourcePick() 讓 pill 在 exact 結果時常駐。
+        mutation：把 x-show 改回只 isComposing() → 此斷言紅。
+        """
+        call = self._auto_pill_call()
+        xshow_m = re.search(r'x-show=\\?["\']([^"\']*)', call)
+        assert xshow_m, f"search-auto-pill 呼叫缺 x-show binding；call: {call!r}"
+        assert "canReopenSourcePick()" in xshow_m.group(1), (
+            f"search-auto-pill x-show 缺 canReopenSourcePick()；x-show: {xshow_m.group(1)!r}"
+        )
+
+    def test_can_reopen_source_pick_defined_in_search_flow_js(self):
+        """search-flow.js 定義 canReopenSourcePick()，且包含 listMode + exact + pageState + searchQuery 四條件。
+
+        listMode==='search' gate（CD-86-P2 副作用修正）：file/batch mode 也進 result+exact，但 searchQuery
+        切檔不同步，頂部再入口會帶舊番號 → 限定 search workflow。
+        mutation：移除 method 或刪任一條件（含 listMode）→ 此斷言紅。
+        """
+        js_path = (
+            SEARCH_HTML.parent.parent
+            / "static" / "js" / "pages" / "search" / "state" / "search-flow.js"
+        )
+        js = js_path.read_text(encoding="utf-8")
+        m = re.search(r"canReopenSourcePick\s*\(\s*\)\s*\{(.*?)\n    \},", js, re.DOTALL)
+        assert m, "search-flow.js 找不到 canReopenSourcePick() method 定義"
+        body = m.group(1)
+        assert "listMode" in body and "'search'" in body, (
+            f"canReopenSourcePick body 缺 listMode === 'search' 條件；body: {body!r}"
+        )
+        assert "pageState" in body and "'result'" in body, (
+            f"canReopenSourcePick body 缺 pageState === 'result' 條件；body: {body!r}"
+        )
+        assert "'exact'" in body, (
+            f"canReopenSourcePick body 缺 currentMode === 'exact' 條件；body: {body!r}"
+        )
+        assert "searchQuery" in body, (
+            f"canReopenSourcePick body 缺 searchQuery 非空條件；body: {body!r}"
         )
 
 

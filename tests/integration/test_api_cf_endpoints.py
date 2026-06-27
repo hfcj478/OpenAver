@@ -109,8 +109,9 @@ class TestRescrapePreviewCfExceptions:
 
     def test_cf_challenge_required_returns_cf_needed(self, client, mocker):
         """CfChallengeRequired → {success:false, cf_needed:true}，begin_solve 被呼叫。"""
+        # source=javlibrary 現在走 search_javlib_versions 分支（T2），不再走 search_jav_single_source
         mocker.patch(
-            "web.routers.scraper.search_jav_single_source",
+            "web.routers.scraper.search_javlib_versions",
             side_effect=CfChallengeRequired("CF challenge"),
         )
         mock_transport = MagicMock()
@@ -128,8 +129,9 @@ class TestRescrapePreviewCfExceptions:
 
     def test_cf_transport_unavailable_returns_cf_unavailable(self, client, mocker):
         """CfTransportUnavailable → {success:false, cf_unavailable:true}，begin_solve 不被呼叫。"""
+        # source=javlibrary 現在走 search_javlib_versions 分支（T2），不再走 search_jav_single_source
         mocker.patch(
-            "web.routers.scraper.search_jav_single_source",
+            "web.routers.scraper.search_javlib_versions",
             side_effect=CfTransportUnavailable("no transport"),
         )
         mock_transport = MagicMock()
@@ -147,8 +149,9 @@ class TestRescrapePreviewCfExceptions:
 
     def test_cf_challenge_no_transport_still_returns_cf_needed(self, client, mocker):
         """CfChallengeRequired + get_cf_transport → None → begin_solve 不呼叫，仍回 cf_needed:true。"""
+        # source=javlibrary 現在走 search_javlib_versions 分支（T2），不再走 search_jav_single_source
         mocker.patch(
-            "web.routers.scraper.search_jav_single_source",
+            "web.routers.scraper.search_javlib_versions",
             side_effect=CfChallengeRequired("CF challenge"),
         )
         mocker.patch("web.routers.scraper.get_cf_transport", return_value=None)

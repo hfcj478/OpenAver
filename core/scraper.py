@@ -126,6 +126,17 @@ def expand_partial_number(partial: str) -> List[str]:
 _INTERNAL_NFO_KEYS = ('_summary', '_rating')
 
 
+def internal_nfo_carriers(video) -> dict:
+    """search_jav 注入、to_legacy_dict 刻意省略的內部 NFO carrier（_summary / _rating）。
+
+    NFO writer 的 <plot>/<rating> 吃這組 `_` 前綴 carrier（見 enricher._scraper_to_meta），
+    DB 不收。detail_url 預餵路徑（confirm 多版本）跳過 search_jav，需補同一組以對齊既有
+    javlibrary 重刮的 NFO 輸出，否則 NFO 評分/簡介會掉（CD-63c-5 / PR #89 Codex P2）。
+    key 集合必須與 _INTERNAL_NFO_KEYS 一致。
+    """
+    return {'_summary': video.summary, '_rating': video.rating}
+
+
 def strip_internal_nfo_keys(result_dict: dict) -> dict:
     """移除 internal NFO carrier 鍵（_summary / _rating），回傳 shallow copy。
 
@@ -349,8 +360,7 @@ def search_jav(number: str, source: str = 'auto', proxy_url: str = '', javbus_la
 
     result = main_video.to_legacy_dict()
     result['_source'] = main_video.source  # 保留內部欄位
-    result['_summary'] = main_video.summary  # 63c 新增（NFO 用，不入 DB，CD-63c-5）
-    result['_rating'] = main_video.rating    # 63c 新增（NFO 用，已排除於 to_legacy_dict）
+    result.update(internal_nfo_carriers(main_video))  # _summary / _rating（NFO 用，to_legacy_dict 省略）
     logger.info(f"[Search] {number} 完成，來源: {main_video.source}")
     return result
 
@@ -358,6 +368,25 @@ def search_jav(number: str, source: str = 'auto', proxy_url: str = '', javbus_la
 def search_jav_single_source(number: str, source: str, proxy_url: str = '') -> Optional[Dict[str, Any]]:
     """指定單一來源搜尋"""
     return search_jav(number, source=source, proxy_url=proxy_url)
+
+
+def search_javlib_versions(number: str) -> List[Dict[str, Any]]:
+    """javlibrary 同番號全版本列舉 → list[dict]（各版本 to_legacy_dict()）。
+
+    CF 例外（CfChallengeRequired / CfTransportUnavailable）propagate 給呼叫端。
+    """
+    scraper = JavLibraryScraper()
+    videos = scraper.search_all_versions(number)
+    return [v.to_legacy_dict() for v in videos]
+
+
+def fetch_javlib_by_detail_url(detail_url: str, number: str) -> Optional[Video]:
+    """javlibrary 直抓單一 detail URL → Video（confirm 用）。
+
+    CF 例外 propagate 給呼叫端。
+    """
+    scraper = JavLibraryScraper()
+    return scraper.fetch_by_detail_url(detail_url, number)
 
 
 def search_partial(partial: str,

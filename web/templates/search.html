@@ -299,7 +299,7 @@
                         variant='action',
                         icon='bi-stars',
                         extra_classes='search-auto-pill',
-                        attrs='x-show="isComposing()" x-cloak @click="openRescrape(null, \'search\'); rescrapeNumber = (searchQuery || \'\').trim()" :title="t(\'search.auto_pill.tooltip\')"'
+                        attrs='x-show="isComposing() || canReopenSourcePick()" x-cloak @click="openRescrape(null, \'search\'); rescrapeNumber = (searchQuery || \'\').trim()" :title="t(\'search.auto_pill.tooltip\')"'
                     ) }}
                     <button type="submit" id="btnSubmit" class="btn-icon active" title="{{ t('search.action.search') }}">
                         <i class="bi bi-arrow-right"></i>

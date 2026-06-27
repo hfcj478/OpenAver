@@ -50,22 +50,8 @@ export function searchStateAdvancedPicker() {
                 if (currentRequestId !== this.requestId) return;
 
                 if (response.ok && data.success && data.data && data.data.length > 0) {
-                    this.currentMode = data.mode || this.currentMode;
-                    this.searchResults = data.data;
-                    this.currentIndex = 0;
-                    this.hasMoreResults = data.has_more || false;
-                    this.actressProfile = data.actress_profile || null;
-                    if (this.actressProfile) this._heroCardImageError = false;
-                    this.listMode = 'search';
-                    this.checkLocalStatus(this.searchResults);
-                    this.pageState = 'result';
-                    this.preloadImages(1, 5);
-                    this.hasContent = this.searchResults.length > 0 || this.fileList.length > 0;
-                    this._searchSnapshot = null;
-                    this._resetCoverState();
-                    this.editingTitle = false;
-                    this.editingChineseTitle = false;
-                    this.addingTag = false;
+                    this._commitSearchResults(data);
+                    return;
                 } else {
                     this._searchSnapshot = null;
                     this.errorText = data.error || window.t('search.error.hint');
@@ -81,6 +67,30 @@ export function searchStateAdvancedPicker() {
                 this.errorText = window.t('search.error.hint');
                 this.pageState = 'error';
             }
+        },
+
+        /**
+         * CD-86-14: 共用搜尋結果提交 helper。
+         * state-rescrape.js search 入口採用路徑可跨 mixin 呼叫此 helper（mergeState 共享 this）。
+         * @param {Object} payload - { data: [...], mode, has_more, actress_profile }
+         */
+        _commitSearchResults(payload) {
+            this.currentMode = payload.mode || this.currentMode;
+            this.searchResults = payload.data;
+            this.currentIndex = 0;
+            this.hasMoreResults = payload.has_more || false;
+            this.actressProfile = payload.actress_profile || null;
+            if (this.actressProfile) this._heroCardImageError = false;
+            this.listMode = 'search';
+            this.checkLocalStatus(this.searchResults);
+            this.pageState = 'result';
+            this.preloadImages(1, 5);
+            this.hasContent = this.searchResults.length > 0 || this.fileList.length > 0;
+            this._searchSnapshot = null;
+            this._resetCoverState();
+            this.editingTitle = false;
+            this.editingChineseTitle = false;
+            this.addingTag = false;
         },
 
         // OQ-3：metatube 來源 + 非番號 + 空結果 → 軟提示（scaffold）

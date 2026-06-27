@@ -493,6 +493,19 @@ export default [
             "62c-3：switch-source 分支禁賦值 this.searchResults（US5 整包重設路徑，會污染結果列）。" +
             "只替換捕捉的 slot（t.arr[t.idx] = variant），結果列陣列 identity / currentIndex 不變。",
         },
+        {
+          // CD-86-13: confirm 取選定版本 URL 一律用 rescrapePreview.url
+          selector: "MemberExpression[property.name='detail_url'][object.property.name='rescrapePreview']",
+          message:
+            "CD-86-13: confirm 取選定版本 URL 一律用 rescrapePreview.url（detail_url 為 undefined，to_legacy_dict 輸出 key 是 url）。禁止 rescrapePreview.detail_url。",
+        },
+        {
+          // CD-86-14: search 採用分支禁 inline this.searchResults = 賦值（強制走 _commitSearchResults helper）
+          selector:
+            "IfStatement[test.right.value='search'] AssignmentExpression[left.property.name='searchResults']",
+          message:
+            "CD-86-14: search 採用分支禁止 inline 賦值 this.searchResults（會遺漏 pageState/listMode/checkLocalStatus/actressProfile 等）。改呼叫 this._commitSearchResults(...)。",
+        },
       ],
     },
   },

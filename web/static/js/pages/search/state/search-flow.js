@@ -582,6 +582,24 @@ export function searchStateSearchFlow() {
     },
 
     /**
+     * 「再開來源/版本挑選」入口可見條件（CD-86-P2 副作用修正）。
+     * JavLibrary 採用後 searchQuery === currentQuery → isComposing() false，
+     * 但使用者仍應可在 exact 結果頁重開 advanced picker 換版本/來源。
+     * 條件：search workflow 正在看某番號的 exact 結果（listMode='search', pageState='result',
+     * currentMode='exact', 搜尋框非空）。
+     * listMode 收斂（CD-86-P2 副作用修正）：file/batch workflow 也會進 pageState='result' +
+     * currentMode='exact'，但 searchQuery 只在載入第一個檔案時設一次、切換檔案不同步，故此頂部入口
+     * 在 file mode 會帶舊番號 → 限定 listMode==='search'。file mode 換來源走結果卡的 switch-source 入口。
+     * 不修改 isComposing()，避免波及 Grid/Detail Toggle 的 !isComposing() 互斥判斷。
+     */
+    canReopenSourcePick() {
+        return this.listMode === 'search'
+            && this.pageState === 'result'
+            && this.currentMode === 'exact'
+            && (this.searchQuery || '').trim() !== '';
+    },
+
+    /**
      * 取消搜尋（Fix 2: 恢復到上一個有效狀態）
      */
     cancelSearch() {

@@ -38,6 +38,8 @@ export function rescrapeState() {
         rescrapeLoadingSource: null,       // string | null（明確，:disabled 純 boolean）
         rescrapePreview: null,             // transient（CD-62-2）
         rescrapeNotFound: false,
+        rescrapeCandidates: [],            // CD-86-6：多版本候選陣列；單版本/非 javlib 為 []
+        rescrapeVersionIdx: 0,             // 當前 preview 游標
         rescrapeCfWaiting: false,          // 70-T6: CF 等待態（polling 中）
         _cfPollHandle: null,               // 70-T6: setInterval handle；null = 未 polling
 
@@ -60,6 +62,8 @@ export function rescrapeState() {
                 : '';
             this.rescrapeSources = (window.__ADVANCED_SEARCH__ && window.__ADVANCED_SEARCH__.sources) || [];
             this.rescrapePreview = null;
+            this.rescrapeCandidates = [];
+            this.rescrapeVersionIdx = 0;
             this.rescrapeLoadingSource = null;
             this.rescrapeNotFound = false;
             this._rescrapeVideo = video;
@@ -158,12 +162,17 @@ export function rescrapeState() {
             if (!this.rescrapeNumber.trim()) { this.rescrapeNotFound = true; return; }
             // Search 入口（62c-1）：無預覽卡，繞過 /api/rescrape/preview，直接走 B1 advancedSearch
             // 整包贏（GET /api/search?...&source=），結果進正常結果區，彈窗關閉（spec US5）。
+            // CD-86-8：javlibrary 例外——不早 return，繼續走 fetch preview（多版本候選支援）。
             // 番號回寫 searchQuery：讓彈窗內改番號生效（advancedSearch 讀 this.searchQuery）。
             if (this.rescrapeEntryPoint === 'search') {
-                this.searchQuery = this.rescrapeNumber.trim();
-                this.closeRescrape();
-                await this.advancedSearch(sourceId);  // 'auto' 直接傳給 /api/search（後端 merger）
-                return;
+                if (sourceId !== 'javlibrary') {
+                    // 其他 source：維持原路（advancedSearch 整包贏）
+                    this.searchQuery = this.rescrapeNumber.trim();
+                    this.closeRescrape();
+                    await this.advancedSearch(sourceId);  // 'auto' 直接傳給 /api/search（後端 merger）
+                    return;
+                }
+                // javlib：不早 return，繼續走 fetch preview（CD-86-8）
             }
             // 74a US2：switch-source 入口點「自動」= 直接 cycle（picker 關閉 + switchSource 循環）
             // spec-74 §US2：picker「自動」= 原本 🔄 tap 的「換到下一個來源」循環功能。
@@ -207,6 +216,22 @@ export function rescrapeState() {
                 // （替換後當前卡顯示的番號 = 下次 tap 查 switchStateMap 的 key；用編輯後實際抓回的番號才對得上）。
                 if (this.rescrapeEntryPoint === 'switch-source') {
                     if (data && data.success) {
+                        // T7: 多版本 → 進 preview + 切換器（不靜默取 [0]）
+                        if (data.candidates && data.candidates.length > 1) {
+                            const previewSourceId = sourceId === 'auto' ? (data._source || data.source || sourceId) : sourceId;
+                            const _previewSrc = this.rescrapeSources.find(x => x.id === previewSourceId);
+                            this.rescrapeCandidates = data.candidates;
+                            this.rescrapeVersionIdx = 0;
+                            this.rescrapePreview = {
+                                ...data.candidates[0],
+                                sourceName: this._resolveSourceName(previewSourceId),
+                                sourceCensored: _previewSrc?.is_censored ?? true,
+                            };
+                            this._rescrapeCommitSource = sourceId;
+                            this.rescrapeStep = 'preview';   // 不關窗
+                            return;
+                        }
+                        // 單版本 → 現有靜默 in-place 替換（race/stale 檢查保留）
                         // ── race 防覆蓋錯卡：await 回來判 slot 是否還在原位（強化 1：含 liveArr 顯式 identity 比對）──
                         const t = this._switchTarget;
                         const liveArr = (t && t.listMode === 'file' && this.fileList[t.fileIndex])
@@ -218,8 +243,16 @@ export function rescrapeState() {
                             || t.idx < 0 || t.idx >= t.arr.length
                             || (t.arr[t.idx] && t.arr[t.idx].number !== t.number);  // 番號比對：防同位置已被別筆佔據
                         if (!stale) {
-                            // dict shape 已核對與 searchResults row 一致，僅需 strip success key
-                            const { success, ...variant } = data;
+                            // T7：單版本 fallback——多版本（length>1）已於上方提前 return 進 preview，
+                            // 此處只處理單版本（candidates 無或 length===1）→ 取唯一筆替換。
+                            const variant = (() => {
+                                if (data.candidates && data.candidates.length > 0) {
+                                    const { success: _s, ...c } = { success: true, ...data.candidates[0] };
+                                    return c;
+                                }
+                                const { success, ...v } = data;
+                                return v;
+                            })();
                             t.arr[t.idx] = variant;                               // 整顆替換（對齊 ui.js:248）
                             this._resetCoverState?.();                            // cover 可能變（對齊 ui.js:250）
                             this.saveState?.();                                   // 持久化寫回（對齊 ui.js:259 tap 路徑；防 session restore 回舊卡）。optional-chain：mixin 共用 showcase，switch-source 僅 search 觸發
@@ -232,11 +265,28 @@ export function rescrapeState() {
                     this.rescrapeNotFound = true;
                     return;
                 }
-                // Showcase（lightbox）：找到 → 換頁 preview；找不到 → 留 pick
-                // （Search 入口已在函式開頭提早分流到 advancedSearch，不走到這裡）
+                // Showcase（lightbox）/ search+javlib：找到 → 換頁 preview；找不到 → 留 pick
                 // （cf_needed / cf_unavailable 已在上方統一提前處理，此處不再重複）
-                if (data && data.success) {
-                    // 74b US3：預覽膠囊顯示「實際刮到的源」+ 有碼/無碼上色。
+                if (data && data.candidates && data.candidates.length > 1) {
+                    // CD-86-6：多版本——填 candidates 短狀態 + 進 preview（含 search 入口，CD-86-8）
+                    const previewSourceId = sourceId === 'auto' ? (data._source || data.source || sourceId) : sourceId;
+                    const _previewSrc = this.rescrapeSources.find(x => x.id === previewSourceId);
+                    this.rescrapeCandidates = data.candidates;
+                    this.rescrapeVersionIdx = 0;
+                    this.rescrapePreview = {
+                        ...data.candidates[0],
+                        sourceName: this._resolveSourceName(previewSourceId),
+                        sourceCensored: _previewSrc?.is_censored ?? true,
+                    };
+                    this._rescrapeCommitSource = sourceId;
+                    this.rescrapeStep = 'preview';
+                } else if (data && data.success) {
+                    // 單版本：search / lightbox 共用 preview 邏輯（CD-86-8 對齊）。
+                    // 86 修正：search 單版本不再於此靜默 _commitSearchResults + closeRescrape
+                    // （一閃就關，使用者回報「直接跳過」），改 fall through 進 preview 卡（無切換器、
+                    // 有 T4「採用此版本」✓ 鈕，x-show="rescrapeEntryPoint==='search'"）。採用由
+                    // rescrapeConfirm 的 search 分支處理（已含 searchQuery/currentQuery 同步 + _commitSearchResults）。
+                    // lightbox（現況）：74b US3：預覽膠囊顯示「實際刮到的源」+ 有碼/無碼上色。
                     // lightbox + auto 也會進 preview（無 early return）→ auto 時用後端
                     // 回傳的實際源（data._source）解析，否則顯示「自動」+藍 fallback、無法辨識
                     // 實際源（違背 US3「截圖辨識用了哪個源」）。
@@ -260,22 +310,88 @@ export function rescrapeState() {
         },
 
         /**
+         * CD-86-6：是否有多版本候選（切換器顯示條件）。
+         */
+        rescrapeHasVersions() {
+            return this.rescrapeCandidates.length > 1;
+        },
+
+        /**
+         * CD-86-6：切換版本游標（clamp + 重綁 preview/sourceName/sourceCensored）。
+         * @param {number} delta - +1 下一版 / -1 上一版
+         */
+        rescrapeVersionGo(delta) {
+            const len = this.rescrapeCandidates.length;
+            if (len <= 1) return;
+            const newIdx = Math.max(0, Math.min(len - 1, this.rescrapeVersionIdx + delta));
+            if (newIdx === this.rescrapeVersionIdx) return;
+            this.rescrapeVersionIdx = newIdx;
+            const candidate = this.rescrapeCandidates[newIdx];
+            const previewSourceId = this._rescrapeCommitSource === 'auto'
+                ? (candidate._source || candidate.source || this._rescrapeCommitSource)
+                : this._rescrapeCommitSource;
+            const _previewSrc = this.rescrapeSources.find(x => x.id === previewSourceId);
+            this.rescrapePreview = {
+                ...candidate,
+                sourceName: this._resolveSourceName(previewSourceId),
+                sourceCensored: _previewSrc?.is_censored ?? true,
+            };
+        },
+
+        /**
          * 回上一步（保留 number + sources，清 preview 讓用戶重選源）。
          */
         rescrapeBackToPick() {
             this.rescrapeStep = 'pick';
             this.rescrapePreview = null;
+            this.rescrapeCandidates = [];
+            this.rescrapeVersionIdx = 0;
             this.rescrapeNotFound = false;
         },
 
         /**
          * ✓ commit — 自包含覆蓋寫入（POST /api/enrich-single）。鏡像 enrichVideo。
+         * CD-86-9/14：search 入口採用選定版本進搜尋結果，不打 enrich-single，不顯示不可逆警告。
          */
         async rescrapeConfirm() {
             if (this._rescraping) return;                            // 連點防護
-            if (!this._rescrapeVideo || !this._rescrapeVideo.path) return;  // commit 需既有檔（對齊 enrichVideo guard；search 入口無檔不 commit）
+            if (this.rescrapeCfWaiting) return;                      // P2-2：CF 等待中不可重入（鏡射 rescrapeWithSource :161）
             this._rescraping = true;
             try {
+                if (this.rescrapeEntryPoint === 'search') {
+                    // CD-86-9/14：採用選定版本進搜尋結果，不打 enrich-single，不顯示不可逆警告
+                    if (!this.rescrapePreview) { return; }
+                    // CD-86-P2：同步 searchQuery / currentQuery（對齊非 javlib 路徑 :167 + advancedSearch :38）
+                    this.searchQuery = this.rescrapeNumber.trim();
+                    this.currentQuery = this.rescrapeNumber.trim();
+                    // strip preview-only extras（success/sourceName/sourceCensored）不讓其流入 result row
+                    const { success: _s, sourceName: _sn, sourceCensored: _sc, ...adopted } = this.rescrapePreview;
+                    this._commitSearchResults?.({ data: [adopted], mode: 'exact', has_more: false, actress_profile: null });
+                    this.closeRescrape();
+                    return;
+                }
+                // T7: switch-source 入口採用選定版本做 in-place 替換（不打 enrich-single，不 _commitSearchResults）
+                if (this.rescrapeEntryPoint === 'switch-source') {
+                    if (!this.rescrapePreview) { return; }
+                    const t = this._switchTarget;
+                    // 採用當下重驗 stale（鏡射 rescrapeWithSource :220-228）
+                    const liveArr = (t && t.listMode === 'file' && this.fileList[t.fileIndex])
+                        ? this.fileList[t.fileIndex].searchResults : this.searchResults;
+                    const stale = !t || liveArr !== t.arr || !Array.isArray(t.arr)
+                        || t.idx < 0 || t.idx >= t.arr.length
+                        || (t.arr[t.idx] && t.arr[t.idx].number !== t.number);
+                    if (!stale) {
+                        const { success: _s, sourceName: _sn, sourceCensored: _sc, ...variant } = this.rescrapePreview;
+                        t.arr[t.idx] = variant;                          // in-place 替換選定版本
+                        this._resetCoverState?.();
+                        this.saveState?.();
+                        window.SearchUI?.seedSwitchState?.(variant.number || t.number, this._rescrapeCommitSource, variant);
+                    }
+                    this.closeRescrape();                                 // stale 靜默丟棄；非 stale 已替換。一律關窗
+                    return;
+                }
+                // lightbox（現況）：需既有檔
+                if (!this._rescrapeVideo || !this._rescrapeVideo.path) return;
                 const commitSource = (this._rescrapeCommitSource === 'auto') ? null : this._rescrapeCommitSource;
                 const resp = await fetch('/api/enrich-single', {
                     method: 'POST',
@@ -288,9 +404,25 @@ export function rescrapeState() {
                         overwrite_existing: true,                    // CD-62-4：唯一合法組合
                         write_nfo: true,
                         write_cover: true,
+                        detail_url: this.rescrapePreview?.url || null,  // CD-86-13: 取 .url 非 .detail_url
                     }),
                 });
                 const result = await resp.json();
+                // P2-2（Codex PR#89）：confirm 寫檔分支也接 CF——T2 後 javlibrary && detail_url 會走後端
+                // detail 重抓分支，若預覽→確認之間 CF session 過期，後端回 {cf_needed} / {cf_unavailable}
+                // （已 begin_solve）。鏡射 preview（rescrapeWithSource :203-211）：不接 → 卡在模糊「失敗」
+                // 且 CF flow 不啟動。cf_needed 啟動既有等待輪詢（_pollCfThenRetry 解完 CF 後重跑 preview，
+                // 使用者再按確認）——對不可逆寫檔，CF 後強制重新確認比靜默自動寫入更安全。
+                // 在判 success/失敗之前處理。順序對齊 preview（cf_needed 先、cf_unavailable 後）。
+                if (result.cf_needed) {
+                    this.rescrapeCfWaiting = true;
+                    this._pollCfThenRetry(this.rescrapeNumber.trim());
+                    return;
+                }
+                if (result.cf_unavailable) {
+                    this.showToast(window.t('showcase.rescrape.jl_desktop_only'), 'warning');
+                    return;
+                }
                 if (result.success) {
                     await this.refreshVideoData?.(this._rescrapeVideo);   // CD-62-5（showcase 有、search 無）
                     this.showToast(window.t('showcase.rescrape.success'), 'success');
@@ -368,6 +500,8 @@ export function rescrapeState() {
             this.rescrapeOpen = false;
             this.rescrapeStep = 'pick';
             this.rescrapePreview = null;
+            this.rescrapeCandidates = [];
+            this.rescrapeVersionIdx = 0;
             this.rescrapeNotFound = false;
             this.rescrapeLoadingSource = null;
             this._switchTarget = null;     // 62c-3：關窗清掉捕捉的 slot（switch-source 入口）

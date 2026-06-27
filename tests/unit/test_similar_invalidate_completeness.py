@@ -21,7 +21,7 @@ _SQL_PATTERNS = [
     re.compile(r"INSERT\s+INTO\s+videos\b", re.DOTALL | re.IGNORECASE),
 ]
 
-NOQA_MARKER = "# noqa: ranker-invalidate"
+INVALIDATE_OK_MARKER = "# ranker-invalidate-ok"
 
 
 def _has_invalidate_call(funcdef_node: ast.FunctionDef) -> bool:
@@ -62,8 +62,8 @@ def _scan_file(path: Path) -> list[str]:
 
         seg = _get_source_segment(source, node)
 
-        # noqa 豁免
-        if NOQA_MARKER in seg:
+        # 白名單豁免（委派給已自帶 invalidate 的路徑）
+        if INVALIDATE_OK_MARKER in seg:
             continue
 
         # 是否有觸發 SQL pattern
@@ -85,7 +85,7 @@ def _scan_file(path: Path) -> list[str]:
 def test_all_raw_sql_mutations_have_invalidate():
     """所有對 videos 表做 raw SQL mutation 的函式必須呼叫 SimilarRankerCache.invalidate()。
 
-    例外：函式內含 '# noqa: ranker-invalidate' 註解（migration / init 路徑）。
+    例外：函式內含 '# ranker-invalidate-ok' 註解（委派給已自帶 invalidate 的路徑）。
     """
     root = Path(".")
     violations = []

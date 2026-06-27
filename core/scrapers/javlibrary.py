@@ -276,6 +276,55 @@ def _extract_detail_url(html: str, num: str, base_lang_url: str) -> Optional[str
     return base_lang_url.rstrip("/") + "/" + best
 
 
+def _extract_all_detail_urls(html: str, num: str, base_lang_url: str) -> list[str]:
+    """
+    從搜尋結果頁收集所有與番號精確相符的 detail URL。
+
+    boundary-aware 比對（避免 MIDV-010 誤收 MIDV-100 等前綴鄰號，
+    或 AMIDV-010 / 1MIDV-010 等前置黏連號）。
+    去重保序，無相符回 []（不 fallback links[0]）。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    num_upper = num.upper()
+    # 前後皆需番號邊界：lookbehind 擋前置黏連（AMIDV-010），lookahead 擋後綴鄰號（MIDV-100）
+    pattern_str = r'(?<![0-9A-Za-z])' + re.escape(num_upper) + r'(?![0-9A-Za-z])'
+    seen: set[str] = set()
+    result: list[str] = []
+    for el in soup.select(".video a"):
+        href = el.get("href", "")
+        if not href:
+            continue
+        title_attr = el.get("title", "").upper()
+        text_attr = el.get_text().upper()
+        # 一致性（對齊 _extract_detail_url :255 的 text OR title）：title 或 link text
+        # 任一 boundary-match 即收。boundary regex 不變，仍嚴格擋鄰號/黏連，故多比對來源不引入 false positive。
+        if not (re.search(pattern_str, title_attr) or re.search(pattern_str, text_attr)):
+            continue
+        # 正規化相對路徑（同 _extract_detail_url :265-276）
+        if href.startswith("http"):
+            normalized: str = href
+        elif href.startswith("//"):
+            normalized = "https:" + href
+        elif href.startswith("./"):
+            normalized = base_lang_url.rstrip("/") + "/" + href[2:]
+        elif href.startswith("/"):
+            normalized = BASE_URL + href
+        else:
+            normalized = base_lang_url.rstrip("/") + "/" + href
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    return result
+
+
+def _raise_if_cf(html: str) -> None:
+    """CF challenge 偵測 helper。偵測到 CF challenge 則拋 CfChallengeRequired。"""
+    soup_title_tag = BeautifulSoup(html, "html.parser").title
+    page_title = soup_title_tag.string if soup_title_tag else ""
+    if _is_cf_challenge(page_title, html):
+        raise CfChallengeRequired("CF challenge detected")
+
+
 # ──────────────────────────────────────────────────────────────
 # JavLibraryScraper
 # ──────────────────────────────────────────────────────────────
@@ -330,12 +379,7 @@ class JavLibraryScraper(BaseScraper):
         # 用 _is_age_gate 會把有效頁面誤判為閘門 → CfChallengeRequired 死循環。
         # Age gate 由 transport.begin_solve（設 over18 cookie）+ is_ready 把關，
         # post-solve fetch 不會再遇 age gate（比照 POC scrape_b 設計）。
-        soup_title_tag = BeautifulSoup(html, "html.parser").title
-        page_title = soup_title_tag.string if soup_title_tag else ""
-        if _is_cf_challenge(page_title, html):
-            raise CfChallengeRequired(
-                "CF challenge detected in search response"
-            )
+        _raise_if_cf(html)
 
         # 步驟 6
         soup = BeautifulSoup(html, "html.parser")
@@ -357,24 +401,36 @@ class JavLibraryScraper(BaseScraper):
             detail_html = transport.fetch(detail_url, cache_key='javlibrary')
 
             # 第二次 fetch 防禦性 CF 檢查（同上，只檢 CF，不檢 age gate）
-            soup_d_title = BeautifulSoup(detail_html, "html.parser").title
-            d_title = soup_d_title.string if soup_d_title else ""
-            if _is_cf_challenge(d_title, detail_html):
-                raise CfChallengeRequired(
-                    "CF challenge detected in detail response"
-                )
+            _raise_if_cf(detail_html)
 
+        return self._video_from_detail_html(detail_html, number, detail_url)
+
+    def search_by_keyword(self, keyword: str, limit: int = 20) -> list[Video]:
+        """永遠回傳空 list（CD-70b：exact-only，不做模糊搜尋）。"""
+        return []
+
+    def _video_from_detail_html(
+        self,
+        detail_html: str,
+        number: str,
+        detail_url: str,
+    ) -> Optional[Video]:
+        """
+        parse_detail + 品質保護 + FIX-5 番號核對 + Video 映射（steps 9-11）。
+        行為與原 search() :367-419 完全相同。
+        """
         # 步驟 9
         fields = parse_detail(detail_html, number)
 
         # 步驟 10：parse 品質保護
         if not fields.get("title") and not fields.get("cover"):
-            logger.info("javlibrary: parse failed for %s (title+cover both empty — selector 失準或頁面結構變動)", number)
+            logger.info(
+                "javlibrary: parse failed for %s (title+cover both empty — selector 失準或頁面結構變動)",
+                number,
+            )
             return None
 
         # FIX-5：番號核對守衛
-        # _extract_detail_url fallback 取 links[0] 可能回到不相關的片子；
-        # parse 出的番號與請求番號 normalize 後不符 → 誠實回 None（優於回錯片資料）。
         parsed_number_norm = self.normalize_number(fields.get("number") or "")
         request_number_norm = self.normalize_number(number)
         if parsed_number_norm and request_number_norm and parsed_number_norm != request_number_norm:
@@ -418,6 +474,52 @@ class JavLibraryScraper(BaseScraper):
             detail_url=detail_url,
         )
 
-    def search_by_keyword(self, keyword: str, limit: int = 20) -> list[Video]:
-        """永遠回傳空 list（CD-70b：exact-only，不做模糊搜尋）。"""
-        return []
+    def search_all_versions(self, number: str) -> list[Video]:
+        """
+        以番號搜尋 JavLibrary，收集全部版本（同番號複數 detail），回傳 list[Video]。
+        新片優先（date desc）。
+
+        - 單一命中 302 → 1-element list
+        - 多版本列表 → boundary-aware 列舉全部 detail URL，各別 fetch parse
+        - 列表頁或 detail fetch 遇 CF challenge → CfChallengeRequired propagate
+        - 無相符 → []
+        """
+        transport = get_cf_transport()
+        if transport is None:
+            raise CfTransportUnavailable(
+                "JavLibrary scraper requires CF transport (desktop standalone only)"
+            )
+        number = self.normalize_number(number)
+        search_url = f'{BASE_URL}/{LANG}/vl_searchbyid.php?keyword={number}'
+        html: str = transport.fetch(search_url, cache_key='javlibrary')
+        _raise_if_cf(html)
+        soup = BeautifulSoup(html, "html.parser")
+        if _is_detail_page(soup):
+            # 單一命中 302（已是 detail 頁）
+            v = self._video_from_detail_html(html, number, "")
+            return [v] if v else []
+        base_lang_url = f'{BASE_URL}/{LANG}'
+        urls = _extract_all_detail_urls(html, number, base_lang_url)
+        out: list[Video] = []
+        for url in urls:
+            dhtml: str = transport.fetch(url, cache_key='javlibrary')
+            _raise_if_cf(dhtml)
+            v = self._video_from_detail_html(dhtml, number, url)
+            if v:
+                out.append(v)
+        out.sort(key=lambda v: v.date or "", reverse=True)  # 新片優先（CD-86-3）
+        return out
+
+    def fetch_by_detail_url(self, detail_url: str, number: str) -> Optional[Video]:
+        """
+        直接以 detail URL 抓取並解析，回傳 Video 或 None。
+        detail_url 會落地在 Video.detail_url。
+        """
+        transport = get_cf_transport()
+        if transport is None:
+            raise CfTransportUnavailable(
+                "JavLibrary scraper requires CF transport (desktop standalone only)"
+            )
+        dhtml: str = transport.fetch(detail_url, cache_key='javlibrary')
+        _raise_if_cf(dhtml)
+        return self._video_from_detail_html(dhtml, self.normalize_number(number), detail_url)

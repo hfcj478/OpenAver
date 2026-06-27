@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-06-28
+
+本版主軸：**JavLibrary 同番號多版本手動切換**（feature/86，spec-86）——AV 番號會被不同片商跨年代重複使用（如 `MIDV-013`：舊片 vs MOODYZ 新片），預設都抓到先收錄的舊片。本版讓你在 JavLibrary 看封面手動挑版本。範圍刻意極小：僅 JavLibrary、僅手動入口、桌面 standalone 限定（需 CF transport），不進批次、不揭露 AI。
+
+### Added
+#### 🎬 JavLibrary 同番號多版本切換器
+- 🎯 **看封面手動挑版本**：同一番號在 JavLibrary 有多個版本（撞號）時，預覽卡出現封面 `‹ ›` 左右切換器 + 琥珀色「找到 X 部同番號作品 N/M」標示，按左右即時翻版本（封面/標題/日期/片商/tags 同步），游標預設停在**最新發行日**那部（多數人要的新片）。一次抓齊所有候選，翻頁不重打。
+- 🎯 **三個手動入口都支援**：
+  - **搜尋框直搜**：進階搜尋選 JavLibrary → 多版本跳預覽卡 + 切換器 → ✓「採用此版本」進結果區（不寫檔）。
+  - **燈箱換來源**：對某片開「換來源」選 JavLibrary → 切換器 → ✓ 寫入選定版本的 NFO/封面（保留「覆蓋不可逆」警告）。
+  - **結果卡替換來源**：先用別的來源找到、再「替換來源」成 JavLibrary 多版本 → 切換器 → ✓「替換此版本」就地替換當前卡（不寫檔）。
+
+### Changed
+- **「找到 X 部」撞號提示改琥珀色**（同不可逆警語色系，「注意」語意）更顯眼。
+- **JavLibrary pill 在搜尋頁進階搜尋解除隱藏**：改由「桌面限定」gate 統一管（非桌面仍灰化不可點）。
+
+### Fixed
+- **搜尋頁挑版本後可再次開啟**：採用某版本後，exact 結果頁保留「再開來源/版本挑選」入口（不再因搜尋框與結果同步而消失）；限搜尋 workflow，批次/檔案模式不受污染。
+- **搜尋頁挑版本路徑同步搜尋框 query**：採用版本後搜尋框、輸入法判斷、工作階段還原不再殘留舊番號。
+- **番號邊界比對補前置**：候選列舉避免把 `AMIDV-010` 之類前置黏連號誤收為 `MIDV-010` 的版本。
+
+### Internal
+- scraper 新增同番號全版本列舉（`search_all_versions` / `fetch_by_detail_url`，新片優先排序）+ helper 抽取；後端 `/api/rescrape/preview` 多版本回 `candidates[]`、`EnrichRequest` 新增 `detail_url`（confirm server-side 重抓，不揭露 AI）；前端 rescrape modal 三入口 candidates 短狀態 + 切換器 partial。
+- `core/scrapers/README.md` 的「JavLibrary 手動版本切換」由 pending → done。
+
+### 測試
+- 全套 pytest **4799 passed, 2 skipped**（unit + integration，排除 smoke / e2e，較 0.11.0 的 4747 +52：scraper 列舉/排序/邊界 + 後端 candidates/detail_url/CF + 前端 state/切換器/入口路由/守衛）+ `ruff check .` 綠 + `npm run lint`（eslint + stylelint）綠。
+- 來源金絲雀：**8 源全 PASS**（pre-merge live）。
+- Windows 真機驗收：MIDV-013（3 版本）三入口切換器 + 採用皆通過。
+- Codex PR review P2 × 2（search 採用 query 同步 / file-mode 入口 gate）已修；Gemini 整支 branch 第二意見 P1 × 1（番號前置邊界）已修。
+
 ## [0.11.0] - 2026-06-27
 
 本版主軸：**JavBus 過度泛用清償 + exact 番號搜尋改優先序 cascade**（feature/85，spec-85）——技術債清償與行為修正，預期淨刪碼、不新增使用者功能。核心是讓「來源優先序」這個既有設定**真的被尊重**：以前直接搜番號時，只要 JavBus 有啟用就會搶先回結果（即使你把 DMM 排第一），現在改成嚴格依你拖曳的優先順序逐一查、命中即回。並移除依賴已死端點的 JavBus variant（同番號多版本）探查死碼。
