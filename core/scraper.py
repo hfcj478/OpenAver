@@ -883,50 +883,31 @@ def smart_search(query: str, limit: int = 20, offset: int = 0, status_callback: 
             r['_mode'] = 'uncensored'
         return results
 
-    # 1. 精確搜尋
+    # 1. 精確搜尋 — 依優先序串接直打，命中即回（spec-85 B1，CD-85-1）
     if is_number_format(query):
         query = normalize_number(query)
         if offset > 0:
             return []
 
-        # Rule 4b（CD-61-19）：JavBus variant probe 僅在 JavBus 在 Active Row 啟用時觸發。
-        # JavBus 停用 → 跳過 variant 探查 + 不發 javbus status（靜默降級），落一般 search_jav。
-        if 'javbus' in get_enabled_source_ids():
+        avail_map = metatube_state.availability_map()
+        enabled_sids = get_enabled_source_ids(availability_map=avail_map)
+        for sid in enabled_sids:
             if status_callback:
-                status_callback('javbus', 'searching')
-
-            # 快速路徑：直接嘗試 detail GET（省 GET 1 搜尋頁）
+                status_callback(sid, 'searching')
             try:
-                fast_scraper = JavBusScraper(lang=_get_javbus_lang())
-                fast_video = fast_scraper.search(query)
-                if fast_video is not None:
-                    fast_res = _javbus_video_to_result(fast_video, query)
-                    fast_res['_variant_id'] = normalize_number(query)
-                    fast_res['_all_variant_ids'] = [normalize_number(query)]
-                    fast_res['_mode'] = 'exact'
+                res = search_jav_single_source(query, sid, proxy_url=proxy_url)
+                if res:
+                    res['_mode'] = 'exact'
                     if status_callback:
                         status_callback('done', 'found:1')
-                    return [fast_res]
-            except Exception as e:
-                logger.debug('javbus fast-path miss, falling back: %s', e)
-
-            # 嘗試找變體
-            variant_ids = get_all_variant_ids(query)
-            if variant_ids:
-                first = variant_ids[0]
-                # 用 variant id 搜
-                res = search_by_variant_id(first, query)
-                if res:
-                    res['_all_variant_ids'] = variant_ids
-                    if status_callback: status_callback('done', 'found:1')
                     return [res]
+            except Exception as e:
+                logger.debug('fast-path %s miss/error: %s', sid, e)
 
-        # 一般搜尋
-        res = search_jav(query, proxy_url=proxy_url)
-        results = [res] if res else []
-        if status_callback: status_callback('done', f'found:{len(results)}')
-        for r in results: r['_mode'] = 'exact'
-        return results
+        # 全部 miss（極冷門番號/打錯字）
+        if status_callback:
+            status_callback('done', 'found:0')
+        return []
 
     # 2. 局部搜尋
     elif is_partial_number(query):

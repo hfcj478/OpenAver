@@ -68,6 +68,7 @@ class TestStripInternalNfoKeys:
         result = strip_internal_nfo_keys(d)
         assert result['_source'] == 'javbus'
         assert result['_mode'] == 'exact'
+        # _all_variant_ids 不在 _INTERNAL_NFO_KEYS 中 → strip 不誤刪該欄位（後方互換守衛）
         assert result['_all_variant_ids'] == ['a']
 
     def test_idempotent_no_internal_keys(self):
@@ -502,11 +503,11 @@ class TestScannerAutoConverage:
     """spec 驗收：scanner 走 smart_search → search_jav('auto')，metatube 自動進入 fan-out"""
 
     def test_smart_search_includes_metatube_entry(self, monkeypatch):
-        """mock metatube enabled+available，呼 search_jav('auto') → shim 進入 fan-out。
+        """mock metatube enabled+available，cascade 依優先序串接直打，metatube 在 enabled_sids 中參與。
 
-        smart_search 對 exact-format 番號走 Rule 4b（JavBus variant probe）—— 若
-        get_all_variant_ids / search_by_variant_id 不 mock，會走真網路並 early-return，
-        導致 search_jav('auto') 從未被呼叫。因此需同時 mock 這兩個函數。
+        新 cascade（spec-85 B1，CD-85-1/2）：依 get_enabled_source_ids 優先序串接直打，
+        metatube provider 在 availability_map 中 available → 進入 cascade 並被呼叫。
+        search_jav_single_source mock 讓 metatube:FANZA call 回 mt_video。
         """
         from core.scraper import smart_search
 
@@ -518,14 +519,15 @@ class TestScannerAutoConverage:
         mock_state = _mock_state(avail_map={'metatube:FANZA': True})
         monkeypatch.setattr("core.scraper.metatube_state", mock_state)
 
-        mt_video = _make_video("metatube:FANZA", "ABF-001")
-        shim_search_mock = MagicMock(return_value=mt_video)
+        mt_result = {'number': 'ABF-001', 'title': 'T', '_source': 'metatube:FANZA'}
 
-        with patch("core.scraper._MetatubeShim.search", shim_search_mock):
-            with patch("core.scrapers.javbus.JavBusScraper.search", return_value=None):
-                # Bypass Rule 4b JavBus variant probe → force fall-through to search_jav('auto')
-                with patch("core.scraper.get_all_variant_ids", return_value=[]):
-                    results = smart_search("ABF-001")
+        def _single_source(number, source, proxy_url=''):
+            if source == 'metatube:FANZA':
+                return mt_result
+            return None
 
-        shim_search_mock.assert_called()
+        with patch("core.scraper.search_jav_single_source", side_effect=_single_source) as mock_ss:
+            results = smart_search("ABF-001")
+
+        mock_ss.assert_called()
         assert any(r.get('_source') == 'metatube:FANZA' for r in results)
