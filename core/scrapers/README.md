@@ -15,7 +15,7 @@
 | `javbus` | JavBus | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | 直打 detail URL；封面無浮水印但**僅右半裁切**；搜尋端點 `/search/` 已 404（站方改版，variant 探查已移除，見 §2） |
 | `jav321` | Jav321 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | keyword 搜尋恆回空，故不入 FUZZY_SEARCH_SOURCES |
 | `javdb` | JavDB | ✅ | ❌ | ❌ | ❌ | ⚠️ | ✅ | 重複 keyword 呼叫觸發 Cloudflare ban，故不入 FUZZY_SEARCH_SOURCES；封面有浮水印 |
-| `javlibrary` | JavLibrary | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | **manual_only**：不進 SOURCE_ORDER fan-out；exact-only（CD-70b）；需 CfTransport（桌面版限定）；封面 hotlink DMM CDN（`pl.jpg`，同 dmm 無浮水印）；手動版本切換：**eager 全抓、新片優先、僅 lightbox/search 入口**（spec-86 done） |
+| `javlibrary` | JavLibrary | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | **manual_only**：不進 SOURCE_ORDER fan-out；exact-only（CD-70b）；需 CfTransport（桌面版限定）；封面 hotlink DMM CDN（`pl.jpg`，同 dmm 無浮水印）；手動版本切換：**eager 全抓、新片優先、三手動入口（lightbox/search/switch-source）多版本皆出切換器**（spec-86 done，含 T7 switch-source follow-on） |
 
 ### 1.2 無碼來源（UNCENSORED_SOURCES）
 
@@ -54,7 +54,7 @@ core/scrapers/utils.py
 ### 2.2 版本切換現況
 
 - **JavBus variant 探查（spec-85 已移除）**：舊版透過 `/search/` 端點枚舉同番號多版本 ID，但該端點於 2025 年站方改版後已 404。依賴此機制的 `get_all_variant_ids` / `search_by_variant_id` 及前端版本切換 UI 已在 **spec-85 全棧原子清除**。
-- **JavLibrary 手動版本切換（spec-86 done）**：同番號多版本的使用者手動切換，基於 JavLibrary 搜尋列表（非 JavBus 搜尋）。開窗時 eager 全抓所有候選的完整 detail、新片優先排序（發行日 desc，預設游標停在最新），僅 lightbox / search 兩個手動入口出現封面 `‹ ›` 切換器；switch-source 入口靜默取最新。不進批次匯入、不揭露 AI agent（detail_url 為內部路由細節，AC9）。
+- **JavLibrary 手動版本切換（spec-86 done）**：同番號多版本的使用者手動切換，基於 JavLibrary 搜尋列表（非 JavBus 搜尋）。開窗時 eager 全抓所有候選的完整 detail、新片優先排序（發行日 desc，預設游標停在最新）。**三個手動入口遇多版本皆出現封面 `‹ ›` 切換器**讓使用者選版本，採用語意各異：lightbox 寫入選定版本 NFO/封面（保留不可逆警告）、search 採用選定版本進結果列、switch-source 以選定版本就地替換當前結果卡。**switch-source 單版本維持靜默直接替換**（最小驚訝；多版本才開切換器，spec-86 D7 follow-on 已於 T7 實作，反轉原 Non-Goal）。不進批次匯入、不揭露 AI agent（detail_url 為內部路由細節，AC9）。
 
 ---
 
