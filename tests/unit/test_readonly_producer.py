@@ -63,10 +63,10 @@ class TestListSourceVideos:
         from core.readonly_producer import _list_source_videos
 
         with patch("core.readonly_producer.fast_scan_directory", return_value=FAKE_FILES) as mock_scan, \
-             patch("core.readonly_producer.normalize_path", return_value="/src") as mock_norm:
+             patch("core.readonly_producer.uri_to_fs_path", return_value="/src") as mock_coerce:
             result = _list_source_videos("/src", {".mp4", ".mkv"}, 0)
 
-        mock_norm.assert_called_once_with("/src")
+        mock_coerce.assert_called_once_with("/src")
         mock_scan.assert_called_once_with("/src", {".mp4", ".mkv"}, 0)
         assert result == FAKE_FILES
 
@@ -74,10 +74,31 @@ class TestListSourceVideos:
         from core.readonly_producer import _list_source_videos
 
         with patch("core.readonly_producer.fast_scan_directory", return_value=FAKE_FILES), \
-             patch("core.readonly_producer.normalize_path", return_value="/src"):
+             patch("core.readonly_producer.uri_to_fs_path", return_value="/src"):
             result = _list_source_videos("/src", {".mp4"}, 1024)
 
         assert result is FAKE_FILES
+
+    def test_tolerates_file_uri_source_path(self, tmp_path):
+        """PR#91 P2-A regression: a file:/// source path must resolve to the real FS
+        dir and find the videos (DirectoryConfig.path may be an FS path OR URI).
+
+        RED against the old ``normalize_path(source_path)`` code: on Linux/WSL,
+        normalize_path leaves ``file:///...`` literal → fast_scan_directory scans a
+        non-existent relative dir → returns []. GREEN after switching to uri_to_fs_path.
+        """
+        from core.path_utils import to_file_uri
+        from core.readonly_producer import _list_source_videos
+
+        video = tmp_path / "ABC-123.mp4"
+        video.write_bytes(b"x" * 2048)
+
+        source_uri = to_file_uri(str(tmp_path))
+        assert source_uri.startswith("file:///")
+
+        result = _list_source_videos(source_uri, {".mp4"}, 0)
+
+        assert [f["path"] for f in result] == [str(video)]
 
 
 # ---------------------------------------------------------------------------

@@ -78,8 +78,13 @@ def _list_source_videos(source_path: str, extensions: set, min_size_bytes: int) 
 
     Returns a list of dicts with keys: path, mtime, size, nfo_mtime.
     nfo_mtime is ignored by this module (guard G1: no source-NFO reads).
+
+    source_path may be a native FS path OR a ``file:///`` URI (DirectoryConfig.path
+    accepts both per core/config.py schema). uri_to_fs_path is idempotent on FS-path
+    input and converts URI form to an FS path, so scanning works for both without a
+    hand-rolled ``startswith('file:///')`` check (path-contract compliant).
     """
-    fs_dir = normalize_path(source_path)
+    fs_dir = uri_to_fs_path(source_path)
     return fast_scan_directory(fs_dir, extensions, min_size_bytes)
 
 
