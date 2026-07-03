@@ -295,6 +295,112 @@ class TestVideoRepository:
         assert repo.count() == 0
 
 
+class TestOutputDirProtectionAndOccupancy:
+    """TASK-89a-T1: upsert/upsert_batch output_dir 對稱保護 + 佔用查詢 helper"""
+
+    def test_upsert_preserves_output_dir_on_empty_incoming(self, temp_db):
+        """upsert 傳空 output_dir（且 DB 已有非空既有值）→ 既有值不被覆寫"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/video1.mp4")
+
+        v1 = Video(path=path, title="影片1", output_dir=to_file_uri("/produced/ABC-001"))
+        repo.upsert(v1)
+
+        v2 = Video(path=path, title="影片1-rescan", output_dir="")
+        repo.upsert(v2)
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.output_dir == to_file_uri("/produced/ABC-001")
+
+    def test_upsert_overwrites_output_dir_on_nonempty_incoming(self, temp_db):
+        """upsert 傳非空 output_dir → 正常寫入/覆寫"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/video1.mp4")
+
+        v1 = Video(path=path, title="影片1", output_dir=to_file_uri("/produced/ABC-001"))
+        repo.upsert(v1)
+
+        v2 = Video(path=path, title="影片1", output_dir=to_file_uri("/produced/ABC-001-v2"))
+        repo.upsert(v2)
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.output_dir == to_file_uri("/produced/ABC-001-v2")
+
+    def test_upsert_insert_writes_output_dir_directly(self, temp_db):
+        """首次 insert（無既有 row）：INSERT 直接寫入 incoming output_dir 值"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/video1.mp4")
+
+        v = Video(path=path, title="影片1", output_dir=to_file_uri("/produced/ABC-001"))
+        repo.upsert(v)
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.output_dir == to_file_uri("/produced/ABC-001")
+
+    def test_upsert_batch_preserves_output_dir_on_empty_incoming(self, temp_db):
+        """upsert_batch 傳空 output_dir（且 DB 已有非空既有值）→ 既有值不被覆寫
+        （與 upsert 對稱測試，Codex C2 回歸鎖：獨立斷言，不假設 upsert_batch 與 upsert 行為一致）"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/video1.mp4")
+
+        repo.upsert_batch([
+            Video(path=path, title="影片1", output_dir=to_file_uri("/produced/ABC-001")),
+        ])
+
+        repo.upsert_batch([
+            Video(path=path, title="影片1-rescan", output_dir=""),
+        ])
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.output_dir == to_file_uri("/produced/ABC-001")
+
+    def test_upsert_batch_overwrites_output_dir_on_nonempty_incoming(self, temp_db):
+        """upsert_batch 傳非空 output_dir → 正常寫入"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/video1.mp4")
+
+        repo.upsert_batch([
+            Video(path=path, title="影片1", output_dir=to_file_uri("/produced/ABC-001")),
+        ])
+        repo.upsert_batch([
+            Video(path=path, title="影片1", output_dir=to_file_uri("/produced/ABC-001-v2")),
+        ])
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.output_dir == to_file_uri("/produced/ABC-001-v2")
+
+    def test_is_output_dir_taken_true_when_held_by_other_row(self, temp_db):
+        """候選 output_dir 被別筆 path（source_uri）佔用 → True"""
+        repo = VideoRepository(temp_db)
+        taken_dir = to_file_uri("/produced/ABC-001")
+
+        repo.upsert(Video(path=to_file_uri("/video1.mp4"), title="影片1", output_dir=taken_dir))
+
+        assert repo.is_output_dir_taken(taken_dir, to_file_uri("/video2.mp4")) is True
+
+    def test_is_output_dir_taken_false_when_held_only_by_self(self, temp_db):
+        """候選 output_dir 只被自己（exclude_path 對應那筆）持有 → False（原地覆蓋不誤判）"""
+        repo = VideoRepository(temp_db)
+        own_dir = to_file_uri("/produced/ABC-001")
+        own_path = to_file_uri("/video1.mp4")
+
+        repo.upsert(Video(path=own_path, title="影片1", output_dir=own_dir))
+
+        assert repo.is_output_dir_taken(own_dir, own_path) is False
+
+    def test_is_output_dir_taken_false_when_unheld(self, temp_db):
+        """候選 output_dir 無人持有 → False"""
+        repo = VideoRepository(temp_db)
+        assert repo.is_output_dir_taken(
+            to_file_uri("/produced/NEW-001"), to_file_uri("/video1.mp4")
+        ) is False
+
+
 class TestMigrateJsonToSqlite:
     """migrate_json_to_sqlite 測試"""
 

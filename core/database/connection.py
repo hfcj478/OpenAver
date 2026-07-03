@@ -108,6 +108,7 @@ def init_db(db_path: Path = None) -> None:
             tags TEXT,
             sample_images TEXT DEFAULT '',
             user_tags TEXT DEFAULT '[]',
+            output_dir TEXT DEFAULT '',
             duration INTEGER,
             size_bytes INTEGER,
             cover_path TEXT,
@@ -226,6 +227,10 @@ def init_db(db_path: Path = None) -> None:
     # Migration: 加入 Phase 41b user_tags 欄位
     if 'user_tags' not in existing_cols:
         cursor.execute("ALTER TABLE videos ADD COLUMN user_tags TEXT DEFAULT '[]'")
+
+    # Migration: 加入 89a output_dir 欄位
+    if 'output_dir' not in existing_cols:
+        cursor.execute("ALTER TABLE videos ADD COLUMN output_dir TEXT DEFAULT ''")
 
     # Migration: 57b — 移除 v0.8.6 視覺搜尋欄位（idempotent；clean install 不爆）
     # DROP INDEX 必先於 DROP COLUMN（SQLite 不允許 drop 被 index 引用的 column）

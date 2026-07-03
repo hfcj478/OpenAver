@@ -705,6 +705,106 @@ class TestGetColumnsOrder:
         assert result.duration == 75
 
 
+class TestOutputDirField:
+    """TASK-89a-T1: videos.output_dir 欄位 — CREATE TABLE + 加法遷移 + dataclass round-trip"""
+
+    def _create_old_schema_db_no_output_dir(self, db_path: Path):
+        """建立沒有 output_dir 的舊 schema DB（其餘欄位齊全）"""
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE videos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT UNIQUE NOT NULL,
+                number TEXT,
+                title TEXT,
+                original_title TEXT,
+                actresses TEXT,
+                maker TEXT,
+                director TEXT DEFAULT '',
+                series TEXT,
+                label TEXT DEFAULT '',
+                tags TEXT,
+                sample_images TEXT DEFAULT '',
+                user_tags TEXT DEFAULT '[]',
+                duration INTEGER,
+                size_bytes INTEGER,
+                cover_path TEXT,
+                release_date TEXT,
+                mtime REAL,
+                nfo_mtime REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute(
+            "INSERT INTO videos (path, number, title) VALUES (?, ?, ?)",
+            (to_file_uri("/old_no_output_dir.mp4"), "OLD-002", "舊資料")
+        )
+        conn.commit()
+        conn.close()
+
+    def test_new_db_includes_output_dir_column(self, tmp_path):
+        """全新 DB 的 CREATE TABLE 含 output_dir，預設值 ''"""
+        db_path = tmp_path / "new.db"
+        init_db(db_path)
+
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(videos)")
+        columns = {row[1]: row for row in cursor.fetchall()}
+        conn.close()
+
+        assert 'output_dir' in columns
+
+    def test_migration_adds_output_dir_column(self, tmp_path):
+        """舊 schema（無 output_dir）升級後，PRAGMA table_info 確認欄位存在"""
+        db_path = tmp_path / "old.db"
+        self._create_old_schema_db_no_output_dir(db_path)
+
+        init_db(db_path)
+
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(videos)")
+        columns = [row[1] for row in cursor.fetchall()]
+        conn.close()
+
+        assert 'output_dir' in columns
+
+    def test_migration_output_dir_idempotent(self, tmp_path):
+        """對同一個舊庫連續呼叫 init_db() 兩次不拋例外（遷移 idempotent）"""
+        db_path = tmp_path / "old.db"
+        self._create_old_schema_db_no_output_dir(db_path)
+
+        init_db(db_path)
+        init_db(db_path)  # 第二次不應報錯
+
+    def test_video_output_dir_default_empty_string(self):
+        """Video.output_dir 預設值為 ''"""
+        video = Video()
+        assert hasattr(video, 'output_dir')
+        assert video.output_dir == ''
+
+    def test_video_output_dir_roundtrip_via_upsert(self, tmp_path):
+        """Video dataclass output_dir 透過 to_dict()/from_row() round-trip 正確"""
+        db_path = tmp_path / "test.db"
+        init_db(db_path)
+
+        repo = VideoRepository(db_path)
+        video = Video(
+            path=to_file_uri("/test/output_dir_roundtrip.mp4"),
+            number="OD-001",
+            title="output_dir round-trip",
+            output_dir=to_file_uri("/produced/OD-001"),
+        )
+        repo.upsert(video)
+
+        result = repo.get_by_path(to_file_uri("/test/output_dir_roundtrip.mp4"))
+        assert result is not None
+        assert result.output_dir == to_file_uri("/produced/OD-001")
+
+
 # ============ AliasRepository 測試 ============
 
 def test_alias_repository_crud(tmp_path):

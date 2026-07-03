@@ -32,6 +32,7 @@ class Video:
     duration: Optional[int] = None
     size_bytes: int = 0
     cover_path: str = ""
+    output_dir: str = ''
     release_date: str = ""
     mtime: float = 0.0
     nfo_mtime: float = 0.0
@@ -192,6 +193,11 @@ class VideoRepository:
                     # user_tags = '[]' 時視同「不更新」，保留 DB 現有值
                     update_parts.append(
                         "user_tags = CASE WHEN excluded.user_tags = '[]' THEN videos.user_tags ELSE excluded.user_tags END"
+                    )
+                elif col == 'output_dir':
+                    # output_dir = '' 時視同「不更新」，保留 DB 現有值（TASK-89a-T1）
+                    update_parts.append(
+                        "output_dir = CASE WHEN excluded.output_dir = '' THEN videos.output_dir ELSE excluded.output_dir END"
                     )
                 else:
                     update_parts.append(f"{col} = excluded.{col}")
@@ -487,6 +493,11 @@ class VideoRepository:
                         # user_tags = '[]' 時視同「不更新」，保留 DB 現有值
                         update_parts.append(
                             "user_tags = CASE WHEN excluded.user_tags = '[]' THEN videos.user_tags ELSE excluded.user_tags END"
+                        )
+                    elif col == 'output_dir':
+                        # output_dir = '' 時視同「不更新」，保留 DB 現有值（TASK-89a-T1，須與 upsert() 對稱）
+                        update_parts.append(
+                            "output_dir = CASE WHEN excluded.output_dir = '' THEN videos.output_dir ELSE excluded.output_dir END"
                         )
                     else:
                         update_parts.append(f"{col} = excluded.{col}")
@@ -936,6 +947,32 @@ class VideoRepository:
                     "SELECT 1 FROM videos WHERE cover_path = ? LIMIT 1",
                     (fs_path,)
                 ).fetchone()
+        finally:
+            conn.close()
+        return row is not None
+
+    def is_output_dir_taken(self, output_dir: str, exclude_path: str) -> bool:
+        """查詢 output_dir 是否已被別筆 source_uri（videos.path）佔用（TASK-89a-T1）。
+
+        供 T3 判斷候選輸出夾是否需要 increment 另尋。純 SELECT，唯讀 connection
+        pattern（鏡射 is_known_cover_path() / get_by_path()），不需 commit。
+
+        Args:
+            output_dir: 候選輸出夾（file:/// URI）。呼叫端須保證候選為非空路徑
+                （一般 enrich/scan row 的 output_dir 恆為 ''，若誤傳空字串會匹配
+                到大量一般 row，本 method 不做防呆）。
+            exclude_path: 排除的 source_uri（自己那筆的 videos.path），避免跟自己比對
+                （CD-89a-3「讀存原地覆蓋」情境：候選 = 自己既有值時不應誤判為佔用）。
+
+        Returns:
+            True 表示已被別筆佔用；False 表示可用（含無人持有 / 只被自己持有兩種情況）。
+        """
+        conn = self._get_connection()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM videos WHERE output_dir = ? AND path != ? LIMIT 1",
+                (output_dir, exclude_path)
+            ).fetchone()
         finally:
             conn.close()
         return row is not None
