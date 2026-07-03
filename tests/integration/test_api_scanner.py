@@ -815,6 +815,82 @@ class TestMissingCheckAPI:
         assert isinstance(data['data']['items'], list)
         assert len(data['data']['items']) == 5000
 
+    def test_producer_row_excluded_from_buckets(self, client, tmp_path, monkeypatch):
+        """producer 產出的 row（output_dir!=''，nfo_mtime 恆 0）不進任何桶、不計入 total_missing（TASK-89b-T4）"""
+        from unittest.mock import patch
+        from core.database import Video
+        from core.path_utils import to_file_uri
+        videos = [
+            Video(path=to_file_uri(str(tmp_path / "a.mp4")), number="AAA-001",
+                  cover_path="", nfo_mtime=0.0,
+                  output_dir=to_file_uri(str(tmp_path / "out"))),
+        ]
+        db_path = self._make_db(tmp_path, videos)
+        with patch('web.routers.scanner.get_db_path', return_value=db_path):
+            resp = client.get('/api/gallery/missing-check')
+        data = resp.json()
+        assert data['success'] is True
+        assert data['data']['missing_both'] == 0
+        assert data['data']['missing_nfo'] == 0
+        assert data['data']['missing_cover'] == 0
+        assert data['data']['total_missing'] == 0
+        assert data['data']['items'] == []
+
+    def test_tried_non_producer_row_excluded_from_buckets(self, client, tmp_path, monkeypatch):
+        """scrape_attempted_at>0 但非 producer（output_dir==''）同樣被排除（一般 NOT-FOUND 記憶場景，TASK-89b-T4）"""
+        from unittest.mock import patch
+        from core.database import Video
+        from core.path_utils import to_file_uri
+        videos = [
+            Video(path=to_file_uri(str(tmp_path / "a.mp4")), number="AAA-001",
+                  cover_path="", nfo_mtime=0.0,
+                  scrape_attempted_at=1234567890.0),
+        ]
+        db_path = self._make_db(tmp_path, videos)
+        with patch('web.routers.scanner.get_db_path', return_value=db_path):
+            resp = client.get('/api/gallery/missing-check')
+        data = resp.json()
+        assert data['success'] is True
+        assert data['data']['missing_both'] == 0
+        assert data['data']['total_missing'] == 0
+        assert data['data']['items'] == []
+
+    def test_produced_tried_quadrants_only_untried_unproduced_bucketed(self, client, tmp_path, monkeypatch):
+        """produced x tried 2x2 矩陣：僅 (False,False) 進桶，其餘三象限早退（TASK-89b-T4）"""
+        from unittest.mock import patch
+        from core.database import Video
+        from core.path_utils import to_file_uri
+        out_dir = to_file_uri(str(tmp_path / "out"))
+        videos = [
+            # (produced=True, tried=True) -> excluded
+            Video(path=to_file_uri(str(tmp_path / "a.mp4")), number="AAA-001",
+                  cover_path="", nfo_mtime=0.0,
+                  output_dir=out_dir, scrape_attempted_at=111.0),
+            # (produced=True, tried=False) -> excluded
+            Video(path=to_file_uri(str(tmp_path / "b.mp4")), number="BBB-002",
+                  cover_path="", nfo_mtime=0.0,
+                  output_dir=out_dir, scrape_attempted_at=0.0),
+            # (produced=False, tried=True) -> excluded
+            Video(path=to_file_uri(str(tmp_path / "c.mp4")), number="CCC-003",
+                  cover_path="", nfo_mtime=0.0,
+                  output_dir="", scrape_attempted_at=222.0),
+            # (produced=False, tried=False) -> bucketed (missing_nfo, has cover)
+            Video(path=to_file_uri(str(tmp_path / "d.mp4")), number="DDD-004",
+                  cover_path="/covers/d.jpg", nfo_mtime=0.0,
+                  output_dir="", scrape_attempted_at=0.0),
+        ]
+        db_path = self._make_db(tmp_path, videos)
+        with patch('web.routers.scanner.get_db_path', return_value=db_path):
+            resp = client.get('/api/gallery/missing-check')
+        data = resp.json()
+        assert data['success'] is True
+        assert data['data']['missing_nfo'] == 1
+        assert data['data']['missing_both'] == 0
+        assert data['data']['missing_cover'] == 0
+        assert data['data']['total_missing'] == 1
+        assert len(data['data']['items']) == 1
+        assert data['data']['items'][0]['number'] == 'DDD-004'
+
 
 class TestScannerGenerateLongPathsField:
     """spec-48a §a5 契約 3 — /api/gallery/generate SSE done event 必須含 long_paths key"""

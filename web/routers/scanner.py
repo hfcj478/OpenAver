@@ -798,6 +798,10 @@ def check_missing():
         for v in all_videos:
             has_nfo = (v.nfo_mtime or 0) > 0
             has_cover = bool(v.cover_path)
+            produced = bool(v.output_dir)
+            tried = (v.scrape_attempted_at or 0) > 0
+            if produced or tried:
+                continue
             if has_nfo and has_cover:
                 continue
             if not v.number:  # skip videos without number (cannot enrich)
