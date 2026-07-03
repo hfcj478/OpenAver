@@ -36,6 +36,7 @@ class Video:
     release_date: str = ""
     mtime: float = 0.0
     nfo_mtime: float = 0.0
+    scrape_attempted_at: float = 0.0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -225,6 +226,39 @@ class VideoRepository:
             cursor.execute("SELECT id FROM videos WHERE path = ?", (video.path,))
             row = cursor.fetchone()
             return row[0] if row else 0
+        finally:
+            conn.close()
+
+    def insert_if_ignore(self, video: Video) -> bool:
+        """新增影片，path 已存在時不覆蓋任何既有欄位（TASK-89b-T1）。
+
+        鏡射 upsert() 的動態欄位建構，但改用 ON CONFLICT(path) DO NOTHING——
+        不建 update_parts / DO UPDATE 分支。不呼叫 SimilarRankerCache.invalidate()
+        （placeholder row 不影響相似度排序特徵，見 plan-89b.md T1 現況分析 §2）。
+
+        Returns:
+            bool: True 表示實際插入新 row；False 表示 path 已存在、未動任何欄位。
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            video_dict = video.to_dict()
+            video_dict.pop('id', None)
+            video_dict.pop('created_at', None)
+            video_dict.pop('updated_at', None)
+
+            columns = list(video_dict.keys())
+            placeholders = ', '.join(['?'] * len(columns))
+
+            sql = f"""
+                INSERT INTO videos ({', '.join(columns)})
+                VALUES ({placeholders})
+                ON CONFLICT(path) DO NOTHING
+            """
+
+            cursor.execute(sql, list(video_dict.values()))
+            conn.commit()
+            return cursor.rowcount > 0
         finally:
             conn.close()
 
@@ -585,6 +619,23 @@ class VideoRepository:
         finally:
             conn.close()
 
+    def get_attempted_index(self) -> dict:
+        """取得 {path: scrape_attempted_at} 索引，供 T3 `_should_skip` 冷啟動判斷用（TASK-89b-T1）。
+
+        Additive read-only method，鏡射 get_cover_index() shape。SELECT 不加 WHERE，
+        含 scrape_attempted_at == 0 的 row（不過濾）——呼叫端用 `.get(path, 0) > 0`
+        統一判斷「從未試過」（key 不存在或值為 0 皆視為未試過）。
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("SELECT path, scrape_attempted_at FROM videos")
+            rows = cursor.fetchall()
+            return {row[0]: row[1] for row in rows}
+        finally:
+            conn.close()
+
     def delete_by_paths(self, paths: List[str]) -> int:
         """批次刪除
 
@@ -875,6 +926,31 @@ class VideoRepository:
             cursor.execute(
                 "UPDATE videos SET user_tags = ?, updated_at = CURRENT_TIMESTAMP WHERE path = ?",
                 (json.dumps(user_tags, ensure_ascii=False), path)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def update_scrape_attempted_at(self, path: str, ts: float) -> bool:
+        """安全更新 scrape_attempted_at 欄位（不碰其他欄位）（TASK-89b-T1）。
+
+        鏡射 update_user_tags() 的單欄安全更新範本。ts 由呼叫端（T2 producer/enricher）
+        傳入 time.time()，本方法不自行取時間（保持純寫入語意，供單元測試可控時間值）。
+
+        Args:
+            path: 影片路徑（DB key，file:/// URI 格式）
+            ts: 新的 scrape_attempted_at 值（Unix float 時間戳）
+
+        Returns:
+            bool: 是否成功更新（path 不存在 → False，不拋例外、不新建 row）
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE videos SET scrape_attempted_at = ?, updated_at = CURRENT_TIMESTAMP WHERE path = ?",
+                (ts, path)
             )
             conn.commit()
             return cursor.rowcount > 0

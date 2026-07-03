@@ -401,6 +401,107 @@ class TestOutputDirProtectionAndOccupancy:
         ) is False
 
 
+class TestScrapeAttemptedAtRepositoryMethods:
+    """TASK-89b-T1: update_scrape_attempted_at / get_attempted_index / insert_if_ignore"""
+
+    # ── update_scrape_attempted_at ──────────────────────────────────────────
+
+    def test_update_scrape_attempted_at_updates_only_that_field(self, temp_db):
+        """只改 scrape_attempted_at 與 updated_at，其餘欄位不變"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/video1.mp4")
+        repo.upsert(Video(
+            path=path, title="影片1", cover_path=to_file_uri("/out/v1.jpg"),
+            user_tags=["tagA"], output_dir=to_file_uri("/produced/ABC-001"),
+        ))
+
+        ok = repo.update_scrape_attempted_at(path, 1717171717.0)
+
+        assert ok is True
+        result = repo.get_by_path(path)
+        assert result.scrape_attempted_at == 1717171717.0
+        assert result.cover_path == to_file_uri("/out/v1.jpg")
+        assert result.user_tags == ["tagA"]
+        assert result.output_dir == to_file_uri("/produced/ABC-001")
+
+    def test_update_scrape_attempted_at_path_not_exist_returns_false(self, temp_db):
+        """path 不存在 → 回傳 False，不拋例外、不新建 row"""
+        repo = VideoRepository(temp_db)
+        ok = repo.update_scrape_attempted_at(to_file_uri("/nope.mp4"), 123.0)
+
+        assert ok is False
+        assert repo.count() == 0
+
+    # ── get_attempted_index ──────────────────────────────────────────────────
+
+    def test_get_attempted_index_empty(self, temp_db):
+        """空表回傳 {}"""
+        repo = VideoRepository(temp_db)
+        assert repo.get_attempted_index() == {}
+
+    def test_get_attempted_index_includes_zero_value_rows(self, temp_db):
+        """含 scrape_attempted_at == 0 的 row（不過濾）"""
+        repo = VideoRepository(temp_db)
+        repo.upsert_batch([
+            Video(path=to_file_uri("/video1.mp4"), scrape_attempted_at=0.0),
+            Video(path=to_file_uri("/video2.mp4"), scrape_attempted_at=999.0),
+        ])
+
+        index = repo.get_attempted_index()
+
+        assert len(index) == 2
+        assert index[to_file_uri("/video1.mp4")] == 0.0
+        assert index[to_file_uri("/video2.mp4")] == 999.0
+
+    # ── insert_if_ignore ──────────────────────────────────────────────────────
+
+    def test_insert_if_ignore_new_path_inserts_and_returns_true(self, temp_db):
+        """path 不存在 → 新建一筆並回傳 True"""
+        repo = VideoRepository(temp_db)
+        video = Video(path=to_file_uri("/new.mp4"), number="NEW-001", title="新片")
+
+        ok = repo.insert_if_ignore(video)
+
+        assert ok is True
+        result = repo.get_by_path(to_file_uri("/new.mp4"))
+        assert result is not None
+        assert result.number == "NEW-001"
+
+    def test_insert_if_ignore_existing_path_does_not_overwrite_returns_false(self, temp_db):
+        """path 已存在 → 不覆蓋任何既有欄位（含 cover_path/user_tags/output_dir）並回傳 False"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/video1.mp4")
+        repo.upsert(Video(
+            path=path, title="既有影片", cover_path=to_file_uri("/out/v1.jpg"),
+            user_tags=["existing_tag"], output_dir=to_file_uri("/produced/EXIST-001"),
+        ))
+
+        conflicting = Video(
+            path=path, title="嘗試覆蓋", cover_path=to_file_uri("/out/OTHER.jpg"),
+            user_tags=["new_tag"], output_dir=to_file_uri("/produced/OTHER-999"),
+        )
+        ok = repo.insert_if_ignore(conflicting)
+
+        assert ok is False
+        result = repo.get_by_path(path)
+        assert result.title == "既有影片"
+        assert result.cover_path == to_file_uri("/out/v1.jpg")
+        assert result.user_tags == ["existing_tag"]
+        assert result.output_dir == to_file_uri("/produced/EXIST-001")
+
+    def test_insert_if_ignore_does_not_invalidate_ranker_cache(self, temp_db, monkeypatch):
+        """不呼叫 SimilarRankerCache.invalidate()（明確排除，見 T1 現況分析 §2）"""
+        from core.similar.ranker_cache import SimilarRankerCache
+
+        calls = []
+        monkeypatch.setattr(SimilarRankerCache, "invalidate", classmethod(lambda cls: calls.append(1)))
+
+        repo = VideoRepository(temp_db)
+        repo.insert_if_ignore(Video(path=to_file_uri("/new2.mp4"), title="新片2"))
+
+        assert calls == []
+
+
 class TestMigrateJsonToSqlite:
     """migrate_json_to_sqlite 測試"""
 
