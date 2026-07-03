@@ -345,6 +345,12 @@ class VideoRepository:
             for col, val in video_dict.items():
                 if col == 'user_tags':
                     continue  # handled separately
+                elif col == 'output_dir' and not val:
+                    # incoming output_dir 空 → 保留既有值（不寫入），與 upsert() CASE-WHEN 對稱
+                    continue
+                elif col == 'scrape_attempted_at' and not val:
+                    # incoming scrape_attempted_at 為 0 → 保留既有值（不寫入），與 upsert() CASE-WHEN 對稱
+                    continue
                 set_parts.append(f"{col} = ?")
                 set_values.append(val)
 
@@ -439,6 +445,18 @@ class VideoRepository:
                 update_parts.append(
                     "user_tags = CASE WHEN excluded.user_tags = '[]' "
                     "THEN videos.user_tags ELSE excluded.user_tags END"
+                )
+            elif col == 'output_dir':
+                # output_dir = '' 時視同「不更新」，保留 DB 現有值（與 upsert() 對稱，Codex P2 修正）
+                update_parts.append(
+                    "output_dir = CASE WHEN excluded.output_dir = '' "
+                    "THEN videos.output_dir ELSE excluded.output_dir END"
+                )
+            elif col == 'scrape_attempted_at':
+                # scrape_attempted_at = 0 時視同「不更新」，保留 DB 現有值（與 upsert() 對稱，Codex P2 修正）
+                update_parts.append(
+                    "scrape_attempted_at = CASE WHEN excluded.scrape_attempted_at = 0 "
+                    "THEN videos.scrape_attempted_at ELSE excluded.scrape_attempted_at END"
                 )
             else:
                 update_parts.append(f"{col} = excluded.{col}")
