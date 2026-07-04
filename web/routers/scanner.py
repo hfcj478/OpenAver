@@ -29,7 +29,7 @@ import requests
 from datetime import datetime
 from urllib.parse import unquote, quote
 from pathlib import Path
-from typing import Any, Dict, Generator, List
+from typing import Any, Callable, Dict, Generator, List, Optional
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse, HTMLResponse, Response, FileResponse, JSONResponse
@@ -243,7 +243,7 @@ def _yield_source_summary(result) -> Generator[str, None, None]:
             })
 
 
-def _run_readonly_source(src, config, repo, proxy_url, summary, reachable: bool = True) -> Generator[str, None, None]:
+def _run_readonly_source(src, config, repo, proxy_url, summary, reachable: bool = True, should_abort: Optional[Callable[[], bool]] = None) -> Generator[str, None, None]:
     """在 daemon worker thread 跑 produce_source，drain 無界 queue 逐片 yield SSE。
 
     worker 例外（含 produce_source 迴圈前的 normalize/列檔/DB 拋錯，未被 producer
@@ -259,7 +259,7 @@ def _run_readonly_source(src, config, repo, proxy_url, summary, reachable: bool 
             box['result'] = produce_source(
                 src, config, repo, proxy_url=proxy_url,
                 on_progress=q.put,
-                should_abort=None,
+                should_abort=should_abort,
                 reachable=reachable,
             )
         except Exception:
@@ -290,7 +290,7 @@ def _run_readonly_source(src, config, repo, proxy_url, summary, reachable: bool 
         yield from _yield_source_summary(result)
 
 
-def generate_avlist() -> Generator[str, None, None]:
+def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Generator[str, None, None]:
     """產生影片列表（SSE 串流）- 使用 SQLite 儲存"""
 
     try:
@@ -374,7 +374,7 @@ def generate_avlist() -> Generator[str, None, None]:
                 # 檢查）。src.path 是 config 原始輸入，不套 reverse_path_mapping
                 # （比照 :353/:96 既定作法，見 TASK-89b-T5 現況分析 #5）。
                 reachable = os.path.exists(uri_to_fs_path(src.path))
-                yield from _run_readonly_source(src, config, repo, proxy_url, readonly_summary, reachable)
+                yield from _run_readonly_source(src, config, repo, proxy_url, readonly_summary, reachable, should_abort=should_abort)
                 continue
 
             # 轉換路徑格式 (Windows -> WSL)。directory 可能是 FS 路徑或 file:/// URI
@@ -762,7 +762,7 @@ async def generate(request: Request):
             pass
 
     response = StreamingResponse(
-        generate_avlist(),
+        generate_avlist(should_abort=cancel_event.is_set),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -1,5 +1,6 @@
 import pytest
 import os
+import threading
 from pathlib import Path
 from urllib.parse import quote
 from core.path_utils import to_file_uri
@@ -1289,7 +1290,31 @@ class TestGenerateReadonlyBridge:
         assert isinstance(call.args[2], VideoRepository)
         # proxy_url kwarg 正確傳入
         assert call.kwargs["proxy_url"] == "http://proxy:8080"
-        assert call.kwargs["should_abort"] is None
+        # TASK-90b-T3: production 路徑（真的 client.get 打 /api/gallery/generate handler）
+        # 現在會傳入 handler 建立的 cancel_event.is_set（bound method），不再是寫死的 None——
+        # 斷言它是 callable 且確實是 threading.Event 的 is_set bound method，而非零參數
+        # 直呼 generate_avlist() 時才會拿到的 None 預設值。
+        should_abort = call.kwargs["should_abort"]
+        assert callable(should_abort)
+        assert should_abort.__func__ is threading.Event.is_set
+        assert should_abort() is False
+
+    # 1b. TASK-90b-T3 wiring：should_abort 從 generate_avlist 直呼一路轉發到 produce_source，
+    # 中間不包 lambda，用 `is` 斷言身分一致（非包裝出的新 callable）。
+    def test_should_abort_forwarded_by_identity_to_produce_source(self, tmp_path, monkeypatch, mocker):
+        from web.routers.scanner import generate_avlist
+
+        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mock_ps = mocker.patch("web.routers.scanner.produce_source",
+                               return_value=self._result(tmp_path))
+
+        fake_should_abort = lambda: False  # noqa: E731 - 身分識別用，非真正 abort 邏輯
+        list(generate_avlist(should_abort=fake_should_abort))
+
+        assert mock_ps.call_count == 1
+        received = mock_ps.call_args.kwargs["should_abort"]
+        assert received is fake_should_abort
 
     # 2. 分流互斥（反向）：非 readonly → produce_source 未被呼叫
     def test_non_readonly_does_not_call_produce_source(self, client, tmp_path, monkeypatch, mocker):
