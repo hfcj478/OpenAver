@@ -392,7 +392,17 @@
       "external_manager_emby_hint": "另存 `{番號}-poster.jpg`／`{番號}-fanart.jpg` 並補上 NFO 辨識欄位；多段（cd1／cd2／part1）自動合併；整理後保留檔名 VR 投影標記（供 DeoVR 等頭顯 App 辨識）。注意：Emby 讀海報與 NFO，但不認 `{番號}-fanart.jpg` 背景圖命名（fanart 在 Emby 不顯示，Jellyfin／Kodi 正常）。",
       "external_manager_kodi_hint": "另存 `{番號}-poster.jpg`／`{番號}-fanart.jpg`（Kodi 各種資料夾結構都辨識），並補上 NFO 辨識欄位；cd1／cd2／part1 多段自動合併。",
       "download_sample_images_label": "下載劇照",
-      "download_sample_images_hint": "整理時自動下載劇照至 extrafanart/ 子目錄（需啟用「建立資料夾」）"
+      "download_sample_images_hint": "整理時自動下載劇照至 extrafanart/ 子目錄（需啟用「建立資料夾」）",
+      "strm_mapping": {
+        "title": "播放端路徑替換",
+        "intro": "當 Emby／Jellyfin 在另一台機器、看到的來源路徑與本機不同時，用這些規則把「本機掃描前綴」替換成「播放端前綴」。沒有規則時 strm 直接寫本機路徑。",
+        "local_placeholder": "本機前綴（例：Z:\\115）",
+        "remote_placeholder": "播放端前綴（例：/volume1/movie）",
+        "add_rule": "新增規則",
+        "remove": "刪除規則",
+        "template_hint": "以下為唯讀來源的本機掃描路徑參考範本，請對齊產生時實際掃到的路徑前綴（WSL 等環境顯示形可能有落差）：",
+        "template_use": "填入左欄"
+      }
     },
     "gallery": {
       "output_dir_label": "輸出目錄",

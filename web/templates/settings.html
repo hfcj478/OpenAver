@@ -762,6 +762,52 @@
                         </div>
                     </div>
 
+                    <!-- strm 路徑映射（spec 90a）— media-server 風味才顯示；與 external_manager 同層並列 -->
+                    <div class="settings-form-row"
+                         x-show="['jellyfin','emby','kodi'].includes(form.externalManager)">
+                        <label class="row-label">
+                            {{ t('settings.scraper.strm_mapping.title') }}
+                            <small class="settings-hint">{{ t('settings.scraper.strm_mapping.intro') }}</small>
+                        </label>
+                        <div class="flex-1 flex flex-col gap-2">
+                            <!-- 規則列：本機前綴 → 播放端前綴 + 刪除 -->
+                            <template x-for="(rule, idx) in form.strmRules" :key="idx">
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <input type="text" class="input input-bordered input-sm flex-1 min-w-0"
+                                           x-model="rule.local"
+                                           :placeholder="window.t('settings.scraper.strm_mapping.local_placeholder')">
+                                    <span class="text-base-content/50" aria-hidden="true">→</span>
+                                    <input type="text" class="input input-bordered input-sm flex-1 min-w-0"
+                                           x-model="rule.remote"
+                                           :placeholder="window.t('settings.scraper.strm_mapping.remote_placeholder')">
+                                    <button class="btn btn-xs btn-outline" type="button"
+                                            @click="removeStrmRule(idx)"
+                                            :aria-label="window.t('settings.scraper.strm_mapping.remove')">&times;</button>
+                                </div>
+                            </template>
+                            <!-- 新增規則 -->
+                            <div>
+                                <button class="btn btn-xs btn-outline" type="button" @click="addStrmRule()">
+                                    + <span x-text="window.t('settings.scraper.strm_mapping.add_rule')"></span>
+                                </button>
+                            </div>
+                            <!-- 範本回顯：唯讀 media-server 來源的掃描路徑（顯示形，可預填左欄）-->
+                            <template x-if="strmTemplateDirs.length">
+                                <div class="flex flex-col gap-1">
+                                    <small class="settings-hint">{{ t('settings.scraper.strm_mapping.template_hint') }}</small>
+                                    <template x-for="tpl in strmTemplateDirs" :key="tpl">
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                            <code class="text-xs flex-1 min-w-0 break-all" x-text="tpl"></code>
+                                            <button class="btn btn-xs btn-outline" type="button"
+                                                    @click="useTemplate(tpl)"
+                                                    x-text="window.t('settings.scraper.strm_mapping.template_use')"></button>
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
                     <!-- 進階刮削摺疊（實填既有欄位）；x-collapse 需 @alpinejs/collapse plugin，已在 base.html 載入 -->
                     <button class="collapsible-trigger" type="button" @click="scraperAdvanced = !scraperAdvanced"
                             :aria-expanded="scraperAdvanced.toString()">

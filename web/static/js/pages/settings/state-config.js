@@ -33,7 +33,7 @@ export function stateConfig() {
             suffixKeywords: [],
             externalManager: 'off',
             downloadSampleImages: false,
-            strmPathMappings: {},
+            strmRules: [],   // strm 路徑映射編輯狀態（array of {local, remote}）；load/save 兩端與 dict 對稱轉換
 
             // Gallery
             avlistMode: 'image',
@@ -529,7 +529,9 @@ export function stateConfig() {
                     this.form.suffixKeywords = config.scraper?.suffix_keywords || ['-cd1', '-cd2', '-4k', '-uc'];
                     this.form.externalManager = config.scraper?.external_manager || 'off';
                     this.form.downloadSampleImages = config.scraper?.download_sample_images || false;
-                    this.form.strmPathMappings = config.scraper?.strm_path_mappings || {};
+                    // strm 路徑映射：dict → array（唯一編輯狀態）
+                    this.form.strmRules = Object.entries(config.scraper?.strm_path_mappings || {})
+                        .map(([local, remote]) => ({ local, remote }));
 
                     // Gallery
                     this.form.avlistMode = config.gallery?.default_mode || 'image';
@@ -690,7 +692,12 @@ export function stateConfig() {
                     suffix_keywords: this.form.suffixKeywords,
                     external_manager: this.form.externalManager,
                     download_sample_images: this.form.downloadSampleImages,
-                    strm_path_mappings: this.form.strmPathMappings,
+                    // strm 路徑映射：array → dict；空 local 行丟棄，local/remote 皆 trim（去貼上殘留空白）
+                    strm_path_mappings: Object.fromEntries(
+                        this.form.strmRules
+                            .filter(r => r.local.trim())
+                            .map(r => [r.local.trim(), (r.remote || '').trim()])
+                    ),
                 };
 
                 // 更新 search
@@ -941,6 +948,37 @@ export function stateConfig() {
 
         removeSuffix(idx) {
             this.form.suffixKeywords.splice(idx, 1);
+        },
+
+        // ═══════════════════════════════════════════════════════════════
+        // strm 路徑映射（spec 90a）— array 短狀態編輯器，dict 於 load/save 對稱轉換
+        // ═══════════════════════════════════════════════════════════════
+
+        // 範本回顯：唯讀 media-server 來源的掃描路徑（顯示形，可預填左欄）。
+        // scannerDirectories 由 state-ui.js _initB1() 載入；dirPath / window.pathToDisplay 為既有共用純函式。
+        get strmTemplateDirs() {
+            return (this.scannerDirectories || [])
+                .filter(d => d && d.readonly === true)
+                .map(d => window.pathToDisplay(this.dirPath(d)))
+                .filter(p => p);
+        },
+
+        addStrmRule() {
+            this.form.strmRules.push({ local: '', remote: '' });
+        },
+
+        removeStrmRule(idx) {
+            this.form.strmRules.splice(idx, 1);
+        },
+
+        // 範本「填入左欄」：填最近的空 local 行，否則 push 新行
+        useTemplate(pathStr) {
+            const empty = this.form.strmRules.find(r => !r.local.trim());
+            if (empty) {
+                empty.local = pathStr;
+            } else {
+                this.form.strmRules.push({ local: pathStr, remote: '' });
+            }
         },
 
         // ═══════════════════════════════════════════════════════════════

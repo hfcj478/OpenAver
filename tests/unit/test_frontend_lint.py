@@ -515,6 +515,52 @@ SETTINGS_UI_JS        = Path(__file__).parent.parent.parent / "web" / "static" /
 SEARCH_FILE_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "file.js"
 
 
+class TestStrmMappingGuard:
+    """TASK-90a-T4: strm 路徑映射 CRUD 編輯器結構守衛（string-contains 靜態守衛）"""
+
+    def _settings(self):
+        return SETTINGS_HTML.read_text(encoding="utf-8")
+
+    def _config_js(self):
+        return SETTINGS_CONFIG_JS.read_text(encoding="utf-8")
+
+    def test_settings_html_has_editor(self):
+        """settings.html 含 strmRules x-for row 編輯器 + 兩欄 x-model + media-server 風味 gating"""
+        html = self._settings()
+        assert 'x-for="(rule, idx) in form.strmRules"' in html, \
+            "settings.html missing strmRules x-for row 編輯器"
+        assert 'x-model="rule.local"' in html, \
+            "settings.html missing x-model=\"rule.local\"（本機前綴欄）"
+        assert 'x-model="rule.remote"' in html, \
+            "settings.html missing x-model=\"rule.remote\"（播放端前綴欄）"
+        # 風味 gating：至少含一個 media-server 值（jellyfin）於 x-show
+        assert "['jellyfin','emby','kodi'].includes(form.externalManager)" in html, \
+            "settings.html missing media-server 風味 x-show gating（jellyfin/emby/kodi）"
+        assert '@click="addStrmRule()"' in html, \
+            "settings.html missing 新增規則 @click=\"addStrmRule()\""
+        assert '@click="removeStrmRule(idx)"' in html, \
+            "settings.html missing 刪除 @click=\"removeStrmRule(idx)\""
+
+    def test_config_js_has_methods_and_conversion(self):
+        """state-config.js 含 addStrmRule/removeStrmRule + array→dict Object.fromEntries 寫入"""
+        js = self._config_js()
+        assert "addStrmRule()" in js, "state-config.js missing addStrmRule()"
+        assert "removeStrmRule(idx)" in js, "state-config.js missing removeStrmRule(idx)"
+        # array→dict 序列化錨點
+        assert "Object.fromEntries(" in js, \
+            "state-config.js missing array→dict Object.fromEntries 轉換"
+        assert "strm_path_mappings:" in js, \
+            "state-config.js missing strm_path_mappings 寫入 payload"
+        # 範本回顯 getter
+        assert "strmTemplateDirs" in js, "state-config.js missing strmTemplateDirs getter"
+
+    def test_config_js_no_dict_passthrough(self):
+        """已移除 form.strmPathMappings dict 雙來源（避免 load/save 雙來源 dirty 混淆）"""
+        js = self._config_js()
+        assert "strmPathMappings" not in js, \
+            "state-config.js 仍殘留 strmPathMappings dict passthrough，應改為 strmRules array 單一來源"
+
+
 class TestBatchIntervalGuard:
     """T1(40b): 守衛 batch/translate checkInterval 具名 ref + cleanupForNavigation 明確清理"""
 
