@@ -33,6 +33,7 @@ export function stateConfig() {
             suffixKeywords: [],
             externalManager: 'off',
             downloadSampleImages: false,
+            strmPathMappings: {},
 
             // Gallery
             avlistMode: 'image',
@@ -528,6 +529,7 @@ export function stateConfig() {
                     this.form.suffixKeywords = config.scraper?.suffix_keywords || ['-cd1', '-cd2', '-4k', '-uc'];
                     this.form.externalManager = config.scraper?.external_manager || 'off';
                     this.form.downloadSampleImages = config.scraper?.download_sample_images || false;
+                    this.form.strmPathMappings = config.scraper?.strm_path_mappings || {};
 
                     // Gallery
                     this.form.avlistMode = config.gallery?.default_mode || 'image';
@@ -688,6 +690,7 @@ export function stateConfig() {
                     suffix_keywords: this.form.suffixKeywords,
                     external_manager: this.form.externalManager,
                     download_sample_images: this.form.downloadSampleImages,
+                    strm_path_mappings: this.form.strmPathMappings,
                 };
 
                 // 更新 search

@@ -13,7 +13,7 @@ import os
 import tempfile
 import threading
 from pathlib import Path
-from typing import Callable, Literal, Optional, List
+from typing import Callable, Dict, Literal, Optional, List
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -58,6 +58,7 @@ class ScraperConfig(BaseModel):
     jellyfin_mode: bool = False
     external_manager: Literal["off", "jellyfin", "emby", "kodi"] = "off"
     download_sample_images: bool = False
+    strm_path_mappings: Dict[str, str] = {}
 
 
 class SearchConfig(BaseModel):
@@ -355,6 +356,12 @@ def _load_config_unlocked() -> dict:
         s = raw_config.get('scraper', {})
         if 'download_sample_images' not in s:
             s['download_sample_images'] = False
+            need_save = True
+
+        # 確保 scraper.strm_path_mappings 存在（TASK-90a-T2：strm 路徑映射表）
+        s = raw_config.get('scraper', {})
+        if 'strm_path_mappings' not in s:
+            s['strm_path_mappings'] = {}
             need_save = True
 
         # Migration: source_links 區段新增 + 深層合併保證（T18b-pre）

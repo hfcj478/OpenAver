@@ -1501,3 +1501,75 @@ class TestMigrationDirectoriesToObject:
         assert result["gallery"]["directories"] == [
             {"path": "/x", "readonly": False, "output_path": ""}
         ]
+
+
+# ============ TASK-90a-T2：scraper.strm_path_mappings schema + additive migration ============
+
+class TestScraperStrmPathMappings:
+    """ScraperConfig.strm_path_mappings: Dict[str,str] = {} + load_config additive migration（TASK-90a-T2）"""
+
+    def test_schema_construct_with_mappings(self):
+        """ScraperConfig(strm_path_mappings={...}) 建構正常，值保留"""
+        from core.config import ScraperConfig
+        cfg = ScraperConfig(strm_path_mappings={"Z:\\115\\": "/vol/"})
+        assert cfg.strm_path_mappings == {"Z:\\115\\": "/vol/"}
+
+    def test_schema_default_empty_dict(self):
+        """fresh ScraperConfig → strm_path_mappings 預設空 dict"""
+        from core.config import ScraperConfig
+        cfg = ScraperConfig()
+        assert cfg.strm_path_mappings == {}
+
+    def test_migration_added_when_missing(self, tmp_path, monkeypatch):
+        """舊 config scraper 段無 strm_path_mappings → migration 補空 dict，不 raise"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"scraper": {"create_folder": True, "external_manager": "off"}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert result["scraper"]["strm_path_mappings"] == {}
+
+    def test_migration_when_scraper_section_absent(self, tmp_path, monkeypatch):
+        """極舊 config 完全無 scraper 段 → migration 不 raise，仍能安全載入"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"general": {"theme": "dark"}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        # scraper 段缺失時 raw_config.get('scraper', {}) 為 in-place 空 dict，
+        # 補值不寫回原 config（比照 download_sample_images 對缺段的處理）；關鍵是不 raise。
+        assert result.get("scraper", {}).get("strm_path_mappings", {}) == {}
+
+    def test_migration_not_overwrite_existing(self, tmp_path, monkeypatch):
+        """已含 strm_path_mappings 有值 → migration 不覆寫，保留原值"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {
+            "scraper": {"strm_path_mappings": {"Z:\\115\\": "/vol/"}}
+        })
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert result["scraper"]["strm_path_mappings"] == {"Z:\\115\\": "/vol/"}
+
+    def test_put_roundtrip_preserves_mappings(self, tmp_path, monkeypatch):
+        """整份 config（含 strm_path_mappings）經 AppConfig model_dump round-trip 後值不變（模擬 PUT 路徑）"""
+        from core.config import AppConfig
+        config_path = tmp_path / "config.json"
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        cfg = AppConfig().model_dump()
+        cfg["scraper"]["strm_path_mappings"] = {"Z:\\115\\": "/vol/"}
+        # 模擬 PUT: AppConfig(**payload).model_dump() → save_config → load_config
+        payload = AppConfig(**cfg).model_dump()
+        assert payload["scraper"]["strm_path_mappings"] == {"Z:\\115\\": "/vol/"}
+        save_config(payload)
+
+        reloaded = load_config()
+        assert reloaded["scraper"]["strm_path_mappings"] == {"Z:\\115\\": "/vol/"}
