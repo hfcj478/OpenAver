@@ -2784,3 +2784,245 @@ class TestWriteMovieAssetsStrmDrift:
 
         assert (d / 'TEST-001 Title A.strm').exists(), \
             "old strm must survive when this run's strm write failed (has_strm False)"
+
+
+# ---------------------------------------------------------------------------
+# TASK-90a-T6: media-server strm 整合驗收 (spec-90 §90a.4 acceptance 1/2/7 + regression)
+#
+# End-to-end through the REAL produce_source path: real main loop, real
+# _resolve_movie_dir (folder allocation), real _write_movie_assets + _write_strm
+# (real file writes), real _upsert_db (captured via repo.upsert), real to_file_uri /
+# extract_number / _format_data. Only the external scrape (search_jav) and image I/O
+# (download_image / generate_jellyfin_images / generate_nfo) are mocked — the same
+# boundary every existing e2e test uses. _list_source_videos is patched to return
+# file_info dicts pointing at REAL files under the tmp source dir, so the zero-write
+# acceptance (7) is still real: the true _write_movie_assets(fi["path"], ...) runs
+# against the real source path.
+#
+# Acceptance 3 (Emby/Jellyfin live scan) is inherently manual — see the TASK card's
+# manual checklist; it has no pure-automation form here.
+# ---------------------------------------------------------------------------
+
+
+def _e2e_search_jav_factory():
+    """Return a search_jav stub yielding per-number meta (cover + 1 sample)."""
+    def fake_search_jav(number, source="auto", proxy_url=""):
+        return {
+            'number': number,
+            'title': f'Title {number}',
+            'cover': f'https://example.com/{number}/cover.jpg',
+            'actors': ['Actress A'],
+            'tags': ['tag1'],
+            'date': '2024-01-01',
+            'maker': 'Maker',
+            'director': 'Director',
+            'series': 'Series',
+            'label': 'Label',
+            'sample_images': [f'https://example.com/{number}/s1.jpg'],
+            'duration': 120,
+            '_summary': 'summary',
+            '_rating': 8.0,
+            'url': f'https://example.com/{number}',
+        }
+    return fake_search_jav
+
+
+def _e2e_run_produce_source(source_dir, output_dir, config, filenames):
+    """Run the REAL produce_source against real source files in source_dir.
+
+    Returns (result, repo). repo is a MagicMock whose .upsert captured the Video
+    rows. _list_source_videos is patched to return file_info dicts for the real
+    files (so _write_movie_assets/_write_strm run against the real source paths).
+    """
+    from core.readonly_producer import produce_source
+
+    source = _make_source(
+        readonly=True,
+        output_path=str(output_dir),
+        path=str(source_dir),
+    )
+    repo = MagicMock()
+    repo.get_attempted_index.return_value = {}
+    repo.get_by_path.return_value = None
+    repo.is_output_dir_taken.return_value = False  # else _resolve_movie_dir loops forever
+    repo.get_all.return_value = []
+
+    files = [
+        {'path': str(source_dir / fn), 'size': 1_000_000, 'mtime': 1.0, 'nfo_mtime': 0.0}
+        for fn in filenames
+    ]
+
+    with patch('core.readonly_producer._list_source_videos', return_value=files), \
+         patch('core.readonly_producer.search_jav', side_effect=_e2e_search_jav_factory()), \
+         patch('core.readonly_producer.download_image', side_effect=_t4_real_download), \
+         patch('core.readonly_producer.generate_jellyfin_images', side_effect=_t4_real_jellyfin), \
+         patch('core.readonly_producer.generate_nfo', side_effect=_t4_real_nfo):
+        result = produce_source(source, config, repo)
+    return result, repo
+
+
+def _snapshot_dir(root: Path) -> set:
+    """Set of every path (files + dirs) under root, for before/after comparison."""
+    return {str(p) for p in root.rglob('*')}
+
+
+def _movie_dirs(output_dir: Path) -> list:
+    """The per-movie asset folders (parents of each written .nfo).
+
+    The producer nests each movie under folder layers (e.g. output/<num>/<num>/),
+    so the leaf asset folder is the parent of the .nfo, not an immediate subdir.
+    """
+    return sorted({p.parent for p in output_dir.rglob('*.nfo')})
+
+
+class TestProduceSourceMediaServerStrmE2E:
+    """spec-90 §90a.4 acceptance 1/2/7 + regression, end-to-end through produce_source."""
+
+    FILENAMES = ['SSIS-001.mp4', 'MIDE-002.mp4']
+
+    def _setup_source(self, tmp_path):
+        """Create a real read-only source dir with two real video files."""
+        source_dir = tmp_path / 'readonly-src'
+        source_dir.mkdir()
+        for fn in self.FILENAMES:
+            (source_dir / fn).write_bytes(b'FAKE-VIDEO-BYTES')
+        output_dir = tmp_path / 'output'
+        output_dir.mkdir()
+        return source_dir, output_dir
+
+    # -- Acceptance 1: every movie folder has strm + nfo + cover ------------------
+
+    def test_acceptance1_each_movie_dir_has_strm_nfo_cover(self, tmp_path):
+        source_dir, output_dir = self._setup_source(tmp_path)
+        config = _make_config(scraper_cfg=dict(_T3_BASE_CONFIG, external_manager='jellyfin'))
+
+        result, _repo = _e2e_run_produce_source(source_dir, output_dir, config, self.FILENAMES)
+
+        assert result.created == 2, f"expected 2 created, got {result.created} (failed={result.failed})"
+        dirs = _movie_dirs(output_dir)
+        assert len(dirs) == 2, f"expected 2 movie folders, got {[d.name for d in dirs]}"
+        for d in dirs:
+            strms = list(d.glob('*.strm'))
+            nfos = list(d.glob('*.nfo'))
+            covers = list(d.glob('*.jpg'))  # base .jpg + -poster.jpg + -fanart.jpg
+            assert len(strms) == 1, f"{d.name}: expected exactly 1 .strm, got {strms}"
+            assert len(nfos) == 1, f"{d.name}: expected exactly 1 .nfo, got {nfos}"
+            assert any(c.name.endswith('-poster.jpg') for c in covers), f"{d.name}: no poster"
+            assert any(c.name.endswith('-fanart.jpg') for c in covers), f"{d.name}: no fanart"
+            # the base cover (neither poster nor fanart) is present too
+            assert any(
+                not c.name.endswith('-poster.jpg') and not c.name.endswith('-fanart.jpg')
+                for c in covers
+            ), f"{d.name}: no base cover .jpg"
+
+    # -- Acceptance 2: strm content = mapped path (raw when no rule) --------------
+
+    def test_acceptance2_strm_content_no_mapping_is_raw_source_path(self, tmp_path):
+        source_dir, output_dir = self._setup_source(tmp_path)
+        # jellyfin flavour, NO mapping rule → strm = the raw source FS path.
+        config = _make_config(scraper_cfg=dict(_T3_BASE_CONFIG, external_manager='jellyfin'))
+
+        result, _repo = _e2e_run_produce_source(source_dir, output_dir, config, self.FILENAMES)
+
+        assert result.created == 2
+        strm_contents = {}
+        for d in _movie_dirs(output_dir):
+            strm = d.glob('*.strm').__next__()
+            raw = strm.read_bytes()
+            assert not raw.startswith(b'\xef\xbb\xbf'), "strm must not have a UTF-8 BOM"
+            content = strm.read_text(encoding='utf-8')
+            assert '\n' not in content, "strm must be a single line"
+            strm_contents[d.name] = content
+        # each strm points at the real source file's raw path (unchanged, un-normalized)
+        expected = {str(source_dir / fn) for fn in self.FILENAMES}
+        assert set(strm_contents.values()) == expected, (
+            f"strm contents {strm_contents} must equal raw source paths {expected}"
+        )
+
+    def test_acceptance2_strm_content_with_mapping_is_prefix_swapped(self, tmp_path):
+        source_dir, output_dir = self._setup_source(tmp_path)
+        # A mapping rule: local source root → playback-side /volume1 prefix.
+        config = _make_config(scraper_cfg=dict(
+            _T3_BASE_CONFIG,
+            external_manager='jellyfin',
+            strm_path_mappings={str(source_dir): '/volume1'},
+        ))
+
+        result, _repo = _e2e_run_produce_source(source_dir, output_dir, config, self.FILENAMES)
+
+        assert result.created == 2
+        contents = {d.glob('*.strm').__next__().read_text(encoding='utf-8')
+                    for d in _movie_dirs(output_dir)}
+        # prefix str(source_dir) swapped for /volume1, remainder appended verbatim,
+        # NOT normalized (CD-90a-6: bare Unix target survives on any host).
+        expected = {f'/volume1/{fn}' for fn in self.FILENAMES}
+        assert contents == expected, f"mapped strm contents {contents} != {expected}"
+
+    # -- Acceptance 7: zero writes into the read-only source dir ------------------
+
+    def test_acceptance7_readonly_source_zero_writes(self, tmp_path):
+        source_dir, output_dir = self._setup_source(tmp_path)
+        config = _make_config(scraper_cfg=dict(
+            _T3_BASE_CONFIG,
+            external_manager='jellyfin',
+            strm_path_mappings={str(source_dir): '/volume1'},
+        ))
+
+        before = _snapshot_dir(source_dir)
+        result, _repo = _e2e_run_produce_source(source_dir, output_dir, config, self.FILENAMES)
+        after = _snapshot_dir(source_dir)
+
+        assert result.created == 2, "sanity: run must actually produce (else zero-write is vacuous)"
+        assert before == after, (
+            f"read-only source dir was modified: added={after - before}, removed={before - after}"
+        )
+        # and the output actually got written (proves the run wrote SOMEWHERE, just not source)
+        assert _movie_dirs(output_dir), "output dir empty — run did not write assets anywhere"
+
+    # -- Regression: DB path = source path, strm does not touch streaming key -----
+
+    def test_regression_upsert_path_is_source_uri_not_output_or_strm(self, tmp_path):
+        source_dir, output_dir = self._setup_source(tmp_path)
+        config = _make_config(scraper_cfg=dict(
+            _T3_BASE_CONFIG,
+            external_manager='jellyfin',
+            strm_path_mappings={str(source_dir): '/volume1'},
+        ))
+
+        result, repo = _e2e_run_produce_source(source_dir, output_dir, config, self.FILENAMES)
+
+        assert result.created == 2
+        upserted = [call.args[0] for call in repo.upsert.call_args_list]
+        assert len(upserted) == 2, f"expected 2 upserts, got {len(upserted)}"
+        upserted_paths = {v.path for v in upserted}
+        # streaming key = the SOURCE file URI (spec §90a.2.2), never the output folder
+        # or the strm's mapped /volume1 target.
+        expected_paths = {to_file_uri(str(source_dir / fn)) for fn in self.FILENAMES}
+        assert upserted_paths == expected_paths, (
+            f"DB path {upserted_paths} must equal source URIs {expected_paths}"
+        )
+        for v in upserted:
+            assert str(output_dir) not in v.path, "DB path must not point into the output folder"
+            assert '/volume1' not in v.path, "DB path must not be the strm's mapped playback path"
+            # output_dir column DOES record where it was produced (that's fine, separate field)
+            assert v.output_dir, "output_dir column should be recorded (non-empty file:/// URI)"
+
+    # -- off comparison: media-server-only, off flavour writes NO strm -----------
+
+    def test_off_flavour_produces_no_strm(self, tmp_path):
+        source_dir, output_dir = self._setup_source(tmp_path)
+        config = _make_config(scraper_cfg=dict(_T3_BASE_CONFIG, external_manager='off'))
+
+        # off flavour's resolve_output_root ignores output_path and returns the fixed
+        # App lib root; patch it to the tmp output dir so the test never pollutes the
+        # real lib folder (resolve_output_root has its own dedicated tests).
+        with patch('core.readonly_producer.resolve_output_root', return_value=str(output_dir)):
+            result, _repo = _e2e_run_produce_source(source_dir, output_dir, config, self.FILENAMES)
+
+        assert result.created == 2, f"off run must still produce (created={result.created})"
+        dirs = _movie_dirs(output_dir)
+        assert len(dirs) == 2
+        for d in dirs:
+            assert not list(d.glob('*.strm')), f"off flavour must not write a .strm in {d.name}"
+            # but the off assets are still there (nfo + cover) — strm is the only delta
+            assert list(d.glob('*.nfo')), f"off flavour still writes nfo in {d.name}"
