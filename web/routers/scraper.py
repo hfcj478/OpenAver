@@ -76,6 +76,13 @@ class ScrapeResponse(BaseModel):
     nfo_path: Optional[str] = None
 
 
+# 唯讀來源 guard 的錯誤訊息（單一真理來源；sync helper 與 batch async loop 共用）。
+_READONLY_SOURCE_ERROR_MSG = (
+    "此來源路徑為唯讀（readonly），無法搬移或重新命名檔案。"
+    "請改用掃描頁『產生』生成本地媒體庫，或確認你對此路徑有寫入權限。"
+)
+
+
 def _readonly_source_error(file_path: str) -> Optional[dict]:
     """唯讀來源 guard：只依 file_path 判斷所屬來源是否唯讀（readonly）。
 
@@ -84,16 +91,16 @@ def _readonly_source_error(file_path: str) -> Optional[dict]:
     WSL/Linux 會拋 ValueError，而 UNC 正是 readonly 主場景）。coerce_to_file_uri 對「已是
     DB canonical file:/// URI」原樣回、對 FS path 才轉，避免 to_file_uri 雙重包成
     file:///file:/// 繞過 guard（Codex P1）。helper 自己讀 config（每次呼叫重判，安全側）。
+
+    ⚠️ 本 helper 內含 load_config()（阻塞 I/O），僅可用於 sync 端點（threadpool）；async
+    路由（如 batch_enrich）須改為「入口一次載入 config → readonly_source_prefixes 算一次
+    → 逐項 is_path_readonly 純比對」，勿在 event loop 上裸呼叫本 helper（async-offload 守衛）。
     """
     _gallery_config = load_config().get('gallery', {})
     _path_mappings = _gallery_config.get('path_mappings', {})
     _prefixes = readonly_source_prefixes(_gallery_config, _path_mappings)
     if is_path_readonly(coerce_to_file_uri(file_path, _path_mappings), _prefixes):
-        return {
-            "success": False,
-            "error": "此來源路徑為唯讀（readonly），無法搬移或重新命名檔案。"
-                     "請改用掃描頁『產生』生成本地媒體庫，或確認你對此路徑有寫入權限。",
-        }
+        return {"success": False, "error": _READONLY_SOURCE_ERROR_MSG}
     return None
 
 
@@ -427,6 +434,13 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
     search_cfg = config.get("search", {})
     proxy_url = search_cfg.get("proxy_url", "")
 
+    # 90c-T1 唯讀 guard（async-safe）：config 已於上方 to_thread 載入，這裡從既載入的
+    # config 算一次唯讀前綴集（純比對、無 I/O），逐項用 is_path_readonly 純比對——不可在
+    # async event loop 上裸呼叫含 load_config 的 _readonly_source_error（async-offload 守衛）。
+    _ro_gallery = config.get("gallery", {})
+    _ro_mappings = _ro_gallery.get("path_mappings", {})
+    _ro_prefixes = readonly_source_prefixes(_ro_gallery, _ro_mappings)
+
     # 去重（按 file_path）
     seen_paths: set = set()
     deduped_items = []
@@ -469,10 +483,9 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                 # 90c-T1 逐項唯讀 guard：唯讀來源片 yield result-item(success:False) +
                 # failed_count+=1 + continue（不 raise、不逐項 _emit_notif——批次層才發通知）。
                 # 混合批中可寫項照常 enrich，整批不中斷（spec-90 §90b(iii) 驗收 2）。
-                _ro_err = _readonly_source_error(item.file_path)
-                if _ro_err:
+                if is_path_readonly(coerce_to_file_uri(item.file_path, _ro_mappings), _ro_prefixes):
                     failed_count += 1
-                    yield f"data: {json.dumps({'type': 'result-item', 'number': item.number, 'file_path': item.file_path, 'success': False, 'error': _ro_err['error']})}\n\n"
+                    yield f"data: {json.dumps({'type': 'result-item', 'number': item.number, 'file_path': item.file_path, 'success': False, 'error': _READONLY_SOURCE_ERROR_MSG})}\n\n"
                     continue
 
                 try:
