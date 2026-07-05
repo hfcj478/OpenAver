@@ -322,6 +322,15 @@
       "confirm": "確認切換",
       "confirm_on": "仍要開啟"
     },
+    "switch_mode_confirm": {
+      "title": "切換媒體伺服器模式",
+      "body": "切換到「{mode}」會移除目前 {count} 個離線來源與它們產生的媒體卡（你輸出夾裡的檔案不會被刪），之後重新加入即可在新模式下重建。其他已開啟的分頁請重新整理後再操作。",
+      "cancel": "取消",
+      "confirm": "確認切換並移除",
+      "failed": "切換模式失敗，請稍後再試。",
+      "mode_off": "預設模式",
+      "mode_media": "Emby·Jellyfin·Kodi 模式"
+    },
     "section": {
       "search": "搜尋與刮削",
       "scraper_advanced": "進階刮削設定",

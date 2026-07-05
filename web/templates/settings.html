@@ -724,25 +724,25 @@
                                 <button type="button"
                                         :class="{ 'is-on': form.externalManager === 'off' }"
                                         :aria-pressed="(form.externalManager === 'off') ? 'true' : 'false'"
-                                        @click="form.externalManager = 'off'">
+                                        @click="requestExternalManagerChange('off')">
                                     {{ t('settings.scraper.external_manager_off') }}
                                 </button>
                                 <button type="button"
                                         :class="{ 'is-on': form.externalManager === 'jellyfin' }"
                                         :aria-pressed="(form.externalManager === 'jellyfin') ? 'true' : 'false'"
-                                        @click="form.externalManager = 'jellyfin'">
+                                        @click="requestExternalManagerChange('jellyfin')">
                                     Jellyfin
                                 </button>
                                 <button type="button"
                                         :class="{ 'is-on': form.externalManager === 'emby' }"
                                         :aria-pressed="(form.externalManager === 'emby') ? 'true' : 'false'"
-                                        @click="form.externalManager = 'emby'">
+                                        @click="requestExternalManagerChange('emby')">
                                     Emby
                                 </button>
                                 <button type="button"
                                         :class="{ 'is-on': form.externalManager === 'kodi' }"
                                         :aria-pressed="(form.externalManager === 'kodi') ? 'true' : 'false'"
-                                        @click="form.externalManager = 'kodi'">
+                                        @click="requestExternalManagerChange('kodi')">
                                     Kodi
                                 </button>
                             </div>
@@ -1283,6 +1283,30 @@
                         x-text="serverModeConfirmValue
                             ? window.t('settings.server_mode_confirm.confirm_on')
                             : window.t('settings.server_mode_confirm.confirm')"></button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- 90c-T5: 全域模式切換（破壞性重設）Confirm Modal -->
+    <dialog class="modal fluent-modal"
+            :class="{ 'modal-open': switchModeConfirmOpen }"
+            @click.self="cancelSwitchMode()"
+            @keydown.escape.window="switchModeConfirmOpen && cancelSwitchMode()">
+        <div class="modal-box fluent-modal-box">
+            <h3 class="fluent-modal-title">
+                <i class="bi bi-exclamation-triangle"></i>
+                <span x-text="window.t('settings.switch_mode_confirm.title')"></span>
+            </h3>
+            <p class="fluent-modal-body"
+               x-text="window.t('settings.switch_mode_confirm.body', {
+                   mode: window.t(pendingExternalManager === 'off' ? 'settings.switch_mode_confirm.mode_off' : 'settings.switch_mode_confirm.mode_media'),
+                   count: pendingOfflineCount
+               })"></p>
+            <div class="modal-action fluent-modal-actions">
+                <button type="button" class="btn btn-ghost" @click="cancelSwitchMode()"
+                        x-text="window.t('settings.switch_mode_confirm.cancel')"></button>
+                <button type="button" class="btn btn-error" @click="confirmSwitchMode()"
+                        x-text="window.t('settings.switch_mode_confirm.confirm')"></button>
             </div>
         </div>
     </dialog>

@@ -60,6 +60,12 @@ export function stateConfig() {
         lanIp: '',
         lanPort: null,
 
+        // ===== 全域模式切換破壞性 confirm State (90c-T5) =====
+        switchModeConfirmOpen: false,
+        pendingExternalManager: null,
+        pendingOfflineCount: 0,
+        _pendingWritableDirs: null,
+
         // ===== Dirty Check State =====
         savedState: null,
         savedOpenaiUseCustomModel: false,
@@ -442,6 +448,77 @@ export function stateConfig() {
                 console.warn('[serverMode] setServerMode error:', e);
                 this.showToast(window.t(val ? 'settings.server_info.toggle_failed' : 'settings.server_info.disable_failed'), 'error');
             }
+        },
+
+        // 90c-T5: 全域模式切換破壞性 confirm ─────────────────────────────────────
+        // 攔截 external_manager segmented button：即時 fetch 判離線來源 → 有則跳破壞性
+        // confirm（消費 T4 POST /api/config/switch-external-manager）→ 成功後同步三處。
+        async requestExternalManagerChange(val) {
+            if (this.form.externalManager === val) return;  // 同值 no-op（不 fetch、不彈窗）
+            let dirs;
+            try {
+                // 即時 fetch（非快取）：settings 頁 scannerDirectories 只是一次性快照、
+                // 無 resync；讀快照會漏觸發本該跳的破壞性 confirm（CD-90b-11 ②）。
+                const resp = await fetch('/api/config');
+                const result = await resp.json();
+                dirs = (result.data && result.data.gallery && result.data.gallery.directories) || [];
+            } catch (e) {
+                // 保守：fetch 失敗不切換（不 fail-open，避免漏 purge）
+                console.warn('[switchMode] requestExternalManagerChange fetch failed:', e);
+                return;
+            }
+            const offline = dirs.filter(d => d && d.readonly === true);
+            const writable = dirs.filter(d => !(d && d.readonly === true));
+            if (offline.length > 0) {
+                // 有離線來源 → 開破壞性 confirm；先不寫 form（按鈕 is-on 仍指舊值＝天然停舊值）
+                this.pendingExternalManager = val;
+                this.pendingOfflineCount = offline.length;
+                this._pendingWritableDirs = writable;
+                this.switchModeConfirmOpen = true;
+            } else {
+                // 無離線來源 → 靜默切換（既有行為，隨後照常按儲存落盤，不呼叫 endpoint）
+                this.form.externalManager = val;
+            }
+        },
+        async confirmSwitchMode() {
+            const val = this.pendingExternalManager;  // capture before clearing（防 await 期間覆蓋）
+            this.switchModeConfirmOpen = false;
+            this.pendingExternalManager = null;
+            this.pendingOfflineCount = 0;
+            const writable = this._pendingWritableDirs;
+            this._pendingWritableDirs = null;
+            try {
+                const resp = await fetch('/api/config/switch-external-manager', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ external_manager: val })
+                });
+                const result = await resp.json();
+                if (result.success === true) {
+                    // 同步三處（缺一則前後端不一致，CD-90b-11 / Codex P3）：
+                    // ① form.externalManager
+                    this.form.externalManager = val;
+                    // ② savedState 單 key（externalManager 在 form 內 → 不同步會令 isDirty 誤判；
+                    //    只改這一 key，不整份 re-snapshot，保留其他未存 form 編輯的 dirty 態）
+                    if (this.savedState) this.savedState.externalManager = val;
+                    // ③ 回填 scannerDirectories（非 readonly 子集跨 purge 不變 → 免二次 fetch），
+                    //    使 strmTemplateDirs 不再列已 purge 離線來源、無需重載
+                    this.scannerDirectories = writable;
+                } else {
+                    console.warn('[switchMode] confirmSwitchMode failed:', result.error);
+                    this.showToast(window.t('settings.switch_mode_confirm.failed'), 'error');
+                }
+            } catch (e) {
+                console.warn('[switchMode] confirmSwitchMode error:', e);
+                this.showToast(window.t('settings.switch_mode_confirm.failed'), 'error');
+            }
+        },
+        cancelSwitchMode() {
+            // 未寫 form → 按鈕自然停舊值、零變更（endpoint 未被呼叫）
+            this.switchModeConfirmOpen = false;
+            this.pendingExternalManager = null;
+            this.pendingOfflineCount = 0;
+            this._pendingWritableDirs = null;
         },
 
         async copyServerUrl() {
