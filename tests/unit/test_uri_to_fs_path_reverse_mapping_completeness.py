@@ -108,6 +108,29 @@ def _has_marker(source_lines: list[str], lineno: int) -> bool:
     return False
 
 
+def _is_path_constructor_call(node: ast.AST) -> bool:
+    """`Path(...)` 呼叫本身（尚未接 disk-method attribute）。"""
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Path"
+
+
+def _path_call_feeds_disk_method(path_call: ast.Call, funcdef: ast.AST) -> bool:
+    """`path_call`（一個 Path(...) 呼叫）是否被同函式內某 `.<disk-method>(...)` 直接接住。
+
+    對應 `Path(uri_to_fs_path(x)).exists()` 這種同語句寫法：uri_to_fs_path(x) 是
+    Path(...) 呼叫的引數，而 Path(...) 呼叫又是 .exists() 的 value（非引數），
+    原本的「call_node in args」判斷抓不到這層，需另外比對 attribute call 的 func.value。
+    """
+    for node in ast.walk(funcdef):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _PATH_DISK_ATTRS
+            and node.func.value is path_call
+        ):
+            return True
+    return False
+
+
 def _direct_nesting_hits_disk_io(call_node: ast.Call, funcdef: ast.AST) -> bool:
     """從 call_node 往外找最近的 Call 祖先鏈（含穿過純字串 helper），判斷是否嵌套進磁碟 I/O 呼叫。
 
@@ -126,6 +149,8 @@ def _direct_nesting_hits_disk_io(call_node: ast.Call, funcdef: ast.AST) -> bool:
                 # 純字串 helper 消費了 call_node，再往外找是否被磁碟 I/O 呼叫吃下
                 if _direct_nesting_hits_disk_io(node, funcdef):
                     return True
+            if _is_path_constructor_call(node) and _path_call_feeds_disk_method(node, funcdef):
+                return True
     return False
 
 
@@ -282,6 +307,24 @@ def test_guard_respects_marker_prev_line():
         "    p = uri_to_fs_path(v.cover_path)\n"
         "    if os.path.exists(p):\n"
         "        return p\n"
+    )
+    assert _scan_source(source) == []
+
+
+def test_guard_catches_path_constructor_direct_nesting():
+    source = (
+        "def bad():\n"
+        "    if Path(uri_to_fs_path(x)).exists():\n"
+        "        pass\n"
+    )
+    assert _scan_source(source) != []
+
+
+def test_guard_respects_marker_on_path_constructor_direct_nesting():
+    source = (
+        "def bad():\n"
+        "    if Path(uri_to_fs_path(x)).exists():  # uri-no-reverse: reason\n"
+        "        pass\n"
     )
     assert _scan_source(source) == []
 

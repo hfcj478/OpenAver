@@ -395,7 +395,6 @@ async def list_photo_candidates(name: str):
 
     current_source = actress.photo_source
     cloud_sources = [s for s in ["graphis", "gfriends", "wiki", "minnano"] if s != current_source]
-    path_mappings = (await asyncio.to_thread(load_config)).get('gallery', {}).get('path_mappings', {})
 
     async def generate():
         total = 0
@@ -433,7 +432,7 @@ async def list_photo_candidates(name: str):
             )
             for video in local_videos:
                 # Fix 1 (T2): cover_path 在 DB 存 file:/// URI，crop endpoint 需要 FS path
-                cover_fs_path = uri_to_local_fs_path(str(video.cover_path), path_mappings) if video.cover_path else ""
+                cover_fs_path = uri_to_fs_path(str(video.cover_path)) if video.cover_path else ""  # uri-no-reverse: URL identifier stays canonical; actress_crop reverse-maps at disk I/O
                 if not cover_fs_path:
                     # skip broken candidate，避免送空路徑的 URL
                     continue
@@ -523,9 +522,10 @@ async def actress_crop(path: str, spec: str = "v1"):
     """
     # Fix 2 (T2): uri_to_fs_path 已 idempotent（非 URI 直接 normalize_path），直接呼叫
     path_mappings = (await asyncio.to_thread(load_config)).get('gallery', {}).get('path_mappings', {})
+    cover_fs_for_db = uri_to_fs_path(path)  # uri-no-reverse: DB round-trip (is_known_cover_path) must stay in DB namespace; disk crop uses reverse-mapped below
     fs_path = uri_to_local_fs_path(path, path_mappings)
     # Security: cover_path 必須是 DB 中某個 video 的 cover_path（防任意檔案讀取）
-    allowed = await asyncio.to_thread(_check_cover_path, fs_path)
+    allowed = await asyncio.to_thread(_check_cover_path, cover_fs_for_db)
     if not allowed:
         return Response(b"", status_code=403)
     result = await asyncio.to_thread(crop_video_cover, fs_path, spec)
