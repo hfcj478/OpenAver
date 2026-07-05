@@ -466,7 +466,7 @@ class VideoScanner:
         try:
             # Case 2: file:/// URI
             if thumb_val.startswith('file://'):
-                fs = uri_to_fs_path(thumb_val)
+                fs = uri_to_fs_path(thumb_val)  # uri-no-reverse: third-party NFO <thumb> value, unrelated to path_mappings namespace
             # Case 3: Windows drive letter
             elif len(thumb_val) >= 2 and thumb_val[1] == ':':
                 fs = normalize_path(thumb_val)

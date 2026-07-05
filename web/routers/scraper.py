@@ -100,6 +100,7 @@ def _readonly_source_error(file_path: str) -> Optional[dict]:
     _path_mappings = _gallery_config.get('path_mappings', {})
     _prefixes = readonly_source_prefixes(_gallery_config, _path_mappings)
     _writable = writable_source_prefixes(_gallery_config, _path_mappings)
+    # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
     if is_path_readonly(coerce_to_file_uri(file_path, _path_mappings), _prefixes, _writable):
         return {"success": False, "error": _READONLY_SOURCE_ERROR_MSG}
     return None
@@ -386,7 +387,7 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
         # coerce_to_file_uri（已是 URI 就原樣回），不可再套 to_file_uri 造成 file:///file:///
         # double-encode 砍錯 hash（PR #60 Codex P2）。
         if result.success:
-            thumbnail_cache.invalidate(coerce_to_file_uri(request.file_path))
+            thumbnail_cache.invalidate(coerce_to_file_uri(request.file_path))  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
         from dataclasses import asdict
         return asdict(result)
     except Exception:
@@ -413,6 +414,7 @@ def fetch_samples_endpoint(req: FetchSamplesRequest) -> dict:
     if _err:
         return _err
 
+    # uri-no-reverse: comparison-only (DB LIKE prefix), inner kept bare per TASK-91-T3 inner/outer analysis
     folder_uri_prefix = to_file_uri(os.path.dirname(uri_to_fs_path(req.file_path)), path_mappings) + "/"
     repo = VideoRepository()
     count = repo.count_videos_in_folder(folder_uri_prefix)
@@ -493,6 +495,7 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                 # 90c-T1 逐項唯讀 guard：唯讀來源片 yield result-item(success:False) +
                 # failed_count+=1 + continue（不 raise、不逐項 _emit_notif——批次層才發通知）。
                 # 混合批中可寫項照常 enrich，整批不中斷（spec-90 §90b(iii) 驗收 2）。
+                # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
                 if is_path_readonly(coerce_to_file_uri(item.file_path, _ro_mappings), _ro_prefixes, _ro_writable):
                     failed_count += 1
                     yield f"data: {json.dumps({'type': 'result-item', 'number': item.number, 'file_path': item.file_path, 'success': False, 'error': _READONLY_SOURCE_ERROR_MSG})}\n\n"
@@ -546,7 +549,7 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                         # feature/71 T8: 換封面成功 → 失效舊縮圖（廉價同步 unlink，不需 offload）。
                         # item.file_path 已是 DB file:/// URI → 冪等 coerce，不可 double-encode
                         # （同 enrich-single，PR #60 Codex P2）。
-                        thumbnail_cache.invalidate(coerce_to_file_uri(item.file_path))
+                        thumbnail_cache.invalidate(coerce_to_file_uri(item.file_path))  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
                     else:
                         failed_count += 1
                     yield f"data: {json.dumps({'type': 'result-item', 'number': item.number, 'file_path': item.file_path, **result_dict})}\n\n"

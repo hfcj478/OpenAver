@@ -100,7 +100,7 @@ def _dir_candidate_forms(raw_dir: str, path_mappings: dict) -> tuple:
     # 會把 file:/// 折成 file:/ 再被 to_file_uri 二次包成 file:///file:/…，image/video
     # 兩條白名單同時誤殺（PR#91 P2-D 同源）。FS 輸入行為不變 → 保留 dual-form + TASK-73
     # 跨格式 casefold。
-    fs_dir = uri_to_fs_path(raw_dir)
+    fs_dir = uri_to_fs_path(raw_dir)  # uri-no-reverse: native config path (DirectoryConfig.path), no DB-mapped namespace
     normpath_form = to_file_uri(os.path.normpath(fs_dir), path_mappings)
     try:
         realpath_form = to_file_uri(os.path.realpath(fs_dir), path_mappings)
@@ -384,7 +384,7 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
                 # os.path.exists 只在非 readonly 分支執行，readonly 分支需要等義入口
                 # 檢查）。src.path 是 config 原始輸入，不套 reverse_path_mapping
                 # （比照 :353/:96 既定作法，見 TASK-89b-T5 現況分析 #5）。
-                reachable = os.path.exists(uri_to_fs_path(src.path))
+                reachable = os.path.exists(uri_to_fs_path(src.path))  # uri-no-reverse: native config path (src.path), no DB-mapped namespace
                 # PR #93 五審四次 P2 (option C)：注入 fresh strm 映射 getter。config 是 :303
                 # 一次載入的凍結快照；load_config() 無 lru_cache、每次讀 disk（同 :1275 prewarm
                 # pattern），故 getter 拿到的是「當下磁碟上的」映射 → 斷線尾巴那片也用當前映射。
@@ -400,7 +400,7 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
             # 取代裸 normalize_path（後者對 URI 原樣通過 → os.path.exists 失敗 → 誤報
             # 「資料夾不存在」，非 readonly 的 URI 來源掃不到）。
             try:
-                normalized_dir = uri_to_fs_path(directory)
+                normalized_dir = uri_to_fs_path(directory)  # uri-no-reverse: native config path (DirectoryConfig.path), no DB-mapped namespace
             except ValueError:
                 logger.exception("路徑轉換失敗: %s", directory)
                 yield _sse_event({"type": "log", "level": "warn", "message": "路徑轉換失敗"})
@@ -551,7 +551,7 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
                 # coerce_to_file_uri：來源 path 可能已是 file:/// URI（含 readonly 剛
                 # upsert 的列），已是 URI 就原樣回、FS 才轉，避免 to_file_uri 二次包成
                 # file:///file:/// 把 readonly 生成的列全數過濾掉（PR#91 P2-D）。
-                configured_dir_uris.add(coerce_to_file_uri(p, path_mappings))
+                configured_dir_uris.add(coerce_to_file_uri(p, path_mappings))  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
             except ValueError:
                 continue
 
@@ -1284,7 +1284,7 @@ def get_thumb(request: Request, path: str = Query(..., description="影片路徑
     # 修法：DB 背書比對維持用裸 uri_to_fs_path（與改動前行為等價，零回歸）；
     # 反解只用在「即將真的碰磁碟」的 cover_fs（generate/fallback FileResponse/os.path.isfile）。
     path_mappings = load_config().get('gallery', {}).get('path_mappings', {})
-    cover_fs_for_db = uri_to_fs_path(video.cover_path)
+    cover_fs_for_db = uri_to_fs_path(video.cover_path)  # uri-no-reverse: DB round-trip comparison-only (is_known_cover_path), real disk path uses uri_to_local_fs_path below
     if not repo.is_known_cover_path(cover_fs_for_db):
         return Response(status_code=404, content="封面不在快取記錄中")
     cover_fs = uri_to_local_fs_path(video.cover_path, path_mappings)

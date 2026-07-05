@@ -442,7 +442,7 @@ async def list_photo_candidates(name: str):
                 # Fix 2 (T2): video.path 在 DB 已是 file:/// URI（gallery_scanner.scan_file 透過 to_file_uri 寫入）
                 # 若萬一是 FS path（legacy / 異常），coerce_to_file_uri 做 idempotent 轉換
                 try:
-                    video_path_uri = coerce_to_file_uri(str(video.path))
+                    video_path_uri = coerce_to_file_uri(str(video.path))  # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
                 except Exception as e:
                     logger.warning("[actress] coerce_to_file_uri 失敗 path=%s: %s", video.path, e)
                     video_path_uri = str(video.path)
@@ -569,13 +569,13 @@ async def set_actress_photo(name: str, req: SetActressPhotoRequest):
         if not req.video_path:
             return JSONResponse(status_code=400, content={"error": "video_path_required"})
         # file:/// URI → FS path（禁止手動 strip）
-        video_fs_path = uri_to_fs_path(req.video_path)
+        video_fs_path = uri_to_fs_path(req.video_path)  # uri-no-reverse: comparison-only, matched against DB v.path below, no disk I/O
         # 從 DB 取該影片的 cover_path
         videos = await asyncio.to_thread(_get_actress_videos, name)
         # Fix 3 (T3): v.path 在 DB 存 file:/// URI（gallery_scanner 用 to_file_uri 寫入），
         # 比對前雙邊都正規化為 FS path，避免 URI vs FS path 永遠 fail
         match = next(
-            (v for v in videos if uri_to_fs_path(str(v.path)) == video_fs_path),
+            (v for v in videos if uri_to_fs_path(str(v.path)) == video_fs_path),  # uri-no-reverse: comparison-only, no disk I/O
             None,
         )
         if match is None or not match.cover_path:
