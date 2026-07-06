@@ -747,6 +747,14 @@
          *   fromEl 缺/不可見        → 僅 onLanding(toEl)（無起點可飛）
          *   正常                   → 完整三段 + scale/glow + onLanding
          *
+         * C21 通用性邊界（Codex F2）：落地反饋期間對 toEl 加 .gsap-animating 以停用 CSS
+         * transition，但 .gsap-animating 的 transition-kill 規則目前是各元件 scoped
+         * （.av-card-preview / .hero-card / .showcase-lightbox / .sg-main-img）。現行 caller
+         * #sidebar-showcase-link 只 transition color/background（無 transform/filter），故不觸
+         * C21、加 class 為 inert，無回歸。**未來若 caller 的 toEl 有 transition: transform/filter，
+         * 須為該 target 補一條 `.<target>.gsap-animating { transition: none }` 規則**，否則落地
+         * scale/glow 可能被 CSS transition 幽靈化（scanner 接線 branch 一併補、可端到端驗）。
+         *
          * @param {object} options - { fromEl, coverSrc, toEl, hold=0.5, holdOffset,
          *                             endSize=40, duration=0.65, onLanding,
          *                             fallback:{ toastFn, message } }
@@ -811,6 +819,12 @@
             var doLanding = function () {
                 if (landed) return;
                 landed = true;
+                // 並發序列化（Codex F1）：兩次 scrapeSingle 幾乎同時完成時，兩顆 ghost 的
+                // doLanding 會對同一 toEl（#sidebar-showcase-link）各起一條 landing timeline。
+                // 先 kill 任何 in-flight landing tween，讓最新一次落地勝出——舊 landing 停止
+                // 寫 toEl，新 landing 每 tick 重寫 transform/filter 並由自己的 clearLanding 收尾，
+                // 避免舊 landing 的 clearLanding 在新 landing 進行中清掉 transform/filter+class。
+                gsap.killTweensOf(toEl);
                 // C21：toEl 可能有 CSS transition:transform → gsap-animating 停用，
                 //      onComplete + onInterrupt 兩路徑都清 class + clearProps（對稱契約，
                 //      源 playMobilePanelEnter/Exit，非照抄 playActressToHeroCard 漏 onInterrupt）
