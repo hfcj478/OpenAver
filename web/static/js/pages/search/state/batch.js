@@ -107,13 +107,19 @@ export function searchStateBatch() {
             const toEl = document.getElementById('sidebar-showcase-link');
             const fromEl = this._findDbSyncSourceEl(rowEl, index);
             const coverSrc = this._dbSyncCoverSrc(file, fromEl);
-            if (fromEl && toEl &&
-                window.GhostFly &&
-                typeof window.GhostFly.playToIcon === 'function') {
-                window.GhostFly.playToIcon(fromEl, toEl, {
+            if (window.GhostFly &&
+                typeof window.GhostFly.playInboundFly === 'function') {
+                // playInboundFly 內部分支矩陣處理缺 fromEl/toEl（缺 toEl→fallback toast、
+                // 缺 fromEl→onLanding），故不再前置 fromEl && toEl guard。
+                window.GhostFly.playInboundFly({
+                    fromEl: fromEl,
                     coverSrc: coverSrc,
-                    duration: 0.65,
-                    onComplete: () => this._pulseShowcaseLink(toEl)
+                    toEl: toEl,
+                    onLanding: () => this._pulseShowcaseLink(toEl),
+                    fallback: {
+                        toastFn: (msg) => this.showToast(msg, 'success', 1500),
+                        message: window.t('search.toast.db_synced_mobile')
+                    }
                 });
             } else {
                 this._pulseShowcaseLink(toEl);

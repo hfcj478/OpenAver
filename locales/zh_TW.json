@@ -200,6 +200,7 @@
       "translate_failed": "翻譯失敗，請重試",
       "db_not_synced": "未連動 — 整理完成後不會出現在 Showcase",
       "db_sync_failed": "DB 同步失敗（檔案已整理但未出現在 Showcase）",
+      "db_synced_mobile": "已入庫",
       "skipped_nfo_multipart": "已跳過 NFO — 此檔為多段影片的第 2 段以後，由第 1 段的 NFO 管理"
     },
     "duplicate": {
