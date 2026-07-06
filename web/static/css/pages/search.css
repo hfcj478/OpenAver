@@ -19,9 +19,19 @@
     z-index: 100;
 }
 
-/* 74a-T2: search 右側 worst case 4 元素（toggle + clear + auto pill + submit，compose 態）；8.5rem 會撐出 ~8px 蓋住輸入文字，加寬到 10.5rem 容納（含 EN "Auto" 最寬語系 pill） */
+/* 92a-T3: search 右側 slot 寬 = CDP 實測值。真 worst-case 是 3 元素（清除 + 自動 pill + 送出，
+   compose/canReopen 態；grid 與 pill 因 currentMode 互斥永不同框，見 T3 卡）。zh_TW「自動」pill
+   實測 77.58px（舊值以 EN「Auto」估寬選 10.5rem=160px → zh_TW 溢出 5.58px 壓縮 pill 變形）。
+   worst-case 165.58px；11.5rem=176px slot content 留 10.4px headroom。padding-right 共用同 token 自動同步。 */
 .search-bar .spotlight-search {
-    --spotlight-right-slot: 10.5rem;
+    --spotlight-right-slot: 11.5rem;
+}
+
+/* 92a-T3: 「自動」來源 pill 不壓縮、不折行（配合放寬的 slot；pill 是 slot 內唯一變動寬元素，
+   icon 鈕已 flex-shrink:0）。消除 spec §1.1 症狀 1「pill 被 flex-shrink 壓縮變形」。 */
+.search-auto-pill {
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 /* T5: compose 態 icon 互斥 — btn-icon 不縮（三個 icon 共存時不擠壓彼此） */
