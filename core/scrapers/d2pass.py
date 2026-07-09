@@ -149,9 +149,15 @@ class D2PassScraper(BaseScraper):
         # 詳情頁 URL
         detail_url = self.SITE_DETAIL_URL[site].format(id=movie_id)
 
-        # AvgRating（Video 選用欄位）
+        # AvgRating（Video 選用欄位）— <=5 sanity guard，畸形值 (>5) 丟棄
         avg_rating = data.get('AvgRating')
-        rating = float(avg_rating) if avg_rating is not None else None
+        rating = None
+        if avg_rating is not None:
+            avg_f = float(avg_rating)
+            rating = avg_f if avg_f <= 5 else None
+
+        # 簡介（日文 Desc）
+        summary = data.get('Desc', '')
 
         # Series
         series = data.get('Series') or data.get('SeriesJa') or data.get('SeriesEn') or ''
@@ -182,6 +188,7 @@ class D2PassScraper(BaseScraper):
             series=series,
             duration=duration,
             sample_images=sample_images,
+            summary=summary,
         )
 
     def _fetch_gallery_from_html(self, site: str, movie_id: str) -> list[str]:

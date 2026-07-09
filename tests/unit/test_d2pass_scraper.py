@@ -186,6 +186,83 @@ class TestSeriesEnOnly:
         assert video.series == "Test Series En"
 
 
+# ============================================================
+# TASK-93-T6: rating <=5 sanity guard + summary (Desc)
+# ============================================================
+
+def _rating_json(avg_rating):
+    """1pondo JSON with a given AvgRating value."""
+    return {
+        "Status": True,
+        "Title": "テストタイトル",
+        "ActressesJa": ["テスト女優"],
+        "ActressesEn": [],
+        "ActressesList": {},
+        "ThumbHigh": "https://www.1pondo.tv/assets/sample/120415_201/str.jpg",
+        "MovieThumb": "",
+        "UCNAME": [],
+        "UCNAMEEn": [],
+        "Release": "2023-04-15",
+        "AvgRating": avg_rating,
+    }
+
+
+class TestRatingSanityGuard:
+    """AvgRating > 5 → None（畸形值 guard）；<=5 維持既有值"""
+
+    def test_rating_above_5_number_dropped(self, scraper):
+        """AvgRating=6（數字，>5）→ rating is None（新 guard）"""
+        video = run_search(scraper, _rating_json(6))
+        assert video is not None
+        assert video.rating is None
+
+    def test_rating_above_5_string_dropped(self, scraper):
+        """AvgRating='6'（str，>5）→ rating is None（新 guard）"""
+        video = run_search(scraper, _rating_json("6"))
+        assert video is not None
+        assert video.rating is None
+
+    def test_rating_boundary_5_kept(self, scraper):
+        """AvgRating=5（邊界，<=5）→ rating == 5.0（保留）"""
+        video = run_search(scraper, _rating_json(5))
+        assert video is not None
+        assert video.rating == 5.0
+
+    def test_rating_below_5_kept(self, scraper):
+        """AvgRating=4（正常，<=5）→ rating == 4.0（既有行為保留）"""
+        video = run_search(scraper, _rating_json(4))
+        assert video is not None
+        assert video.rating == 4.0
+
+    def test_rating_string_below_5_kept(self, scraper):
+        """AvgRating='4.5'（str，<=5）→ rating == 4.5（既有行為保留）"""
+        video = run_search(scraper, _rating_json("4.5"))
+        assert video is not None
+        assert video.rating == 4.5
+
+    def test_rating_none_stays_none(self, scraper):
+        """AvgRating=None → rating is None（既有行為保留）"""
+        video = run_search(scraper, _rating_json(None))
+        assert video is not None
+        assert video.rating is None
+
+
+class TestSummary:
+    """Desc → Video.summary；缺 Desc → ''"""
+
+    def test_summary_from_desc(self, scraper):
+        json_data = _rating_json(4)
+        json_data["Desc"] = "テスト説明"
+        video = run_search(scraper, json_data)
+        assert video is not None
+        assert video.summary == "テスト説明"
+
+    def test_summary_empty_when_no_desc(self, scraper):
+        video = run_search(scraper, _rating_json(4))
+        assert video is not None
+        assert video.summary == ""
+
+
 # caribbeancom gallery HTML fixture
 CARIBBEANCOM_GALLERY_HTML = """\
 <html><body>
