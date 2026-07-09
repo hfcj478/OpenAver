@@ -13,6 +13,10 @@ export function stateBatch() {
         missingConfirmModalOpen: false,   // TASK-13: 大批量補完 confirm dialog 開關
         _enrichAbortController: null,
 
+        // ===== TASK-94-T3: Scanner Enrich Fly 進度卡 + badge =====
+        currentCard: null,          // {number, status, source, reason, coverSrc} | null
+        enrichBadgeCount: 0,
+
         // ===== T10: Missing Pill Computed =====
         get missingPillLabel() {
             const parts = [];
@@ -70,6 +74,8 @@ export function stateBatch() {
             this.missingEnrichOffset = 0;
             this.missingEnrichSuccess = 0;
             this.missingEnrichFailed = 0;
+            this.enrichBadgeCount = 0;
+            this.currentCard = null;
             this.progressStatus = window.t('scanner.stats.missing_enrich_loading');
             this.progressCurrent = 0;
             this.progressTotal = this.missingItems.length;
@@ -103,6 +109,7 @@ export function stateBatch() {
                         this.addLog('error', '連線失敗: ' + fetchErr.message);
                         this.flushLogs();
                         this.state = 'error';
+                        this.currentCard = null;
                         // Save remaining
                         localStorage.setItem('avlist_enrich_pending', JSON.stringify(items.slice(this.missingEnrichOffset)));
                         this.showToast(window.t('scanner.stats.missing_enrich_disconnect'), 'error');
@@ -114,6 +121,7 @@ export function stateBatch() {
                         this.addLog('error', window.t('scanner.stats.missing_enrich_batch_fail', { status: resp.status, error: errText }));
                         this.flushLogs();
                         this.state = 'error';
+                        this.currentCard = null;
                         localStorage.setItem('avlist_enrich_pending', JSON.stringify(items.slice(this.missingEnrichOffset)));
                         this.showToast(window.t('scanner.stats.missing_enrich_error'), 'error');
                         return;
@@ -151,12 +159,32 @@ export function stateBatch() {
                                 this.progressStatus = event.status || window.t('scanner.stats.missing_enrich_loading');
                                 this.progressCurrent = this.missingEnrichOffset + (event.current || 0);
                                 this.progressTotal = items.length;
+                                this.currentCard = { number: event.number, status: 'searching', source: '', reason: '', coverSrc: '' };
                             } else if (event.type === 'result-item') {
+                                // badge 在 handler 本體算，與動畫（T5 playInboundFly）解耦（G-5）
+                                if (event.nfo_written || event.cover_written) {
+                                    this.enrichBadgeCount++;
+                                }
+                                if (this.currentCard) {
+                                    const status = this._resolveCardStatus(event.reason, event.success);
+                                    this.currentCard.status = status;
+                                    this.currentCard.reason = event.reason || '';
+                                    if (status === 'hit' || status === 'no_cover') {
+                                        this.currentCard.source = event.source_used || '';
+                                    }
+                                    if (status === 'hit') {
+                                        this.currentCard.coverSrc = `/api/gallery/thumb?path=${encodeURIComponent(event.file_path)}&t=${Date.now()}`;
+                                    }
+                                    // TODO T5: reason==='hit' && (nfo_written||cover_written) → $nextTick 後 playInboundFly
+                                }
                                 if (event.success) {
                                     this.missingEnrichSuccess++;
                                 } else {
                                     this.missingEnrichFailed++;
-                                    this.addLog('warn', `失敗: ${event.number || ''} — ${event.error || ''}`);
+                                }
+                                // log reason-gate（U-2）：only error 記詳情，not_found/readonly 安靜不記
+                                if (event.reason === 'error') {
+                                    this.addLog('error', `失敗: ${event.number || ''} — ${event.error || ''}`);
                                 }
                             } else if (event.type === 'log') {
                                 this.addLog(event.level || 'info', event.message || '');
@@ -166,6 +194,7 @@ export function stateBatch() {
                                 this.addLog('error', '錯誤: ' + (event.message || ''));
                                 this.flushLogs();
                                 this.state = 'error';
+                                this.currentCard = null;
                                 localStorage.setItem('avlist_enrich_pending', JSON.stringify(items.slice(this.missingEnrichOffset)));
                                 this.showToast(window.t('scanner.stats.missing_enrich_stream_error'), 'error');
                                 return;
@@ -176,6 +205,7 @@ export function stateBatch() {
                     // P1 fix: only advance offset if batch actually completed (got 'done' SSE event)
                     if (!batchDone) {
                         this.state = 'error';
+                        this.currentCard = null;
                         localStorage.setItem('avlist_enrich_pending', JSON.stringify(items.slice(this.missingEnrichOffset)));
                         this.showToast(window.t('scanner.stats.missing_enrich_disconnect'), 'error');
                         return;
@@ -188,6 +218,8 @@ export function stateBatch() {
                 // All batches complete
                 localStorage.removeItem('avlist_enrich_pending');
                 this.state = 'done';
+                this.currentCard = null;
+                this.enrichBadgeCount = 0;
                 this.progressStatus = window.t('scanner.stats.missing_enrich_done');
                 const summary = this.missingEnrichFailed > 0
                     ? window.t('scanner.stats.missing_enrich_toast_mixed', { success: this.missingEnrichSuccess, failed: this.missingEnrichFailed })
@@ -200,12 +232,26 @@ export function stateBatch() {
                 if (e.name === 'AbortError') return;
                 console.error('runMissingEnrich error:', e);
                 this.state = 'error';
+                this.currentCard = null;
                 localStorage.setItem('avlist_enrich_pending', JSON.stringify(items.slice(this.missingEnrichOffset)));
                 this.showToast(window.t('scanner.stats.missing_enrich_interrupted'), 'error');
             } finally {
                 if (this._enrichAbortController === controller) {
                     this._enrichAbortController = null;
                 }
+            }
+        },
+
+        // TASK-94-T3: reason enum → currentCard.status 純函式（供結構/單元驗證映射完整性）
+        // reason 缺失（舊後端/未知值）fallback：success→'hit'、!success→'error'（防 undefined 卡在 searching）
+        _resolveCardStatus(reason, success) {
+            switch (reason) {
+                case 'hit': return 'hit';
+                case 'no_cover': return 'no_cover';
+                case 'not_found': return 'not_found';
+                case 'error': return 'error';
+                case 'readonly': return 'readonly';
+                default: return success ? 'hit' : 'error';
             }
         },
 
