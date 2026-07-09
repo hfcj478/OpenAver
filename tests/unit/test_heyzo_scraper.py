@@ -214,6 +214,9 @@ class TestNoSeries:
 SUMMARY_JSON_LD = {**BASE_JSON_LD, "description": "テスト説明文"}
 SUMMARY_CONTENT = make_html(SUMMARY_JSON_LD, table_extra=DURATION_JS, gallery_html=GALLERY_HTML)
 
+NULL_SUMMARY_JSON_LD = {**BASE_JSON_LD, "description": None}
+NULL_SUMMARY_CONTENT = make_html(NULL_SUMMARY_JSON_LD, table_extra=DURATION_JS, gallery_html=GALLERY_HTML)
+
 
 class TestSummary:
     """JSON-LD description → video.summary"""
@@ -228,6 +231,18 @@ class TestSummary:
     def test_summary_empty_when_no_description(self, scraper):
         """JSON-LD 無 description → summary == ''，不 raise"""
         scraper._session.get = MagicMock(return_value=make_response(FULL_FIELDS_CONTENT))
+        video = scraper.search("HEYZO-0783")
+        assert video is not None
+        assert video.summary == ""
+
+    def test_summary_null_description(self, scraper):
+        """JSON-LD description=null → video returned with summary==''.
+
+        Regression (P2-2): `.get('description', '')` returns None on JSON null →
+        Video(summary=None) raises ValidationError → whole HEYZO source dropped.
+        The `or ''` fix keeps the source alive.
+        """
+        scraper._session.get = MagicMock(return_value=make_response(NULL_SUMMARY_CONTENT))
         video = scraper.search("HEYZO-0783")
         assert video is not None
         assert video.summary == ""

@@ -24,7 +24,7 @@ from core.scrapers.models import Video
 _TEXT_FIELDS = ('title', 'actresses', 'tags', 'series', 'maker', 'director')
 # meta 欄位（同樣整包來自 text_source，空值往後 fallback）
 # 注意：`label` 不在 §5.1.1 表列，但既有 merge 會 backfill（feeds NFO），保留 parity（61a-6 review B1）
-_STR_META_FIELDS = ('date', 'label')
+_STR_META_FIELDS = ('date', 'label', 'summary')
 # None-sentinel meta 欄位（0 / 0.0 視為有值）
 _OPTIONAL_META_FIELDS = ('duration', 'rating', 'votes')
 

@@ -266,3 +266,23 @@ class TestDMMScraperNewFields:
         video = self._fetch(dmm_scraper, data)
         assert video is not None
         assert video.summary == ""
+
+    def test_summary_null(self, dmm_scraper):
+        """description=null (JSON null, key present) → video returned with summary==''.
+
+        Regression (P2-2): `.get('description', '')` returns None when the value is
+        JSON null → Video(summary=None) raises ValidationError → broad except swallows
+        it → search returns None → the WHOLE DMM source is dropped. The `or ''` fix
+        keeps the source alive.
+        """
+        data = {
+            "data": {
+                "ppvContent": {
+                    **DMM_DETAIL_RESPONSE_FULL["data"]["ppvContent"],
+                    "description": None,
+                }
+            }
+        }
+        video = self._fetch(dmm_scraper, data)
+        assert video is not None
+        assert video.summary == ""

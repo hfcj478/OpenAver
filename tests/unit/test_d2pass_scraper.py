@@ -262,6 +262,19 @@ class TestSummary:
         assert video is not None
         assert video.summary == ""
 
+    def test_summary_null_desc(self, scraper):
+        """Desc=null (JSON null, key present) → video returned with summary==''.
+
+        Regression (P2-2): `.get('Desc', '')` returns None on JSON null →
+        Video(summary=None) raises ValidationError → whole d2pass source dropped.
+        The `or ''` fix keeps the source alive.
+        """
+        json_data = _rating_json(4)
+        json_data["Desc"] = None
+        video = run_search(scraper, json_data)
+        assert video is not None
+        assert video.summary == ""
+
 
 # caribbeancom gallery HTML fixture
 CARIBBEANCOM_GALLERY_HTML = """\

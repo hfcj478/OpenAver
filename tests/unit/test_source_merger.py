@@ -93,6 +93,33 @@ def test_label_kept_from_text_source_when_present():
     assert merged.label == "J321 Label"
 
 
+def test_summary_backfills_from_later_source():
+    """summary parity (P2-1): winner with empty summary → backfill later source's plot.
+
+    Regression: `summary` feeds NFO <plot>; if it were absent from the str-meta
+    fallback group, a winning source with no summary + a losing source with one
+    would drop the plot entirely.
+    """
+    primary = _v("jav321", title="J321 Title", summary="", rating=None)
+    backup = _v("javbus", title="JB Title", summary="has plot", rating=4.5)
+    merged = merge_results({"jav321": primary, "javbus": backup},
+                           user_order=["jav321", "javbus"])
+
+    assert merged.title == "J321 Title"    # whole block still from jav321
+    assert merged.summary == "has plot"    # empty summary backfilled
+    assert merged.rating == 4.5            # rating carries the same way (guard)
+    assert merged.source == "jav321"
+
+
+def test_summary_kept_from_text_source_when_present():
+    """text_source has a non-empty summary → keep it, no backfill."""
+    primary = _v("jav321", summary="J321 plot")
+    backup = _v("javbus", summary="JB plot")
+    merged = merge_results({"jav321": primary, "javbus": backup},
+                           user_order=["jav321", "javbus"])
+    assert merged.summary == "J321 plot"
+
+
 def test_meta_fields_from_text_source():
     """date/duration/rating/votes come from text_source (整包贏)."""
     primary = _v("jav321", date="2024-01-01", duration=120, rating=4.5, votes=10)

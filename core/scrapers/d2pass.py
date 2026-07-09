@@ -158,7 +158,7 @@ class D2PassScraper(BaseScraper):
             rating = avg_f if avg_f <= 5 else None
 
         # 簡介（日文 Desc）
-        summary = data.get('Desc', '')
+        summary = data.get('Desc') or ''
 
         # Series
         series = data.get('Series') or data.get('SeriesJa') or data.get('SeriesEn') or ''
