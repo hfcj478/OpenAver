@@ -192,6 +192,9 @@ class HEYZOScraper(BaseScraper):
             rating = float(agg_rating['ratingValue']) if agg_rating.get('ratingValue') else None
             votes = int(agg_rating['reviewCount']) if agg_rating.get('reviewCount') else None
 
+            # 簡介（JSON-LD description，缺欄位回退空字串）
+            summary = json_ld.get('description', '')
+
             # Step 3: 從同一 EN page 的 HTML table 取 tags、series
             # （EN page 已取得，不需額外請求 JA page；XPath 使用英文 header）
             table_data = self._extract_table_data(resp.content)
@@ -210,6 +213,7 @@ class HEYZOScraper(BaseScraper):
                 detail_url=ja_url,
                 rating=rating,
                 votes=votes,
+                summary=summary,
                 series=table_data['series'],
                 duration=table_data['duration'],
                 sample_images=table_data['sample_images'],

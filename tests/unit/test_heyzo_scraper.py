@@ -208,6 +208,32 @@ class TestNoSeries:
 
 
 # ============================================================
+# Summary (JSON-LD description) — TASK-93-T5
+# ============================================================
+
+SUMMARY_JSON_LD = {**BASE_JSON_LD, "description": "テスト説明文"}
+SUMMARY_CONTENT = make_html(SUMMARY_JSON_LD, table_extra=DURATION_JS, gallery_html=GALLERY_HTML)
+
+
+class TestSummary:
+    """JSON-LD description → video.summary"""
+
+    def test_summary_from_description(self, scraper):
+        """JSON-LD 含 description → summary 為原文"""
+        scraper._session.get = MagicMock(return_value=make_response(SUMMARY_CONTENT))
+        video = scraper.search("HEYZO-0783")
+        assert video is not None
+        assert video.summary == "テスト説明文"
+
+    def test_summary_empty_when_no_description(self, scraper):
+        """JSON-LD 無 description → summary == ''，不 raise"""
+        scraper._session.get = MagicMock(return_value=make_response(FULL_FIELDS_CONTENT))
+        video = scraper.search("HEYZO-0783")
+        assert video is not None
+        assert video.summary == ""
+
+
+# ============================================================
 # Mock Data (from test_new_scrapers.py)
 # ============================================================
 
