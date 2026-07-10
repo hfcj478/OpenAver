@@ -902,7 +902,10 @@
                             <label class="row-label">{{ t('settings.scraper.filename_format_label') }}</label>
                             <div class="flex-1 flex flex-col gap-1 naming-block" x-data="{ open: false }">
                                 <div class="filename-format-row">
-                                    <div class="chip-editor-host flex-1" id="filenameFormat" x-init="mountFilenameEditor($el)"></div>
+                                    <!-- x-effect="hydrateFilenameEditor()"：95a-T8 reactive 補載觸發點（namingConfigReady
+                                         flip true 時重跑，覆蓋冷模組快取下 mount 早於 ready 造成的 $nextTick 補載失效，
+                                         見 state-config.js hydrateFilenameEditor() 註解）。one-shot 保證不重載打斷游標。 -->
+                                    <div class="chip-editor-host flex-1" id="filenameFormat" x-init="mountFilenameEditor($el)" x-effect="hydrateFilenameEditor()"></div>
                                     <div class="variable-dropdown">
                                         <button class="btn-variable" type="button" @click="open = !open" :aria-expanded="open">
                                             <i class="bi bi-braces"></i> {{ t('settings.action.variable') }}

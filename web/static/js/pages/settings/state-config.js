@@ -12,6 +12,7 @@ export function stateConfig() {
         layerEditors: {},       // { [layerId]: ChipEditor } 各資料夾層
         layerSeq: 0,            // 穩定遞增 id 計數器（禁用 index/value 當 key，CD-95a-12）
         ready: false,           // formatVariables 就緒後才 hydrate 膠囊
+        filenameHydrated: false, // one-shot：filename editor 是否已完成首次 hydrate（95a-T8，防重載打斷游標）
     };
     return {
         // ===== Form State =====
@@ -87,6 +88,10 @@ export function stateConfig() {
         savedOpenaiUseCustomModel: false,
         pendingNavigationUrl: '',
         _configLoading: true,  // 初始 true，loadConfig 完成後 false
+        // 95a-T8: filename 膠囊編輯器收斂式 hydrate 就緒旗標（響應式鏡像，供 x-effect 追蹤；
+        // naming.ready 是 closure 布林、非響應式，x-effect 追不到）。loadConfig 開頭重設 false、
+        // form 設妥後翻 true；由 hydrateFilenameEditor() 讀取觸發 reactive 補載。
+        namingConfigReady: false,
 
         // ===== 縮圖快取空間估算（71-T5）=====
         // 非 config 欄位（不入 saveConfig）；由 loadConfig() fetch /api/gallery/stats 填。
@@ -550,6 +555,10 @@ export function stateConfig() {
             this._configLoading = true;
             // 清空快照（載入期間不判定 dirty）
             this.savedState = null;
+            // 95a-T8: 對稱重設 hydrate 旗標（reset 設定 / 重跑 loadConfig 時需重新 hydrate，
+            // 否則 one-shot 會擋住 filename editor 的重新載入）。
+            this.namingConfigReady = false;
+            naming.filenameHydrated = false;
 
             try {
                 // 命名區變數 SSOT（含 folder_ok 情境旗標）——須在設 folderLayerList（觸發層
@@ -695,9 +704,15 @@ export function stateConfig() {
                     // 解鎖表單（config hydrate 完成）
                     this._configLoading = false;
 
-                    // 命名區膠囊 hydrate：filename editor 早於本次 fetch mount（需此處補載）；
-                    // 層 editor 於 folderLayerList 設後 x-for render self-hydrate。$nextTick 確保
-                    // 層 host 已渲染（CD-95a-9 async 時序）。
+                    // 命名區膠囊 hydrate（95a-T8）：
+                    // - filename：namingConfigReady 翻 true 觸發 #filenameFormat host 的
+                    //   x-effect="hydrateFilenameEditor()"（reactive 路徑，覆蓋「mount 早於
+                    //   ready」的冷載時序）；mountFilenameEditor 尾端亦呼叫同方法（imperative
+                    //   路徑，覆蓋「mount 晚於 ready」）。one-shot（naming.filenameHydrated）
+                    //   保證只載一次，避免打斷編輯游標。
+                    // - folder：層 editor 於 folderLayerList 設後 x-for render self-hydrate；
+                    //   既有 $nextTick(_hydrateNamingEditors) 保留給 folder 層（本 task 不動）。
+                    this.namingConfigReady = true;
                     this.$nextTick(() => this._hydrateNamingEditors());
 
                     // Hydrate metatube fields from config + /status (CD-63b-3)
@@ -1081,6 +1096,23 @@ export function stateConfig() {
             return this._contextVars(context).map(v => ({ name: v.name, label: this._labelFor(v.name) }));
         },
 
+        // 95a-T8: filename 膠囊編輯器收斂式一次性 hydrator——收斂「editor 已 mount」與
+        // 「config 已載入（namingConfigReady）」兩事件，與其先後順序無關；成功一次後 one-shot
+        // 擋住重載（避免打斷編輯游標，見 chip-editor.js:108 註解的 hazard）。雙觸發：
+        //   ① mountFilenameEditor 尾端 imperative 呼叫（覆蓋 mount 晚於 ready）
+        //   ② #filenameFormat host 的 x-effect="hydrateFilenameEditor()"（覆蓋 mount 早於 ready；
+        //      namingConfigReady flip true 時 effect 重跑補載）
+        // guard 順序刻意：filenameHydrated 必須在讀 form.filenameFormat 之前 return，否則 x-effect
+        // 會追蹤 form.filenameFormat、之後每次編輯 onChange 改該欄位都會讓 effect 重跑重載。
+        hydrateFilenameEditor() {
+            if (!this.namingConfigReady) return;
+            if (!naming.filenameEditor) return;
+            if (naming.filenameHydrated) return;
+            naming.filenameHydrated = true;
+            naming.filenameEditor.whitelist = this._whitelistFor('filename');
+            naming.filenameEditor.load(this.form.filenameFormat);
+        },
+
         // 檔名格式膠囊編輯器 mount（T6 x-init）。onChange serialize 寫回 form.filenameFormat。
         mountFilenameEditor(hostEl) {
             naming.filenameEditor = new ChipEditor(hostEl, {
@@ -1090,10 +1122,9 @@ export function stateConfig() {
                 onChange: () => { this.form.filenameFormat = naming.filenameEditor.serialize(); },
                 placeholder: '[{num}][{maker}] {title}{suffix}',
             });
-            if (naming.ready) {
-                naming.filenameEditor.whitelist = this._whitelistFor('filename');
-                naming.filenameEditor.load(this.form.filenameFormat);
-            }
+            // 95a-T8: 觸發點一（imperative）——ready 已 true 時（mount 晚於 ready）直接補載；
+            // ready 仍 false 時 hydrateFilenameEditor() 內部早退，交給觸發點二（x-effect）補上。
+            this.hydrateFilenameEditor();
         },
 
         // 資料夾層膠囊編輯器 mount（T6 x-init per layer）。onChange 以 layer.id find 寫回 value
@@ -1119,10 +1150,10 @@ export function stateConfig() {
         },
 
         _hydrateNamingEditors() {
-            if (naming.filenameEditor) {
-                naming.filenameEditor.whitelist = this._whitelistFor('filename');
-                naming.filenameEditor.load(this.form.filenameFormat);
-            }
+            // 95a-T8: filename 分支改走 hydrateFilenameEditor() one-shot 收斂——這條 $nextTick
+            // 若在冷載下遲來 release，可能與 x-effect / mount imperative 路徑重複觸發；one-shot
+            // guard 統一收斂在單一方法，避免重複 load 打斷編輯游標。folder 迴圈不動（95a-T8 範圍外）。
+            this.hydrateFilenameEditor();
             for (const [id, ed] of Object.entries(naming.layerEditors)) {
                 const l = this.form.folderLayerList.find(x => String(x.id) === String(id));
                 ed.whitelist = this._whitelistFor('folder');
