@@ -174,9 +174,16 @@ export function stateConfig() {
             };
             const filenamePreview = applyTokens(this.form.filenameFormat || '{num} {title}');
             if (!this.form.createFolder) return filenamePreview + '.mp4';
-            const folderPreview = this.form.folderLayerList
-                .map(l => l.value.trim())
-                .filter(v => v)
+            // 剝除資料夾排除 token（{suffix}）後再預覽，與 save 端（saveConfig normalizeFolderLayers）
+            // 及 organizer 實際落地一致——否則使用者手打 {suffix} 進資料夾層時，preview 會顯示一層
+            // 存檔後其實不會建的 suffix 資料夾（Codex PR #99 P2 連帶：preview 須與 save 同誠實）。
+            const folderExcluded = new Set(
+                this.formatVariables.filter(v => v.folder_ok === false).map(v => v.name)
+            );
+            const folderPreview = normalizeFolderLayers(
+                this.form.folderLayerList.map(l => l.value.trim()),
+                folderExcluded
+            )
                 .map(applyTokens)
                 .join('/');
             const folder = folderPreview ? folderPreview + '/' : '';
@@ -796,10 +803,19 @@ export function stateConfig() {
 
                 // 更新 scraper：動態清單 → string[]（去空層、防禦性再 slice(0,3)；load 已 slice、
                 // 此處保險，與後端 layers[:3] 一致，CD-95a-7）。序列化回 config.json 純字串陣列（後端零改）。
-                const folderLayers = this.form.folderLayerList
-                    .map(l => l.value.trim())
-                    .filter(v => v)
-                    .slice(0, 3);
+                // 剝除資料夾排除 token（{suffix}，Codex PR #99 P2）：chip whitelist 只擋 chip 化，
+                // 使用者手打/貼上的 `{suffix}` 仍會以純文字留在 l.value；若原樣存檔，
+                // core/organizer.py 的 format_string()（:461 `{suffix}` replace，於 :928 資料夾層
+                // 格式化呼叫）仍會消費它，繞過 folder_ok=false 契約建出 suffix-specific 資料夾。
+                // load 端（:628-630）已用 normalizeFolderLayers 剝除，此處對齊同一 helper +
+                // 同一 folderExcluded 推導（SSOT this.formatVariables），避免兩條剝除邏輯漂移。
+                const folderExcluded = new Set(
+                    this.formatVariables.filter(v => v.folder_ok === false).map(v => v.name)
+                );
+                const folderLayers = normalizeFolderLayers(
+                    this.form.folderLayerList.map(l => l.value.trim()),
+                    folderExcluded
+                );
 
                 config.scraper = {
                     ...config.scraper,
