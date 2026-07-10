@@ -44,10 +44,6 @@ class TestGhostFlyCropModeBoundary:
         """遞迴 glob 所有 JS 檔。"""
         return list(JS_ROOT.rglob("*.js"))
 
-    def test_ghost_fly_js_exists(self):
-        """前置條件：shared/ghost-fly.js 必須存在。"""
-        assert GHOST_FLY_JS.is_file(), f"missing: {GHOST_FLY_JS}"
-
     def test_cropmode_string_only_in_ghost_fly(self):
         """規則 1：`cropMode` 只能在 shared/ghost-fly.js 出現。"""
         offenders = []

@@ -1217,19 +1217,6 @@ class TestShowcasePreciseMatchState:
         for expected in ["addFavoriteFromSearch", "_isPreciseActressMatch"]:
             assert expected in html, f"showcase.html missing: {expected!r}"
 
-class TestGeminiLocaleKeyGuard:
-    """39a-T3: 守衛 settings.js 不再使用 gemini_n_flash_models locale key"""
-
-    def _js(self):
-        return SETTINGS_PROVIDERS_JS.read_text(encoding="utf-8")
-
-    def test_settings_js_no_gemini_n_flash_models(self):
-        """settings.js 不應出現 gemini_n_flash_models（已替換為 connected_n_models）"""
-        js = self._js()
-        assert "gemini_n_flash_models" not in js, \
-            "settings.js 仍含 gemini_n_flash_models，應改為 connected_n_models"
-
-
 GRID_MODE_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "state" / "grid-mode.js"
 
 
@@ -5725,6 +5712,9 @@ class TestPathContract:
     """路徑契約守衛測試 — 確保路徑處理邏輯集中在 path_utils.py（T7.0）
 
     4 個守衛測試掃描 production code 禁止模式（T7a-T7e 已全部修正通過）。
+
+    # [lint-guard: pytest-justified] 守 Python 源碼語意（掃 .py 手動 URI strip / file:/// 建構）——
+    # 標的是後端 Python 源碼、非 html/js/css 前端靜態字串，永久留 pytest（CD-96a-8c / CD-96-2）。
     """
 
     # 掃描範圍：core/ web/ windows/ tests/（排除 path_utils.py 本身）
@@ -5961,30 +5951,6 @@ class TestScannerClearCache:
             assert expected in js, f"scanner/state-scan.js missing: {expected!r}"
 
 
-class TestSearchCoreFacade:
-    """T3.2 守衛 → T4 更新：SearchCore facade 已完全消除"""
-
-    def test_search_core_facade_files_excludes(self):
-        """bridge.js 已刪除；persistence.js 不含 coreState?."""
-        js_file = PROJECT_ROOT / "web/static/js/pages/search/state/bridge.js"
-        assert not js_file.exists(), \
-            "search/state/bridge.js should not exist: T4 Step 8 應已刪除此檔案"
-        persistence = PROJECT_ROOT / "web/static/js/pages/search/state/persistence.js"
-        content = persistence.read_text(encoding='utf-8')
-        assert 'coreState?.' not in content, \
-            "persistence.js should not contain: 'coreState?.'"
-
-    def test_search_core_js_excludes(self):
-        """core.js（若存在）不含 Alpine.$data / _legacyState / window.SearchCore = {"""
-        js_file = PROJECT_ROOT / "web/static/js/pages/search/core.js"
-        if not js_file.exists():
-            return  # core.js 已刪除，通過
-        content = js_file.read_text(encoding='utf-8')
-        for forbidden in ['Alpine.$data', '_legacyState', 'window.SearchCore = {']:
-            assert forbidden not in content, \
-                f"search/core.js should not contain: {forbidden!r}"
-
-
 class TestPageLifecycleGuard:
     """page-lifecycle.js 存在性守衛 — 確保 script tag 及三頁 __registerPage 呼叫不被移除"""
 
@@ -6022,37 +5988,6 @@ class TestPageLifecycleGuard:
         content = js_file.read_text(encoding='utf-8')
         assert '__registerPage' in content, \
             "scanner/state-scan.js 缺少 __registerPage 呼叫 — Scanner lifecycle 未接入統一機制"
-
-
-class TestScannerLifecycleGuard:
-    """T5.1 守衛 — Scanner 已接入 __registerPage，不再使用舊 shim"""
-
-    SCANNER_HTML = PROJECT_ROOT / "web" / "templates" / "scanner.html"
-    PAGE_LIFECYCLE_JS = PROJECT_ROOT / "web" / "static" / "js" / "components" / "page-lifecycle.js"
-
-    def test_scanner_no_confirm_leaving_scanner(self):
-        """scanner.html 不含 confirmLeavingScanner（舊 shim 已刪除）"""
-        content = self.SCANNER_HTML.read_text(encoding='utf-8')
-        assert 'confirmLeavingScanner' not in content, \
-            "scanner.html 仍含 confirmLeavingScanner — T5.1 應已刪除舊離頁 shim"
-
-    def test_scanner_no_self_added_beforeunload(self):
-        """scanner.html 不自掛 addEventListener('beforeunload'（由 page-lifecycle.js 統一管理）"""
-        content = self.SCANNER_HTML.read_text(encoding='utf-8')
-        assert "addEventListener('beforeunload'" not in content, \
-            "scanner.html 仍自掛 beforeunload listener — T5.1 應刪除，改由 onBeforeUnload hook 處理"
-
-    def test_scanner_no_skip_before_unload(self):
-        """scanner.html 不含 _skipBeforeUnload（隨舊 shim 一起刪除）"""
-        content = self.SCANNER_HTML.read_text(encoding='utf-8')
-        assert '_skipBeforeUnload' not in content, \
-            "scanner.html 仍含 _skipBeforeUnload — T5.1 應已隨舊 shim 一起刪除"
-
-    def test_page_lifecycle_no_confirm_leaving_scanner_shim(self):
-        """page-lifecycle.js 不含 confirmLeavingScanner compatibility shim"""
-        content = self.PAGE_LIFECYCLE_JS.read_text(encoding='utf-8')
-        assert 'confirmLeavingScanner' not in content, \
-            "page-lifecycle.js 仍含 confirmLeavingScanner shim — T5.1 Scanner 接入後應刪除"
 
 
 class TestEventSourceTracking:
@@ -6114,51 +6049,6 @@ class TestTimerTracking:
         ps = (PROJECT_ROOT / "web/static/js/pages/search/state/persistence.js").read_text(encoding='utf-8')
         assert 'saveTimeout' not in ps, \
             "persistence.js should not contain: 'saveTimeout'"
-
-
-class TestWindowGlobalCleanup:
-    """T3.3 守衛 — bridge.js 不再設定多餘的 window.xxx 全域函數"""
-
-    BRIDGE_JS = PROJECT_ROOT / "web/static/js/pages/search/state/bridge.js"
-    FILE_LIST_JS = PROJECT_ROOT / "web/static/js/pages/search/state/file-list.js"
-    PERSISTENCE_JS = PROJECT_ROOT / "web/static/js/pages/search/state/persistence.js"
-    SEARCH_FLOW_JS = PROJECT_ROOT / "web/static/js/pages/search/state/search-flow.js"
-    INIT_JS = PROJECT_ROOT / "web/static/js/pages/search/init.js"
-
-    def test_window_global_cleanup_js_contains_and_excludes(self):
-        """bridge/file-list/persistence/search-flow/init: window.SearchCore 全域函數已清除，this.xxx 直接呼叫已植入"""
-        # bridge.js（T4 已刪除則通過）
-        if self.BRIDGE_JS.exists():
-            bc = self.BRIDGE_JS.read_text(encoding='utf-8')
-            for forbidden in [
-                'window.translateWithAI', 'window.startEditTitle', 'window.confirmEditTitle',
-                'window.cancelEditTitle', 'window.startEditChineseTitle',
-                'window.confirmEditChineseTitle', 'window.cancelEditChineseTitle',
-                'window.showAddTagInput', 'window.confirmAddTag', 'window.cancelAddTag',
-                'window.removeUserTag', 'window.SearchCore.initProgress',
-                'window.SearchCore.updateLog', 'window.SearchCore.handleSearchStatus',
-            ]:
-                assert forbidden not in bc, \
-                    f"bridge.js should not contain: {forbidden!r}"
-        # file-list.js: direct this.xxx calls + no window.SearchCore calls
-        fl = self.FILE_LIST_JS.read_text(encoding='utf-8')
-        for expected in ['this.initProgress(', 'this.updateLog(', 'this.handleSearchStatus(']:
-            assert expected in fl, f"file-list.js missing: {expected!r}"
-        for forbidden in ['window.SearchCore.initProgress', 'window.SearchCore.updateLog',
-                          'window.SearchCore.handleSearchStatus', 'window.SearchCore.updateClearButton']:
-            assert forbidden not in fl, f"file-list.js should not contain: {forbidden!r}"
-        # persistence / search-flow: no updateClearButton
-        for js_file in [self.PERSISTENCE_JS, self.SEARCH_FLOW_JS]:
-            content = js_file.read_text(encoding='utf-8')
-            assert 'window.SearchCore.updateClearButton' not in content, \
-                f"{js_file.name} should not contain: 'window.SearchCore.updateClearButton'"
-        # init.js（T4 已刪除則通過）
-        if self.INIT_JS.exists():
-            ic = self.INIT_JS.read_text(encoding='utf-8')
-            for forbidden in ['window.SearchCore.initProgress =', 'window.SearchCore.updateLog =',
-                              'window.SearchCore.handleSearchStatus =']:
-                assert forbidden not in ic, \
-                    f"init.js should not contain: {forbidden!r}"
 
 
 class TestFetchAbortController:
@@ -8040,115 +7930,6 @@ class TestScannerCopyFailModal:
         for expected in ['copy_fail_modal.title', 'copy-fail-pre',
                          'copyFailModalOpen && closeCopyFailModal']:
             assert expected in html, f"scanner.html missing: {expected!r}"
-
-
-class TestClipLabHostRemoved:
-    """56b-T3: 驗證 clip-lab thin host 已完全移除（檔案 / 目錄 / app.py import / i18n key）"""
-
-    PROJECT_ROOT = Path(__file__).parent.parent.parent
-
-    def test_clip_lab_router_file_not_exists(self):
-        """web/routers/clip_lab.py 不應存在"""
-        path = self.PROJECT_ROOT / "web" / "routers" / "clip_lab.py"
-        assert not path.exists(), f"56b-T3 違規：{path} 仍存在，應已刪除"
-
-    def test_clip_lab_template_not_exists(self):
-        """web/templates/clip_lab.html 不應存在"""
-        path = self.PROJECT_ROOT / "web" / "templates" / "clip_lab.html"
-        assert not path.exists(), f"56b-T3 違規：{path} 仍存在，應已刪除"
-
-    def test_clip_lab_pages_dir_not_exists(self):
-        """web/static/js/pages/clip-lab/ 目錄不應存在"""
-        path = self.PROJECT_ROOT / "web" / "static" / "js" / "pages" / "clip-lab"
-        assert not path.exists(), f"56b-T3 違規：{path} 目錄仍存在，應已刪除"
-
-    def test_app_py_no_clip_lab_import(self):
-        """web/app.py 內容不應含 'clip_lab' 字串（import / include_router 皆已移除）"""
-        path = self.PROJECT_ROOT / "web" / "app.py"
-        content = path.read_text(encoding="utf-8")
-        assert "clip_lab" not in content, (
-            "56b-T3 違規：web/app.py 仍含 'clip_lab' 字串（import / include_router 未清乾淨）"
-        )
-
-    def test_zh_tw_no_clip_lab_namespace(self):
-        """locales/zh_TW.json 解析後不應有 'clip_lab' top-level key"""
-        path = self.PROJECT_ROOT / "locales" / "zh_TW.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        assert "clip_lab" not in data, (
-            "56b-T3 違規：locales/zh_TW.json 仍含 'clip_lab' top-level namespace"
-        )
-
-
-class TestConstellationRealCovers:
-    """56b-T4 visual probe：motion-lab Constellation 已使用本地靜態 sc-N.jpg 模擬 prod 視覺。
-
-    守衛範圍刻意降 brittleness（codex review 點 4）：
-      - 不檢 IMAGE_POOL.length === 20 字面字
-      - 不檢 sc-1..sc-20 完整列表
-      - 改檢「機制 / 結構 / 簽名」是否在位
-    """
-
-    PROJECT_ROOT = Path(__file__).parent.parent.parent
-
-    def test_constellation_dom_has_real_cover_imgs(self):
-        """motion_lab.html 12 個 .clip-lab-slot-img + 1 個 #main-img-photo；無 #XX label / "MAIN" 文字殘留"""
-        path = self.PROJECT_ROOT / "web" / "templates" / "motion_lab.html"
-        content = path.read_text(encoding="utf-8")
-        slot_img_count = content.count('class="clip-lab-slot-img"')
-        assert slot_img_count == 12, (
-            f"56b-T4 違規：motion_lab.html 應含 12 個 .clip-lab-slot-img，實際 {slot_img_count}"
-        )
-        assert 'id="main-img-photo"' in content, (
-            "56b-T4 違規：motion_lab.html 缺少 #main-img-photo（中央主圖 <img>）"
-        )
-        # #XX slot label 殘留檢查（T4 後不應再出現）
-        for n in range(1, 13):
-            label = f'>#{n:02d}</span>'
-            assert label not in content, (
-                f"56b-T4 違規：motion_lab.html 仍含舊 slot label '{label}'，應已移除"
-            )
-        # MAIN 文字殘留（T4 後主圖不再有 MAIN 字樣）
-        assert ">MAIN<" not in content, (
-            "56b-T4 違規：motion_lab.html 仍含 'MAIN' 文字節點，應已被 <img> 取代"
-        )
-
-    def test_constellation_host_no_hardcoded_image_paths(self):
-        """constellation-host.js 用 IMAGE_BASE 常數 + 模板字串，不硬編碼 sc-N.jpg 完整路徑陣列"""
-        path = (
-            self.PROJECT_ROOT / "web" / "static" / "js"
-            / "pages" / "motion-lab" / "constellation-host.js"
-        )
-        content = path.read_text(encoding="utf-8")
-        # 必須有 IMAGE_BASE / IMAGE_COUNT 常數識別字
-        assert "IMAGE_BASE" in content, (
-            "56b-T4 違規：constellation-host.js 缺 IMAGE_BASE 常數（圖路徑應常數化）"
-        )
-        assert "IMAGE_COUNT" in content, (
-            "56b-T4 違規：constellation-host.js 缺 IMAGE_COUNT 常數"
-        )
-        # /static/img/showcase/sc- 字面字不可硬編 12 條/20 條（容許 IMAGE_BASE = '...' 那一行）
-        # 我們允許出現上限為 1（IMAGE_BASE 賦值該行）
-        hardcoded_count = content.count("/static/img/showcase/sc-")
-        assert hardcoded_count <= 1, (
-            f"56b-T4 違規：constellation-host.js 含 {hardcoded_count} 處 '/static/img/showcase/sc-' 字面字，"
-            "應只在 IMAGE_BASE 常數定義出現（≤ 1）；其餘走模板字串組合"
-        )
-
-    def test_shared_animations_has_on_main_swap_hook(self):
-        """shared/constellation/animations.js playSlipThrough 必須含 onMainSwap hook 機制"""
-        path = (
-            self.PROJECT_ROOT / "web" / "static" / "js" / "shared"
-            / "constellation" / "animations.js"
-        )
-        content = path.read_text(encoding="utf-8")
-        # 簽名末加 options 參數
-        assert "options = {}" in content, (
-            "56b-T4 違規：animations.js playSlipThrough 應有 options = {} 末參數（onMainSwap hook 機制）"
-        )
-        # callback 內呼叫 hook
-        assert "options.onMainSwap" in content, (
-            "56b-T4 違規：animations.js 應在 t=0.30 callback 呼叫 options.onMainSwap?.()"
-        )
 
 
 class TestSettingsPanelStructureGuard:
