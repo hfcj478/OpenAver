@@ -12,13 +12,23 @@ module.exports = {
     'color-no-hex': true,
     'declaration-property-value-disallowed-list': {
       '/^transition/': ['/\\b0?\\.\\d+s\\b/'],
-      '/^(-webkit-)?(backdrop-)?filter$/': ['/blur\\(\\s*\\d+px/'],
+      // Supplementary cross-file (web/static/css/**) guard, NOT the faithful port of the
+      // deleted pytest test_no_hardcoded_blur_literal. Bans ANY numeric blur literal
+      // (decimal / unitless / non-px: blur(.5rem) / blur(8) / blur(2.5px)), not just \d+px,
+      // but ONLY inside filter/backdrop-filter declaration VALUES — it does not see a
+      // literal stored in a custom property (e.g. --custom-blur: blur(8px)) that is later
+      // consumed via backdrop-filter: var(--custom-blur). Allows blur(var(--fluent-blur*))
+      // (no digit right after '('). The faithful whole-text (property-agnostic) port of the
+      // pytest's regex now lives in css-guard rule CG-FLU-02 (scripts/css-guard.mjs), scoped
+      // to fluent-materials.css.
+      '/^(-webkit-)?(backdrop-)?filter$/': ['/blur\\(\\s*\\.?\\d/'],
       'box-shadow': ['/\\brgba\\(\\s*\\d/'],
       'border-radius': ['/^\\d+px/'],
       'object-position': ['/100%\\s+20%/'],
       // feature/76：禁手動把 view-transition-name 設為 root（root 是隱式預設，手動覆寫會
       // 與主題切換的 ::view-transition-*(root) 機制混亂）。命名一律走 sidebar/main-content/none。
       'view-transition-name': ['root'],
+      'aspect-ratio': ['/\\b71\\s*\\/\\s*100\\b/'],  // 96c-T1: 禁 .poster-crop 硬編比例，須用 var(--poster-crop-ratio)
     },
     'selector-disallowed-list': ['/:is\\([^)]*manual-input/'],
     // Standard config rules relaxed for OpenAver's existing CSS conventions

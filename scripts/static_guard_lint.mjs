@@ -925,6 +925,1065 @@ const RULES = [
     required: ['@click.stop="enrichVideo(currentLightboxVideo)"'],
     note: '[TestLongPressTouchSuppression] test_lightbox_enrich_btn_longpress_retired — lightbox .lb-action-btn（enrichVideo(currentLightboxVideo)）已無長壓接線',
   },
+
+  // ==== 96d-T1：rescrape 家族遷移（TASK-96d-T1.md，10 live pytest class 非-CSS 半邊）====
+
+  // ---- [TestSimilarStageGuard] state-similar.js 整合 contract（57c-T4+T5）----
+  { file: 'web/static/js/pages/showcase/main.js', kind: 'required-string', pattern: "from '@/showcase/state-similar.js'", note: "[TestSimilarStageGuard] test_main_js_imports_and_merges_state_similar — main.js import state-similar" },
+  { file: 'web/static/js/pages/showcase/main.js', kind: 'required-string', pattern: 'stateSimilar.call(this)', note: '[TestSimilarStageGuard] test_main_js_imports_and_merges_state_similar — main.js mergeState chain' },
+  { file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string', pattern: 'export const SIMILAR_ANCHORS', note: '[TestSimilarStageGuard] test_state_similar_exports_similar_anchors' },
+  { file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string', pattern: /export\s+function\s+stateSimilar\s*\(/, note: '[TestSimilarStageGuard] test_state_similar_exposes_similar_mode_methods — stateSimilar factory export' },
+  { file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string', pattern: 'openSimilarMode', note: '[TestSimilarStageGuard] test_state_similar_exposes_similar_mode_methods — 4 主流程 method' },
+  { file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string', pattern: 'closeSimilarMode', note: '[TestSimilarStageGuard] test_state_similar_exposes_similar_mode_methods — 4 主流程 method' },
+  { file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string', pattern: 'initSimilarStage', note: '[TestSimilarStageGuard] test_state_similar_exposes_similar_mode_methods — 4 主流程 method' },
+  { file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string', pattern: 'destroySimilarStage', note: '[TestSimilarStageGuard] test_state_similar_exposes_similar_mode_methods — 4 主流程 method' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'similar-stage', note: '[TestSimilarStageGuard] test_similar_stage_sibling_dom_in_showcase_html — sibling DOM backdrop class' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'initSimilarStage()', note: '[TestSimilarStageGuard] test_similar_stage_sibling_dom_in_showcase_html — x-effect lifecycle init' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'destroySimilarStage()', note: '[TestSimilarStageGuard] test_similar_stage_sibling_dom_in_showcase_html — x-effect lifecycle destroy' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'similar-stage-inner', note: '[TestSimilarStageGuard] test_similar_stage_sibling_dom_in_showcase_html — 960x620 inner stage' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'SIMILAR_ANCHORS', note: '[TestSimilarStageGuard] test_similar_stage_sibling_dom_in_showcase_html — x-for anchor 對齊 export' },
+  { file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: 'slot-icon-overlay', note: '[TestSimilarStageGuard] test_no_slot_icon_overlay_in_templates (showcase.html)' },
+  { file: 'web/templates/motion_lab.html', kind: 'forbidden-string', pattern: 'slot-icon-overlay', note: '[TestSimilarStageGuard] test_no_slot_icon_overlay_in_templates (motion_lab.html)' },
+  { file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: /\b(?:on|play|build|calc|destroy|init|open|close)Clip[A-Z]/, note: '[TestSimilarStageGuard] test_no_clip_alpine_methods_in_showcase_and_similar — showcase.html 半邊（state-similar.js 半邊由 eslint SEL_CLIP_METHOD_IDENT 覆蓋，Group 5b）' },
+
+  // ---- [TestRescrapeEntryGuard] showcase ⚙ gear 唯一進階重刮入口（62b-1 → 74b US4 → 74c-T1/T3）----
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: /<button[^>]*\bclass="lb-rescrape-gear"[^>]*>\s*<i[^>]*\bbi-gear\b/,
+    note: '[TestRescrapeEntryGuard] test_gear_has_bi_gear_icon — ⚙ gear button 內必須含 bi-gear icon',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: "openRescrape(currentLightboxVideo, 'lightbox')",
+    scope: /<button\b[^>]*?\bclass="lb-rescrape-gear".*?<\/button>/s,
+    note: "[TestRescrapeEntryGuard] test_gear_opens_rescrape_lightbox — ⚙ @click 必須 openRescrape(currentLightboxVideo, 'lightbox')",
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: /x-show="[^"]*"/,
+    scope: /<button\b[^>]*?\bclass="lb-rescrape-gear".*?<\/button>/s,
+    note: '[TestRescrapeEntryGuard] test_gear_gated_by_rescrape_enabled — 74c-T1：⚙ 齒輪已退役 x-show gate（negative 半邊）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: "openRescrape(currentLightboxVideo, 'lightbox')",
+    scope: /<button\b[^>]*?\bclass="lb-rescrape-gear".*?<\/button>/s,
+    note: "[TestRescrapeEntryGuard] test_gear_gated_by_rescrape_enabled — @click 仍在（齒輪行為不變，positive 半邊，冗餘但忠實 port）",
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: "t('showcase.rescrape.entry_tooltip')",
+    scope: /<button\b[^>]*?\bclass="lb-rescrape-gear".*?<\/button>/s,
+    note: '[TestRescrapeEntryGuard] test_gear_tooltip_uses_i18n_key — ⚙ 用 i18n key，不硬編碼',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: /:aria-label="[^"]*entry_tooltip/,
+    scope: /<button\b[^>]*?\bclass="lb-rescrape-gear".*?<\/button>/s,
+    note: '[TestRescrapeEntryGuard] test_gear_tooltip_uses_i18n_key — ⚙ 缺 :aria-label（可及性）',
+  },
+  { file: 'web/static/js/shared/long-press.js', kind: 'file-absent', note: '[TestRescrapeEntryGuard] test_long_press_helper_retired — 74c-T3：long-press.js 已刪除，不得再存在' },
+  { file: 'web/static/js/pages/showcase/main.js', kind: 'forbidden-string', pattern: "from '@/shared/long-press.js'", note: '[TestRescrapeEntryGuard] test_main_js_imports_and_merges_long_press — showcase main.js 已移除 long-press import' },
+  { file: 'web/static/js/pages/showcase/main.js', kind: 'forbidden-string', pattern: 'longPressState', note: '[TestRescrapeEntryGuard] test_main_js_imports_and_merges_long_press — showcase main.js 已移除 longPressState 接線' },
+  { file: 'web/static/js/shared/state-rescrape.js', kind: 'forbidden-string', pattern: 'rescrapeEnabled', note: '[TestRescrapeEntryGuard] test_rescrape_enabled_method_in_mixin — 74c-T1：rescrapeEnabled() 已退役' },
+  { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: 'window.__ADVANCED_SEARCH__', note: '[TestRescrapeEntryGuard] test_rescrape_enabled_method_in_mixin — window.__ADVANCED_SEARCH__ 仍在（sources/proxy/CF live 消費者）' },
+
+  // ---- [TestSearchRescrapeEntryGuard] Search 進階搜尋入口改用 62a 共用重刮彈窗（62c-1）----
+  { file: 'web/static/js/pages/search/main.js', kind: 'required-string', pattern: "from '@/shared/state-rescrape.js'", note: '[TestSearchRescrapeEntryGuard] test_search_main_imports_rescrape_state — search main.js import rescrapeState' },
+  { file: 'web/static/js/pages/search/main.js', kind: 'required-string', pattern: /rescrapeState\s*\(/, note: '[TestSearchRescrapeEntryGuard] test_search_main_imports_rescrape_state — search main.js mergeState chain' },
+  { file: 'web/static/js/pages/search/main.js', kind: 'forbidden-string', pattern: "from '@/shared/long-press.js'", note: '[TestSearchRescrapeEntryGuard] test_search_main_imports_long_press_state — 74c-T3：search main.js 已移除 long-press import' },
+  { file: 'web/static/js/pages/search/main.js', kind: 'forbidden-string', pattern: 'longPressState', note: '[TestSearchRescrapeEntryGuard] test_search_main_imports_long_press_state — 74c-T3：search main.js 已移除 longPressState' },
+  { file: 'web/templates/search.html', kind: 'required-string', pattern: "{% include '_rescrape_modal.html' %}", note: '[TestSearchRescrapeEntryGuard] test_search_html_includes_rescrape_modal' },
+  { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'advancedPickerModal', note: '[TestSearchRescrapeEntryGuard] test_search_html_no_advanced_picker_modal — B1 picker DOM 整塊已移除' },
+  { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'advancedPickerConfirm', note: '[TestSearchRescrapeEntryGuard] test_search_html_no_advanced_picker_modal — B1 picker DOM 整塊已移除' },
+  { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'advancedPickerSelected', note: '[TestSearchRescrapeEntryGuard] test_search_html_no_advanced_picker_modal — B1 picker DOM 整塊已移除' },
+  { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'advancedPickerClose', note: '[TestSearchRescrapeEntryGuard] test_search_html_no_advanced_picker_modal — B1 picker DOM 整塊已移除' },
+  { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'advancedPickerBuiltinSources', note: '[TestSearchRescrapeEntryGuard] test_search_html_no_advanced_picker_modal — B1 picker DOM 整塊已移除' },
+  { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'advancedPickerMetatubeSources', note: '[TestSearchRescrapeEntryGuard] test_search_html_no_advanced_picker_modal — B1 picker DOM 整塊已移除' },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: '@mousedown',
+    scope: /<button\b(?:(?!<\/button>).)*?\bid="btnSubmit"(?:(?!<\/button>).)*?<\/button>/s,
+    note: '[TestSearchRescrapeEntryGuard] test_submit_btn_longpress_retired_for_auto_pill — #btnSubmit 不應再有 @mousedown 長壓 wiring',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'longPressStart',
+    scope: /<button\b(?:(?!<\/button>).)*?\bid="btnSubmit"(?:(?!<\/button>).)*?<\/button>/s,
+    note: '[TestSearchRescrapeEntryGuard] test_submit_btn_longpress_retired_for_auto_pill — #btnSubmit 不應再接 longPressStart',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: '@mousedown',
+    scope: /<button\b(?:(?!<\/button>).)*?\bid="btnSubmit"(?:(?!<\/button>).)*?<\/button>/s,
+    note: '[TestSearchRescrapeEntryGuard] test_submit_btn_six_events_retired — #btnSubmit 六長壓事件全移除',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: '@mouseup',
+    scope: /<button\b(?:(?!<\/button>).)*?\bid="btnSubmit"(?:(?!<\/button>).)*?<\/button>/s,
+    note: '[TestSearchRescrapeEntryGuard] test_submit_btn_six_events_retired — #btnSubmit 六長壓事件全移除',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: '@mouseleave',
+    scope: /<button\b(?:(?!<\/button>).)*?\bid="btnSubmit"(?:(?!<\/button>).)*?<\/button>/s,
+    note: '[TestSearchRescrapeEntryGuard] test_submit_btn_six_events_retired — #btnSubmit 六長壓事件全移除',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: '@touchstart',
+    scope: /<button\b(?:(?!<\/button>).)*?\bid="btnSubmit"(?:(?!<\/button>).)*?<\/button>/s,
+    note: '[TestSearchRescrapeEntryGuard] test_submit_btn_six_events_retired — #btnSubmit 六長壓事件全移除',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: '@touchend',
+    scope: /<button\b(?:(?!<\/button>).)*?\bid="btnSubmit"(?:(?!<\/button>).)*?<\/button>/s,
+    note: '[TestSearchRescrapeEntryGuard] test_submit_btn_six_events_retired — #btnSubmit 六長壓事件全移除',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: '@touchcancel',
+    scope: /<button\b(?:(?!<\/button>).)*?\bid="btnSubmit"(?:(?!<\/button>).)*?<\/button>/s,
+    note: '[TestSearchRescrapeEntryGuard] test_submit_btn_six_events_retired — #btnSubmit 六長壓事件全移除',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: '@click',
+    scope: /<button\b(?:(?!<\/button>).)*?\bid="btnSubmit"(?:(?!<\/button>).)*?<\/button>/s,
+    note: '[TestSearchRescrapeEntryGuard] test_submit_btn_click_guard_retired — #btnSubmit 不應再有 @click（回歸純 type="submit"）',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'longPressClickGuard',
+    scope: /<button\b(?:(?!<\/button>).)*?\bid="btnSubmit"(?:(?!<\/button>).)*?<\/button>/s,
+    note: '[TestSearchRescrapeEntryGuard] test_submit_btn_click_guard_retired — #btnSubmit 不應再含 longPressClickGuard',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'advancedLongPressSubmitGuard',
+    scope: /<form\b[^>]*\bid="searchForm"[^>]*@submit\.prevent="([^"]*)"/,
+    note: '[TestSearchRescrapeEntryGuard] test_form_submit_guard_removed — form @submit 不應再含 advancedLongPressSubmitGuard',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string', pattern: 'doSearch()',
+    scope: /<form\b[^>]*\bid="searchForm"[^>]*@submit\.prevent="([^"]*)"/,
+    note: '[TestSearchRescrapeEntryGuard] test_form_submit_guard_removed — form @submit 應直接走 doSearch()',
+  },
+  { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'advancedLongPressStart', note: '[TestSearchRescrapeEntryGuard] test_search_html_no_advanced_long_press_wiring' },
+  { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'advancedLongPressEnd', note: '[TestSearchRescrapeEntryGuard] test_search_html_no_advanced_long_press_wiring' },
+  { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'advancedLongPressCancel', note: '[TestSearchRescrapeEntryGuard] test_search_html_no_advanced_long_press_wiring' },
+  { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'advancedLongPressClickGuard', note: '[TestSearchRescrapeEntryGuard] test_search_html_no_advanced_long_press_wiring' },
+  { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'advancedLongPressSubmitGuard', note: '[TestSearchRescrapeEntryGuard] test_search_html_no_advanced_long_press_wiring' },
+  { file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'forbidden-string', pattern: 'advancedLongPressStart', note: '[TestSearchRescrapeEntryGuard] test_picker_long_press_mixin_removed — 整套 advancedLongPress* mixin 已移除' },
+  { file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'forbidden-string', pattern: 'advancedLongPressEnd', note: '[TestSearchRescrapeEntryGuard] test_picker_long_press_mixin_removed — 整套 advancedLongPress* mixin 已移除' },
+  { file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'forbidden-string', pattern: 'advancedLongPressCancel', note: '[TestSearchRescrapeEntryGuard] test_picker_long_press_mixin_removed — 整套 advancedLongPress* mixin 已移除' },
+  { file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'forbidden-string', pattern: 'advancedLongPressClickGuard', note: '[TestSearchRescrapeEntryGuard] test_picker_long_press_mixin_removed — 整套 advancedLongPress* mixin 已移除' },
+  { file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'forbidden-string', pattern: 'advancedLongPressSubmitGuard', note: '[TestSearchRescrapeEntryGuard] test_picker_long_press_mixin_removed — 整套 advancedLongPress* mixin 已移除' },
+  { file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'forbidden-string', pattern: '_advancedLongPressFired', note: '[TestSearchRescrapeEntryGuard] test_picker_long_press_mixin_removed — 整套 advancedLongPress* mixin 已移除' },
+  { file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'forbidden-string', pattern: '_advancedLongPressTimer', note: '[TestSearchRescrapeEntryGuard] test_picker_long_press_mixin_removed — 整套 advancedLongPress* mixin 已移除' },
+  { file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'forbidden-string', pattern: 'LONG_PRESS_MS', note: '[TestSearchRescrapeEntryGuard] test_picker_long_press_mixin_removed — 整套 advancedLongPress* mixin 已移除' },
+  { file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'required-string', pattern: /async\s+advancedSearch\s*\(/, note: '[TestSearchRescrapeEntryGuard] test_picker_long_press_mixin_removed — advancedSearch(source) 本體保留' },
+  { file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'forbidden-string', pattern: 'advancedPickerOpen', note: '[TestSearchRescrapeEntryGuard] test_picker_dead_methods_removed — B1 picker-modal 專屬 method 已移除' },
+  { file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'forbidden-string', pattern: 'advancedPickerSelected', note: '[TestSearchRescrapeEntryGuard] test_picker_dead_methods_removed — B1 picker-modal 專屬 method 已移除' },
+  { file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'forbidden-string', pattern: 'advancedPickerClose', note: '[TestSearchRescrapeEntryGuard] test_picker_dead_methods_removed — B1 picker-modal 專屬 method 已移除' },
+  { file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'forbidden-string', pattern: 'advancedPickerConfirm', note: '[TestSearchRescrapeEntryGuard] test_picker_dead_methods_removed — B1 picker-modal 專屬 method 已移除' },
+  { file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'forbidden-string', pattern: 'advancedPickerBuiltinSources', note: '[TestSearchRescrapeEntryGuard] test_picker_dead_methods_removed — B1 picker-modal 專屬 method 已移除' },
+  { file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'forbidden-string', pattern: 'advancedPickerMetatubeSources', note: '[TestSearchRescrapeEntryGuard] test_picker_dead_methods_removed — B1 picker-modal 專屬 method 已移除' },
+  { file: 'web/static/js/pages/search/state/advanced-picker.js', kind: 'forbidden-string', pattern: '_advancedSortedSources', note: '[TestSearchRescrapeEntryGuard] test_picker_dead_methods_removed — B1 picker-modal 專屬 method 已移除' },
+  { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: 'advancedSearch(', note: '[TestSearchRescrapeEntryGuard] test_search_branch_uses_advanced_search — search 分支成功路徑必須走 advancedSearch(' },
+  { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: /rescrapeEntryPoint\s*===\s*'search'/, note: '[TestSearchRescrapeEntryGuard] test_search_branch_uses_advanced_search — 以 rescrapeEntryPoint === \'search\' 分流' },
+  // 註：test_search_branch_no_fallback_search（"fallbackSearch" not in src）已由既有 eslint
+  // Group 7（shared/state-rescrape.js）的 SEL selector `CallExpression[callee.property.name='fallbackSearch']`
+  // 覆蓋，不新增 RULES 列（見 TASK-96d-T1.md §3 row 46 disposition）。
+  { file: 'web/templates/search.html', kind: 'required-string', pattern: "{% include '_advanced_search_bootstrap.html' %}", note: '[TestSearchRescrapeEntryGuard] test_bootstrap_include_not_regressed — 不回歸 62a-0：search.html 仍 include bootstrap' },
+
+  // ---- [TestSwitchSourcePickGuard] 結果面板 🔄 長壓挑來源 wiring + entryPoint 分支 + 番號可編輯（62c-3 US7）----
+  { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'id="switchSourceBtn"', note: '[TestSwitchSourcePickGuard] test_switch_source_btn_retired — TASK-74a-T3：#switchSourceBtn 整顆退役' },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'longPressStart',
+    scope: /<button\b(?:(?!<\/button>).)*?openSourceUrl(?:(?!<\/button>).)*?<\/button>/s,
+    note: '[TestSwitchSourcePickGuard] test_open_source_url_btn_not_touched — ↗ openSourceUrl 鈕不得沾長壓 wiring',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'longPressEnd',
+    scope: /<button\b(?:(?!<\/button>).)*?openSourceUrl(?:(?!<\/button>).)*?<\/button>/s,
+    note: '[TestSwitchSourcePickGuard] test_open_source_url_btn_not_touched — ↗ openSourceUrl 鈕不得沾長壓 wiring',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'longPressCancel',
+    scope: /<button\b(?:(?!<\/button>).)*?openSourceUrl(?:(?!<\/button>).)*?<\/button>/s,
+    note: '[TestSwitchSourcePickGuard] test_open_source_url_btn_not_touched — ↗ openSourceUrl 鈕不得沾長壓 wiring',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'longPressClickGuard',
+    scope: /<button\b(?:(?!<\/button>).)*?openSourceUrl(?:(?!<\/button>).)*?<\/button>/s,
+    note: '[TestSwitchSourcePickGuard] test_open_source_url_btn_not_touched — ↗ openSourceUrl 鈕不得沾長壓 wiring',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'openSwitchSourcePicker',
+    scope: /<button\b(?:(?!<\/button>).)*?openSourceUrl(?:(?!<\/button>).)*?<\/button>/s,
+    note: '[TestSwitchSourcePickGuard] test_open_source_url_btn_not_touched — ↗ openSourceUrl 鈕不得沾長壓 wiring',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'forbidden-string', pattern: /(?::readonly|\breadonly)\b/,
+    scope: /<input\b(?:(?!>).)*?\bclass="rescrape-num-input"(?:(?!>).)*?>/s,
+    note: '[TestSwitchSourcePickGuard] test_number_input_editable_in_all_entry_points — 番號 input 不得有 readonly / :readonly 綁定（2026-05-31 放開唯讀）',
+  },
+  { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: /openSwitchSourcePicker\s*\(\s*\)\s*\{/, note: '[TestSwitchSourcePickGuard] test_open_switch_source_picker_method_present — openSwitchSourcePicker method' },
+  { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: /openRescrape\(\s*null\s*,\s*'switch-source'\s*\)/, note: "[TestSwitchSourcePickGuard] test_open_switch_source_picker_method_present — openRescrape(null,'switch-source')" },
+  { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: '_switchTarget', note: '[TestSwitchSourcePickGuard] test_open_switch_source_picker_method_present — _switchTarget（race 防覆蓋錯卡）' },
+  { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: /rescrapeEntryPoint\s*===\s*'switch-source'/, note: '[TestSwitchSourcePickGuard] test_switch_source_branch_present — rescrapeEntryPoint === \'switch-source\' 分流' },
+  { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: 'seedSwitchState', note: '[TestSwitchSourcePickGuard] test_switch_source_branch_present — switch-source 分支呼叫 window.SearchUI.seedSwitchState' },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: 'switch-source',
+    scope: /rescrapeEntryPoint\s*:\s*'lightbox'\s*,\s*\/\/([^\n]*)/,
+    note: "[TestSwitchSourcePickGuard] test_entry_point_comment_lists_switch_source — rescrapeEntryPoint 宣告行末註解須列出 'switch-source'",
+  },
+  { file: 'web/static/js/pages/search/ui.js', kind: 'required-string', pattern: /function\s+seedSwitchState\s*\(/, note: '[TestSwitchSourcePickGuard] test_ui_exports_seed_switch_state — seedSwitchState 函式定義' },
+  {
+    file: 'web/static/js/pages/search/ui.js', kind: 'required-string', pattern: 'seedSwitchState',
+    scope: /window\.SearchUI\s*=\s*\{([^}]*)\}/s,
+    note: '[TestSwitchSourcePickGuard] test_ui_exports_seed_switch_state — window.SearchUI 必須 export seedSwitchState',
+  },
+
+  // ---- [TestSwitchSourceAutoCycle] picker「自動」pill 直接走 switchSource() 循環（TASK-74a-T4 US2）----
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: 'closeRescrape(',
+    scope: /rescrapeEntryPoint\s*===\s*'switch-source'\s*&&\s*sourceId\s*===\s*'auto'\s*\)\s*\{(.*?)\}/s,
+    note: '[TestSwitchSourceAutoCycle] test_switch_source_auto_short_circuit_branch_present — short-circuit 分支內須呼叫 closeRescrape()',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: 'switchSource(',
+    scope: /rescrapeEntryPoint\s*===\s*'switch-source'\s*&&\s*sourceId\s*===\s*'auto'\s*\)\s*\{(.*?)\}/s,
+    note: '[TestSwitchSourceAutoCycle] test_switch_source_auto_short_circuit_branch_present — short-circuit 分支內須呼叫 switchSource()',
+  },
+
+  // ---- [TestRescrapeSourcesSeededAtInit] 結果面板來源膠囊 rescrapeSources 需 init 就有料（TASK-74a-T5 US2 修）----
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: 'window.__ADVANCED_SEARCH__',
+    scope: /^\s*rescrapeSources:\s*(.+?),\s*$/m,
+    note: '[TestRescrapeSourcesSeededAtInit] test_rescrape_sources_initializer_seeds_from_bootstrap — 初始化器須從 window.__ADVANCED_SEARCH__.sources 灌入',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: 'sources',
+    scope: /^\s*rescrapeSources:\s*(.+?),\s*$/m,
+    note: '[TestRescrapeSourcesSeededAtInit] test_rescrape_sources_initializer_seeds_from_bootstrap — 初始化器須從 window.__ADVANCED_SEARCH__.sources 灌入',
+  },
+
+  // ---- [TestRescrapePreviewSourcePill] 換源預覽 flat 唯讀膠囊 template contract（TASK-74b-T2 US3）----
+  { file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: "{% from '_macros/source_pill.html' import source_pill %}", note: '[TestRescrapePreviewSourcePill] test_macro_import_present' },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'rescrape-preview-source-pill',
+    scope: /\{\{\s*source_pill\((.*?)\)\s*\}\}/s,
+    note: '[TestRescrapePreviewSourcePill] _preview_pill_call helper — 錨定抽出的 macro 呼叫確實是 preview 膠囊（防抓錯 pill）',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: /variant\s*=\s*'flat'/,
+    scope: /\{\{\s*source_pill\((.*?)\)\s*\}\}/s,
+    note: "[TestRescrapePreviewSourcePill] test_preview_pill_is_flat_variant — preview 膠囊必須 variant='flat'（唯讀）",
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'rescrapePreview && rescrapePreview.sourceName',
+    scope: /\{\{\s*source_pill\((.*?)\)\s*\}\}/s,
+    note: '[TestRescrapePreviewSourcePill] test_preview_pill_name_null_safe — name 必須 null-safe（CD-74b-11）',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', anyOf: true,
+    pattern: ['tabindex=\\"-1\\"', 'tabindex="-1"'],
+    scope: /\{\{\s*source_pill\((.*?)\)\s*\}\}/s,
+    note: '[TestRescrapePreviewSourcePill] test_preview_pill_readonly_attrs — tabindex=-1（唯讀移出 tab 序，含跳脫變體 OR）',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'source-pill--uncensored',
+    scope: /\{\{\s*source_pill\((.*?)\)\s*\}\}/s,
+    note: '[TestRescrapePreviewSourcePill] test_preview_pill_readonly_attrs — 動態 uncensored :class（依 sourceCensored）',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'sourceCensored',
+    scope: /\{\{\s*source_pill\((.*?)\)\s*\}\}/s,
+    note: '[TestRescrapePreviewSourcePill] test_preview_pill_readonly_attrs — 動態 uncensored :class（依 sourceCensored）',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'forbidden-string', pattern: '@click',
+    scope: /\{\{\s*source_pill\((.*?)\)\s*\}\}/s,
+    note: '[TestRescrapePreviewSourcePill] test_preview_pill_readonly_attrs — preview 膠囊唯讀，不得有 @click',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'forbidden-string',
+    pattern: '&nbsp;·&nbsp;<span x-text="rescrapePreview && rescrapePreview.sourceName"',
+    note: '[TestRescrapePreviewSourcePill] test_old_plaintext_source_removed — 舊純文字 span 已移除',
+  },
+
+  // ---- [TestRescrapePreviewEffectiveSource] rescrapePreview 組裝算 effective source + sourceCensored（TASK-74b-T2 US3）----
+  // ⚠ 雙 scope：Scope-Whole（無 capture group，取 match[0]）vs Scope-Body（含 capture group，取
+  // match[1]）——同一段原始 pytest _assembly() 回傳 (whole, body) 兩種擷取，不可共用同一 regex 物件
+  // （見 TASK-96d-T1.md §8）。
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: "sourceId === 'auto'",
+    scope: /const previewSourceId =[\s\S]*?this\.rescrapePreview = \{[\s\S]*?\};/,
+    note: "[TestRescrapePreviewEffectiveSource] test_effective_source_auto_branch — previewSourceId 在 auto 時取 data._source（Scope-Whole）",
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: 'data._source',
+    scope: /const previewSourceId =[\s\S]*?this\.rescrapePreview = \{[\s\S]*?\};/,
+    note: '[TestRescrapePreviewEffectiveSource] test_effective_source_auto_branch — previewSourceId 在 auto 時取 data._source（Scope-Whole）',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: '_resolveSourceName(previewSourceId)',
+    scope: /const previewSourceId =[\s\S]*?this\.rescrapePreview = \{([\s\S]*?)\};/s,
+    note: '[TestRescrapePreviewEffectiveSource] test_source_name_uses_effective_id — sourceName 用 previewSourceId 解析（Scope-Body）',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: 'sourceCensored',
+    scope: /const previewSourceId =[\s\S]*?this\.rescrapePreview = \{([\s\S]*?)\};/s,
+    note: '[TestRescrapePreviewEffectiveSource] test_source_censored_field — rescrapePreview 加 sourceCensored 欄位（Scope-Body）',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: 'is_censored',
+    scope: /const previewSourceId =[\s\S]*?this\.rescrapePreview = \{([\s\S]*?)\};/s,
+    note: '[TestRescrapePreviewEffectiveSource] test_source_censored_field — rescrapePreview 加 sourceCensored 欄位（Scope-Body）',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: '?? true',
+    scope: /const previewSourceId =[\s\S]*?this\.rescrapePreview = \{([\s\S]*?)\};/s,
+    note: '[TestRescrapePreviewEffectiveSource] test_source_censored_field — 找不到 source → ?? true（藍 fallback，Scope-Body）',
+  },
+
+  // ---- [TestRescrapeModalGuard] 進階重刮彈窗 partial 結構 / i18n / include（非-CSS 半邊，96c CG-XP-01 已建 CSS 半邊）----
+  { file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: "rescrapeStep === 'pick'", note: '[TestRescrapeModalGuard] test_partial_two_step_structure — pick step' },
+  { file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: "rescrapeStep === 'preview'", note: '[TestRescrapeModalGuard] test_partial_two_step_structure — preview step' },
+  { file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'class="modal fluent-modal', note: '[TestRescrapeModalGuard] test_partial_uses_fluent_modal_pattern — 沿用 modal fluent-modal class' },
+  { file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: "{ 'modal-open': rescrapeOpen }", note: "[TestRescrapeModalGuard] test_partial_uses_fluent_modal_pattern — :class=\"{ 'modal-open': rescrapeOpen }\" 開關" },
+  { file: 'web/templates/_rescrape_modal.html', kind: 'forbidden-string', pattern: '.showModal()', note: '[TestRescrapeModalGuard] test_partial_uses_fluent_modal_pattern — 不應使用原生 .showModal()' },
+  { file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'source-pill source-pill--action', note: '[TestRescrapeModalGuard] test_partial_uses_source_pill_action_class' },
+  { file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'x-for="s in rescrapeMetatubeSources()"', note: '[TestRescrapeModalGuard] test_metatube_group_is_data_driven — Metatube 分組 data-driven' },
+  { file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: '<div class="rescrape-group-sep">Metatube</div>', note: '[TestRescrapeModalGuard] test_metatube_group_is_data_driven — Metatube group-sep label（品牌名不走 i18n，CD-62-12）' },
+  { file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'source-pill-mt-badge', note: '[TestRescrapeModalGuard] test_metatube_group_is_data_driven — metatube type badge' },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'x-show="rescrapeMetatubeSources().length === 0"',
+    scope: /<div class="rescrape-empty-note"([^>]*)>/,
+    note: '[TestRescrapeModalGuard] test_metatube_empty_note_is_conditional — group_metatube_empty note 條件化',
+  },
+  { file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: '/api/proxy-image?url=', note: '[TestRescrapeModalGuard] test_preview_img_uses_proxy_image — preview cover 走 proxy-image（CD-62-14 #8）' },
+  { file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'encodeURIComponent', note: '[TestRescrapeModalGuard] test_preview_img_uses_proxy_image — preview img URL encodeURIComponent' },
+  { file: 'web/templates/_rescrape_modal.html', kind: 'forbidden-string', pattern: '/api/gallery/image', note: '[TestRescrapeModalGuard] test_preview_img_uses_proxy_image — 禁用 /api/gallery/image（給 DB file:///）' },
+  { file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'rescrape-confirm-btn cancel', note: '[TestRescrapeModalGuard] test_confirm_row_has_cancel_and_confirm_buttons — ✗ 鈕' },
+  { file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'rescrape-confirm-btn confirm', note: '[TestRescrapeModalGuard] test_confirm_row_has_cancel_and_confirm_buttons — ✓ 鈕' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: "{% include '_rescrape_modal.html' %}", note: '[TestRescrapeModalGuard] test_showcase_includes_partial' },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: '"modal_title"',
+    scope: { anchor: /"rescrape"\s*:\s*\{/, braceBalanced: true },
+    note: '[TestRescrapeModalGuard] test_zh_tw_has_rescrape_keys — showcase.rescrape.modal_title',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: '"number_label"',
+    scope: { anchor: /"rescrape"\s*:\s*\{/, braceBalanced: true },
+    note: '[TestRescrapeModalGuard] test_zh_tw_has_rescrape_keys — showcase.rescrape.number_label',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: '"filename_hint"',
+    scope: { anchor: /"rescrape"\s*:\s*\{/, braceBalanced: true },
+    note: '[TestRescrapeModalGuard] test_zh_tw_has_rescrape_keys — showcase.rescrape.filename_hint',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: '"source_question"',
+    scope: { anchor: /"rescrape"\s*:\s*\{/, braceBalanced: true },
+    note: '[TestRescrapeModalGuard] test_zh_tw_has_rescrape_keys — showcase.rescrape.source_question',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: '"auto_source"',
+    scope: { anchor: /"rescrape"\s*:\s*\{/, braceBalanced: true },
+    note: '[TestRescrapeModalGuard] test_zh_tw_has_rescrape_keys — showcase.rescrape.auto_source',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: '"not_found"',
+    scope: { anchor: /"rescrape"\s*:\s*\{/, braceBalanced: true },
+    note: '[TestRescrapeModalGuard] test_zh_tw_has_rescrape_keys — showcase.rescrape.not_found',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: '"overwrite_warning"',
+    scope: { anchor: /"rescrape"\s*:\s*\{/, braceBalanced: true },
+    note: '[TestRescrapeModalGuard] test_zh_tw_has_rescrape_keys — showcase.rescrape.overwrite_warning',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: '"confirm"',
+    scope: { anchor: /"rescrape"\s*:\s*\{/, braceBalanced: true },
+    note: '[TestRescrapeModalGuard] test_zh_tw_has_rescrape_keys — showcase.rescrape.confirm',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: '"back_to_pick"',
+    scope: { anchor: /"rescrape"\s*:\s*\{/, braceBalanced: true },
+    note: '[TestRescrapeModalGuard] test_zh_tw_has_rescrape_keys — showcase.rescrape.back_to_pick',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: '"success"',
+    scope: { anchor: /"rescrape"\s*:\s*\{/, braceBalanced: true },
+    note: '[TestRescrapeModalGuard] test_zh_tw_has_rescrape_keys — showcase.rescrape.success',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: '"fail"',
+    scope: { anchor: /"rescrape"\s*:\s*\{/, braceBalanced: true },
+    note: '[TestRescrapeModalGuard] test_zh_tw_has_rescrape_keys — showcase.rescrape.fail',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: '"search_title"',
+    scope: { anchor: /"rescrape"\s*:\s*\{/, braceBalanced: true },
+    note: '[TestRescrapeModalGuard] test_zh_tw_has_rescrape_keys — showcase.rescrape.search_title（64a 新增）',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'required-string', pattern: '"offline_tooltip"',
+    scope: { anchor: /"rescrape"\s*:\s*\{/, braceBalanced: true },
+    note: '[TestRescrapeModalGuard] test_zh_tw_has_rescrape_keys — showcase.rescrape.offline_tooltip（64a 新增）',
+  },
+
+  // ---- [TestSourcePillSharedComponentGuard] source pill 抽成共用 component + bootstrap partial（非-CSS 半邊，96c CG-XP-02 已建 CSS 半邊，TASK-62a-0）----
+  { file: 'web/templates/base.html', kind: 'required-string', pattern: '/static/css/components/source-pill.css', note: '[TestSourcePillSharedComponentGuard] test_base_html_links_source_pill_css' },
+  { file: 'web/templates/_advanced_search_bootstrap.html', kind: 'required-string', pattern: 'window.__ADVANCED_SEARCH__', note: '[TestSourcePillSharedComponentGuard] test_bootstrap_partial_exists_with_injection' },
+  { file: 'web/templates/_advanced_search_bootstrap.html', kind: 'required-string', pattern: 'config.sources', note: '[TestSourcePillSharedComponentGuard] test_bootstrap_partial_exists_with_injection' },
+  { file: 'web/templates/_advanced_search_bootstrap.html', kind: 'forbidden-string', pattern: 'config.advanced_search_enabled', note: '[TestSourcePillSharedComponentGuard] test_bootstrap_partial_exists_with_injection — 74c-T1：enabled 行已退役' },
+  { file: 'web/templates/search.html', kind: 'required-string', pattern: "{% include '_advanced_search_bootstrap.html' %}", note: '[TestSourcePillSharedComponentGuard] test_search_and_showcase_include_bootstrap (search.html)' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: "{% include '_advanced_search_bootstrap.html' %}", note: '[TestSourcePillSharedComponentGuard] test_search_and_showcase_include_bootstrap (showcase.html)' },
+  { file: 'web/templates/search.html', kind: 'forbidden-string', pattern: 'window.__ADVANCED_SEARCH__ =', note: '[TestSourcePillSharedComponentGuard] test_search_html_no_inline_advanced_search — 改走 include' },
+  {
+    file: 'web/templates/settings.html', kind: 'forbidden-string', pattern: /settings-sources-pill(?!s\b)/,
+    note: '[TestSourcePillSharedComponentGuard] test_settings_html_uses_source_pill_class — settings.html pill markup 改用 source-pill（派生 regex，等價原 strip-then-check：settings-sources-pills 複數容器合法保留，其餘 settings-sources-pill 前綴殘留違規）',
+  },
+
+  // ═══════════════ 96d-T2：Metatube 家族（3 pure-96d + 3 cross-plan primary=96d 非-CSS 半邊）═══════════════
+
+  // ---- [TestMetatubeB3Guard] CD-63b-3：state-config.js STUB 移除 + 真實 fetch + helpers；settings.html 更新（11 個斷言，#5 與 TestMetatubeB4Guard#6 同 file+pattern 共用列） ----
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'forbidden-string', pattern: 'STUB connect', note: '[TestMetatubeB3Guard] test_stub_connect_removed' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'forbidden-string', pattern: 'STUB disconnect', note: '[TestMetatubeB3Guard] test_stub_disconnect_removed' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: "'/api/settings/metatube/connect'", note: '[TestMetatubeB3Guard] test_connect_uses_real_fetch' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: "'/api/settings/metatube/disconnect'", note: '[TestMetatubeB3Guard] test_disconnect_uses_real_fetch' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'startProbePolling', note: '[TestMetatubeB3Guard]+[TestMetatubeB4Guard] startProbePolling present — test_start_probe_polling_present / test_js_has_start_probe_polling（同 file+kind+pattern，合併單列）' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'stopProbePolling', note: '[TestMetatubeB3Guard] test_stop_probe_polling_present' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'hydrateMetatubeStatus', note: '[TestMetatubeB3Guard] test_hydrate_metatube_status_present' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'onMetatubeEnabledChange', note: '[TestMetatubeB3Guard] test_on_metatube_enabled_change_present' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: 'metatubeLanMode', note: '[TestMetatubeB3Guard] test_settings_html_has_metatube_lan_mode' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: 'metatubeConnecting', note: '[TestMetatubeB3Guard] test_settings_html_has_metatube_connecting' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: 'metatubeEnableToggle', note: '[TestMetatubeB3Guard] test_settings_html_has_metatube_enable_toggle' },
+
+  // ---- [TestMetatubeB4Guard] CD-63b-4：probe UI 視覺層（進度列/retest/hint 移除/grey-out）（8 個斷言，#6 已併入 B3 上方共用列，本段物理新增 7） ----
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: 'mt_probe_testing', note: '[TestMetatubeB4Guard] test_html_has_mt_probe_testing_key' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: 'metatubeRetest', note: '[TestMetatubeB4Guard] test_html_has_metatube_retest_call' },
+  { file: 'web/templates/settings.html', kind: 'forbidden-string', pattern: 'settings-mt-probe-hint', note: '[TestMetatubeB4Guard] test_html_has_no_probe_hint_details' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: 'data-available', note: '[TestMetatubeB4Guard] test_html_has_data_available_binding' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'metatubeRetest', note: '[TestMetatubeB4Guard] test_js_has_metatube_retest' },
+  // test_js_has_start_probe_polling（B4#6）已與 B3#5 合併，見上方共用列。
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 's.available === false', note: '[TestMetatubeB4Guard] test_js_promote_metatube_has_available_check' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'mt_promote_unavailable_warning', note: '[TestMetatubeB4Guard] test_js_promote_metatube_has_unavailable_warning_key' },
+
+  // ---- [TestMetatubePickerWiringGuard] 63c-3：進階 picker 接 metatube 真資料（proxy_configured 注入 / routable gate / metatube 分組未刪，5 個斷言） ----
+  { file: 'web/templates/_advanced_search_bootstrap.html', kind: 'required-string', pattern: 'proxy_configured:', note: '[TestMetatubePickerWiringGuard] test_bootstrap_injects_proxy_configured' },
+  { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: 'rescrapeMetatubeSources', note: '[TestMetatubePickerWiringGuard] test_state_rescrape_keeps_routable_gate — rescrapeMetatubeSources 存在' },
+  { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: 'routable === true', note: '[TestMetatubePickerWiringGuard] test_state_rescrape_keeps_routable_gate — routable gate 保留' },
+  { file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: "s.type === 'metatube'", note: '[TestMetatubePickerWiringGuard] test_state_rescrape_keeps_routable_gate — type === metatube filter' },
+  { file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'rescrapeMetatubeSources()', note: '[TestMetatubePickerWiringGuard] test_modal_metatube_grouping_present' },
+
+  // ---- [TestMetatubeB5RecommendedRemoved] CD-63b-7：靜態 Recommended 群組殘留徹底拔除（10 個斷言，「推薦」locale-value forbidden-word 半邊已由 96a i18n_lint.mjs FORBIDDEN_WORDS 覆蓋，本段不重建） ----
+  { file: 'web/templates/settings.html', kind: 'forbidden-string', pattern: 's.recommended', note: '[TestMetatubeB5RecommendedRemoved] test_settings_html_no_recommended_filter' },
+  { file: 'web/templates/settings.html', kind: 'forbidden-string', pattern: 'mt_recommended_label', note: '[TestMetatubeB5RecommendedRemoved] test_settings_html_no_recommended_i18n_keys' },
+  { file: 'web/templates/settings.html', kind: 'forbidden-string', pattern: 'mt_other_label', note: '[TestMetatubeB5RecommendedRemoved] test_settings_html_no_recommended_i18n_keys' },
+  { file: 'web/templates/settings.html', kind: 'forbidden-string', pattern: 'settings-mt-group-head', note: '[TestMetatubeB5RecommendedRemoved] test_settings_html_no_group_head_class' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'forbidden-string', pattern: 'recommended:', note: '[TestMetatubeB5RecommendedRemoved] test_state_config_no_recommended_mock_field' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'forbidden-string', pattern: 'recommended: i < 4', note: '[TestMetatubeB5RecommendedRemoved] test_state_config_no_recommended_mock_field — 與上一列同 pytest 語句的第二個字面（超集關係，逐條複製不合併，見 TASK-96d-T2.md 待審查點 3）' },
+  { file: 'web/static/css/components/source-pill.css', kind: 'forbidden-string', pattern: '.rec-star', note: '[TestMetatubeB5RecommendedRemoved] test_source_pill_css_no_rec_star' },
+  { file: 'web/static/css/pages/settings.css', kind: 'forbidden-string', pattern: 'settings-mt-group-head', note: '[TestMetatubeB5RecommendedRemoved] test_settings_css_no_group_head' },
+  {
+    file: 'locales/zh_TW.json', kind: 'forbidden-string', pattern: '"mt_recommended_label"',
+    scope: { anchor: /"sources"\s*:\s*\{/, braceBalanced: true },
+    note: '[TestMetatubeB5RecommendedRemoved] test_zh_tw_no_recommended_label_keys — settings.sources 範圍內（非全檔，"sources" 字面值鍵在 L220 不含 `{` 不誤配）',
+  },
+  {
+    file: 'locales/zh_TW.json', kind: 'forbidden-string', pattern: '"mt_other_label"',
+    scope: { anchor: /"sources"\s*:\s*\{/, braceBalanced: true },
+    note: '[TestMetatubeB5RecommendedRemoved] test_zh_tw_no_recommended_label_keys — settings.sources 範圍內',
+  },
+
+  // ---- [TestDmmProxyRequiredGuard] 63c-6：DMM requires_proxy 灰化，非-CSS 半邊（CSS 半邊已由 96c css-guard CG-RO-02 覆蓋，本段不重建）----
+  // Scope A：clickActiveRowPill 函數體。⚠ Python 原始 regex 用 \Z（Python string-end anchor）+ re.DOTALL；
+  // JS 無 \Z（\Z 在 JS regex 是字面 "Z"），faithful port 用 $（配合僅 's' flag、無 'm' flag，JS $ 即絕對字串結尾，等價 Python \Z）。
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'requires_proxy',
+    scope: /clickActiveRowPill\s*\([^)]*\)\s*\{(.+?)(?=\n\s{8}\w|$)/s,
+    note: '[TestDmmProxyRequiredGuard] test_click_active_row_pill_has_requires_proxy_intercept — Scope A（\\Z→$ port）',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'isDmmAvailable',
+    scope: /clickActiveRowPill\s*\([^)]*\)\s*\{(.+?)(?=\n\s{8}\w|$)/s,
+    note: '[TestDmmProxyRequiredGuard] test_click_active_row_pill_has_requires_proxy_intercept — Scope A（\\Z→$ port）',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'dmm_proxy_required_hint',
+    scope: /clickActiveRowPill\s*\([^)]*\)\s*\{(.+?)(?=\n\s{8}\w|$)/s,
+    note: '[TestDmmProxyRequiredGuard] test_click_active_row_pill_has_requires_proxy_intercept — Scope A（\\Z→$ port）',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'forbidden-string', pattern: 'window.confirm',
+    scope: /clickActiveRowPill\s*\([^)]*\)\s*\{(.+?)(?=\n\s{8}\w|$)/s,
+    note: '[TestDmmProxyRequiredGuard] test_click_active_row_pill_no_window_confirm — Scope A（\\Z→$ port）',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string', pattern: ':data-proxy-required',
+    scope: /x-for="s in activeRowSources"[^>]*>.*?<div\s+class="source-pill"(.*?)role="option"/s,
+    note: '[TestDmmProxyRequiredGuard] test_settings_active_row_pill_has_data_proxy_required_binding — Scope B',
+  },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string', pattern: 'isDmmAvailable',
+    scope: /x-for="s in activeRowSources"[^>]*>.*?<div\s+class="source-pill"(.*?)role="option"/s,
+    note: '[TestDmmProxyRequiredGuard] test_settings_active_row_pill_proxy_required_uses_is_dmm_available — Scope B',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: /isSourceProxyBlocked\s*\([^)]*\)\s*\{/,
+    note: '[TestDmmProxyRequiredGuard] test_state_rescrape_has_is_source_proxy_blocked — unscoped method-definition regex（同 T1 test_open_switch_source_picker_method_present 慣例）',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: 'proxy_configured',
+    scope: /isSourceProxyBlocked\s*\([^)]*\)\s*\{([^}]+)\}/s,
+    note: '[TestDmmProxyRequiredGuard] test_state_rescrape_is_source_proxy_blocked_reads_proxy_configured — Scope C',
+  },
+  {
+    file: 'web/static/js/shared/state-rescrape.js', kind: 'required-string', pattern: 'requires_proxy',
+    scope: /isSourceProxyBlocked\s*\([^)]*\)\s*\{([^}]+)\}/s,
+    note: '[TestDmmProxyRequiredGuard] test_state_rescrape_is_source_proxy_blocked_reads_proxy_configured — Scope C',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: ':data-proxy-required',
+    scope: /x-for="s in rescrapeBuiltinSources\(\)"[^>]*>.*?<button\s+([^>]+)>/s,
+    note: '[TestDmmProxyRequiredGuard] test_rescrape_modal_builtin_pill_has_data_proxy_required — Scope D（與 Picker64a Scope E 同一 regex，同一 target）',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'isSourceProxyBlocked',
+    scope: /x-for="s in rescrapeBuiltinSources\(\)"[^>]*>.*?<button\s+([^>]+)>/s,
+    note: '[TestDmmProxyRequiredGuard] test_rescrape_modal_builtin_pill_click_uses_is_source_proxy_blocked — Scope D',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'forbidden-string', pattern: 'window.confirm',
+    scope: /x-for="s in rescrapeBuiltinSources\(\)"[^>]*>.*?<button\s+([^>]+)>/s,
+    note: '[TestDmmProxyRequiredGuard] test_rescrape_modal_builtin_pill_no_window_confirm — Scope D',
+  },
+
+  // ---- [TestPicker64aThreeStateGuard] 64a：進階 picker 三態膠囊語意 + 標題依入口，非-CSS Jinja markup 半邊（CSS 半邊已由 96c css-guard CG-RO-03 覆蓋，本段不重建）----
+  // Scope E = DmmProxy Scope D（同一 regex、同一 builtin button target，共用字面）。
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'data-enabled="true"',
+    scope: /x-for="s in rescrapeBuiltinSources\(\)"[^>]*>.*?<button\s+([^>]+)>/s,
+    note: '[TestPicker64aThreeStateGuard] test_builtin_pill_data_enabled_hardcoded_true — Scope E（=DmmProxy Scope D）',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'forbidden-string', pattern: ':data-enabled',
+    scope: /x-for="s in rescrapeBuiltinSources\(\)"[^>]*>.*?<button\s+([^>]+)>/s,
+    note: '[TestPicker64aThreeStateGuard] test_builtin_pill_data_enabled_hardcoded_true — Scope E（=DmmProxy Scope D），builtin 不得綁 s.enabled',
+  },
+  // Scope F：metatube pill 全 attrs。
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: ':data-enabled',
+    scope: /x-for="s in rescrapeMetatubeSources\(\)"[^>]*>.*?<button\s+([^>]+)>/s,
+    note: '[TestPicker64aThreeStateGuard] test_metatube_pill_data_enabled_binds_available — Scope F',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 's.available',
+    scope: /x-for="s in rescrapeMetatubeSources\(\)"[^>]*>.*?<button\s+([^>]+)>/s,
+    note: '[TestPicker64aThreeStateGuard] test_metatube_pill_data_enabled_binds_available + test_metatube_pill_offline_aria_disabled_and_guard — Scope F（兩測同 file+kind+pattern+scope，合併單列）',
+  },
+  // Scope G：metatube pill :data-enabled 屬性值（組合 regex，等價 pytest 兩層擷取，見 TASK-96d-T2.md §「本卡新用法」）。
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 's.available',
+    scope: /x-for="s in rescrapeMetatubeSources\(\)"[^>]*>.*?<button\s+[^>]*?:data-enabled="([^"]+)"[^>]*>/s,
+    note: '[TestPicker64aThreeStateGuard] test_metatube_pill_data_enabled_binds_available — Scope G（:data-enabled 值本身，非全 attrs）',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'forbidden-string', pattern: 's.enabled',
+    scope: /x-for="s in rescrapeMetatubeSources\(\)"[^>]*>.*?<button\s+[^>]*?:data-enabled="([^"]+)"[^>]*>/s,
+    note: '[TestPicker64aThreeStateGuard] test_metatube_pill_data_enabled_binds_available — Scope G，值域鎖定精準度（見本卡 Scope G vs F mutation 驗證）',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: ':aria-disabled',
+    scope: /x-for="s in rescrapeMetatubeSources\(\)"[^>]*>.*?<button\s+([^>]+)>/s,
+    note: '[TestPicker64aThreeStateGuard] test_metatube_pill_offline_aria_disabled_and_guard — Scope F',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'offline_tooltip',
+    scope: /x-for="s in rescrapeMetatubeSources\(\)"[^>]*>.*?<button\s+([^>]+)>/s,
+    note: '[TestPicker64aThreeStateGuard] test_metatube_pill_offline_aria_disabled_and_guard — Scope F',
+  },
+  // Scope H：metatube pill @click 屬性值。
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 's.available',
+    scope: /x-for="s in rescrapeMetatubeSources\(\)"[^>]*>.*?<button\s+[^>]*?@click="([^"]+)"[^>]*>/s,
+    note: '[TestPicker64aThreeStateGuard] test_metatube_pill_offline_aria_disabled_and_guard — Scope H（@click 值 offline guard）',
+  },
+  // Scope I：metatube pill :disabled 屬性值。
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'rescrapeLoadingSource',
+    scope: /x-for="s in rescrapeMetatubeSources\(\)"[^>]*>.*?<button\s+[^>]*?:disabled="([^"]+)"[^>]*>/s,
+    note: '[TestPicker64aThreeStateGuard] test_metatube_pill_offline_aria_disabled_and_guard — Scope I（native :disabled 只綁 loading）',
+  },
+  // Scope J：modal title h3（無 capture group，取 match[0]）。
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'x-text',
+    scope: /class="fluent-modal-title".*?<\/h3>/s,
+    note: '[TestPicker64aThreeStateGuard] test_modal_title_switches_by_entrypoint — Scope J',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: "rescrapeEntryPoint === 'search'",
+    scope: /class="fluent-modal-title".*?<\/h3>/s,
+    note: '[TestPicker64aThreeStateGuard] test_modal_title_switches_by_entrypoint — Scope J',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'search_title',
+    scope: /class="fluent-modal-title".*?<\/h3>/s,
+    note: '[TestPicker64aThreeStateGuard] test_modal_title_switches_by_entrypoint — Scope J',
+  },
+  {
+    file: 'web/templates/_rescrape_modal.html', kind: 'required-string', pattern: 'modal_title',
+    scope: /class="fluent-modal-title".*?<\/h3>/s,
+    note: '[TestPicker64aThreeStateGuard] test_modal_title_switches_by_entrypoint — Scope J',
+  },
+
+  // ==== 96d-T3：motion-token 家族遷移（TASK-96d-T3.md，10 live pytest class，1 子測 must-stay-pytest）====
+  // TestShowcaseAnimationsGuard.test_core_js_no_direct_gsap_getById（scope-exclusion forbidden：
+  // 「_killLightboxTimelines 函式體之外」不得出現 gsap.getById(）不遷——engine 只有「限定 scope
+  // 內」沒有「排除 scope 外」的能力，count-equality 變通會引入比 pytest 更脆弱的假陽性
+  // （見 TASK-96d-T3.md「必留 pytest 清單」節）。該 class 因此為 motion 家族內唯一
+  // slim-residual（其餘 4 子測全遷，此 1 子測留 pytest）。
+
+  // ---- [TestFluentCustomEaseRegistered] motion-adapter.js CustomEase 三角色同步註冊 ----
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: "CustomEase.create('fluent'", note: "[TestFluentCustomEaseRegistered] test_fluent_standard_registered" },
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: "CustomEase.create('fluent-decel'", note: "[TestFluentCustomEaseRegistered] test_fluent_decel_registered" },
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: "CustomEase.create('fluent-accel'", note: "[TestFluentCustomEaseRegistered] test_fluent_accel_registered" },
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: "typeof CustomEase !== 'undefined'", note: '[TestFluentCustomEaseRegistered] test_register_is_guarded' },
+  {
+    file: 'web/static/js/components/motion-adapter.js', kind: 'forbidden-string',
+    pattern: /DOMContentLoaded[\s\S]*CustomEase\.create\('fluent'/,
+    note: "[TestFluentCustomEaseRegistered] test_register_is_synchronous — conditional-order 技巧：只在「DOMContentLoaded 先出現、CustomEase.create('fluent' 隨後再出現」（即 fluent 註冊被包進 handler 之違規情境）才匹配；現況檔案無 DOMContentLoaded 字面，vacuous pass（4 種情境推導見 TASK-96d-T3.md §1）",
+  },
+
+  // ---- [TestMotionDurationConstants] motion.DURATION 三角色常數 + 雙檔 usage-count（min-bound）+ white-list ----
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: 'DURATION:', note: '[TestMotionDurationConstants] test_duration_constants_exposed — DURATION 物件定義' },
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: 'fast:', note: '[TestMotionDurationConstants] test_duration_constants_exposed — fast 角色' },
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: '0.167', note: '[TestMotionDurationConstants] test_duration_constants_exposed — fast=0.167' },
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: 'medium:', note: '[TestMotionDurationConstants] test_duration_constants_exposed — medium 角色' },
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: '0.333', note: '[TestMotionDurationConstants] test_duration_constants_exposed — medium=0.333' },
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: 'emphasis:', note: '[TestMotionDurationConstants] test_duration_constants_exposed — emphasis 角色' },
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: '0.5', note: '[TestMotionDurationConstants] test_duration_constants_exposed — emphasis=0.5' },
+  {
+    file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: 'motion.DURATION.', count: 4,
+    note: '[TestMotionDurationConstants] test_adapter_callers_use_duration_constants — js.count("motion.DURATION.") >= 4（required-string count=min-bound，非 structure-count exact）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'OpenAver.motion.DURATION.', count: 8,
+    note: '[TestMotionDurationConstants] test_animations_callers_use_duration_constants — js.count("OpenAver.motion.DURATION.") >= 8（min-bound；現況恰貼齊門檻，mutation 高風險列）',
+  },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'params.duration || 0.8', note: '[TestMotionDurationConstants] test_white_list_durations_preserved — showcaseSettle 招牌曲線白名單' },
+  {
+    file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'duration: 0.3',
+    scope: { anchor: /playHeroCardAppear/, window: 800 },
+    note: '[TestMotionDurationConstants] test_white_list_durations_preserved — playHeroCardAppear 女優專屬白名單（800 字元視窗）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'options.duration : 0.1',
+    scope: { anchor: /playSourcePulse/, window: 800 },
+    note: '[TestMotionDurationConstants] test_white_list_durations_preserved — playSourcePulse 低於 fast bucket 白名單（800 字元視窗）',
+  },
+
+  // ---- [TestMotionAdapterFluentDefaults] motion-adapter.js 5 default ease → fluent 角色（per-fn lazy-lookahead scope）----
+  {
+    file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: "opts.ease || 'fluent-decel'",
+    scope: /playEnter:[\s\S]*?(?=\/\*\*)/,
+    note: "[TestMotionAdapterFluentDefaults] test_play_enter_default_fluent_decel",
+  },
+  {
+    file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: "opts.ease || 'fluent-accel'",
+    scope: /playLeave:[\s\S]*?(?=\/\*\*)/,
+    note: "[TestMotionAdapterFluentDefaults] test_play_leave_default_fluent_accel",
+  },
+  {
+    file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: "opts.ease || 'fluent-decel'",
+    scope: /playStagger:[\s\S]*?(?=\/\*\*)/,
+    note: "[TestMotionAdapterFluentDefaults] test_play_stagger_default_fluent_decel",
+  },
+  {
+    file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: "opts.ease || 'fluent'",
+    scope: /playFadeTo:[\s\S]*?(?=\/\*\*)/,
+    note: "[TestMotionAdapterFluentDefaults] test_play_fade_to_default_fluent — required 半邊",
+  },
+  {
+    file: 'web/static/js/components/motion-adapter.js', kind: 'forbidden-string', pattern: "opts.ease || 'fluent-decel'",
+    scope: /playFadeTo:[\s\S]*?(?=\/\*\*)/,
+    note: "[TestMotionAdapterFluentDefaults] test_play_fade_to_default_fluent — forbidden 半邊",
+  },
+  {
+    file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: "opts.ease || 'fluent-decel'",
+    scope: /playModal:[\s\S]*?(?=\/\*\*)/,
+    note: "[TestMotionAdapterFluentDefaults] test_play_modal_default_fluent_decel",
+  },
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'forbidden-string', pattern: "opts.ease || 'power", note: '[TestMotionAdapterFluentDefaults] test_no_legacy_power_ease_defaults — unscoped 全檔' },
+
+  // ---- [TestShowcaseAnimationsFluent] showcase/animations.js + ghost-fly.js + search/animations.js ease → fluent 角色 ----
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "params.easing || 'fluent-decel'", note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — playEntry' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "params.ease || 'fluent'", note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — playFlipReorder' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "ease: 'fluent-accel'", note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — playModeCrossfade' },
+  {
+    file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "ease: 'fluent-decel'", count: 2,
+    note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — playFlipFilter onEnter ×2（存在性斷言 + js.count(...) >= 2 合併為單一 count-based 列）',
+  },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "ease: 'fluent'", note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — playLightboxSwitch/playSampleGallerySwitch' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "options.ease || 'fluent-decel'", note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — playContainerFadeIn/playSourcePulse' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'CustomEase.create("showcaseSettle"', note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — white-list 招牌曲線' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'GhostFly.playLightboxOpen', note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — T4.2 delegate' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'showcaseLightboxOpen', note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — T4.2 delegate' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "typeof window.GhostFly?.playLightboxOpen === 'function'", note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — T4.2 delegate guard' },
+  {
+    file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', anyOf: true,
+    pattern: ['gsap.fromTo', 'tl.fromTo'],
+    note: '[TestShowcaseAnimationsFluent] test_animations_js_contains — playModeCrossfade fromTo call（OR）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', anyOf: true,
+    pattern: ["'use strict'", "\"'use strict'\""],
+    note: "[TestShowcaseAnimationsFluent] test_animations_js_contains — strict mode declaration（單/雙引號變體 OR）",
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', pattern: "ease: 'power2.out'", count: 3,
+    scope: { anchor: /playLightboxOpen:/, window: 4500 },
+    note: '[TestShowcaseAnimationsFluent] test_ghost_fly_js_contains — playLightboxOpen 三段 power2.out（backdrop/content/cover，min-bound，現況恰貼齊門檻）',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', pattern: "clearProps: 'transform,opacity'", count: 4,
+    scope: { anchor: /playLightboxOpen:/, window: 4500 },
+    note: '[TestShowcaseAnimationsFluent] test_ghost_fly_js_contains — clearProps ×4（onComplete+onInterrupt，min-bound，現況恰貼齊門檻）',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'forbidden-string', pattern: "ease: 'fluent-decel'",
+    scope: { anchor: /playLightboxOpen:/, window: 4500 },
+    note: '[TestShowcaseAnimationsFluent] test_ghost_fly_js_contains — playLightboxOpen 不應誤改成 fluent-decel（保留 power2.out 白名單）',
+  },
+  {
+    file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', anyOf: true,
+    pattern: ['white-list', 'ghost-fly'],
+    scope: { anchor: /playLightboxOpen:/, window: 4500 },
+    note: '[TestShowcaseAnimationsFluent] test_ghost_fly_js_contains — white-list/ghost-fly 標注註解（OR）',
+  },
+  {
+    file: 'web/static/js/pages/search/animations.js', kind: 'required-string', pattern: 'GhostFly.playLightboxOpen',
+    scope: { anchor: /playLightboxOpen: function/, window: 800 },
+    note: '[TestShowcaseAnimationsFluent] test_search_animations_js_contains — Phase 51 T4.3 delegate',
+  },
+  {
+    file: 'web/static/js/pages/search/animations.js', kind: 'forbidden-string', pattern: 'showcaseLightboxOpen',
+    scope: { anchor: /playLightboxOpen: function/, window: 800 },
+    note: '[TestShowcaseAnimationsFluent] test_search_animations_js_contains — search 頁不應殘留 showcase 專屬命名',
+  },
+  {
+    file: 'web/static/js/pages/search/animations.js', kind: 'required-string', pattern: "typeof window.GhostFly?.playLightboxOpen === 'function'",
+    scope: { anchor: /playLightboxOpen: function/, window: 800 },
+    note: '[TestShowcaseAnimationsFluent] test_search_animations_js_contains — typeof guard',
+  },
+
+  // ---- [TestMotionLabT2EaseRoles] motion_lab.html + motion-lab.js §5 Ease Roles demo ----
+  { file: 'web/templates/motion_lab.html', kind: 'required-string', pattern: 'fluent-decel', note: '[TestMotionLabT2EaseRoles] test_html_contains_fluent_decel' },
+  { file: 'web/templates/motion_lab.html', kind: 'required-string', pattern: 'fluent-accel', note: '[TestMotionLabT2EaseRoles] test_html_contains_fluent_accel' },
+  { file: 'web/templates/motion_lab.html', kind: 'required-string', pattern: 'ease-roles', note: '[TestMotionLabT2EaseRoles] test_html_has_ease_roles_tab' },
+  { file: 'web/static/js/pages/motion-lab.js', kind: 'required-string', pattern: 'playEaseRolesDemo', note: '[TestMotionLabT2EaseRoles] test_js_has_play_ease_roles_demo' },
+  {
+    file: 'web/static/js/pages/motion-lab.js', kind: 'forbidden-string', pattern: 'power3.out',
+    scope: /playCardStreamIn:[\s\S]*?(?=\n {8}\/\*\*)/,
+    note: '[TestMotionLabT2EaseRoles] test_js_no_bare_back_out_in_stream — playCardStreamIn 不含裸 power3.out（lazy-lookahead 到下個 8-space 縮排 /** 標記）',
+  },
+  {
+    file: 'web/static/js/pages/motion-lab.js', kind: 'forbidden-string', pattern: 'power2.out',
+    scope: /playCardStreamIn:[\s\S]*?(?=\n {8}\/\*\*)/,
+    note: '[TestMotionLabT2EaseRoles] test_js_no_bare_back_out_in_stream — playCardStreamIn 不含裸 power2.out（同上 scope）',
+  },
+
+  // ---- [TestMotionLabT2DurationBuckets] motion_lab.html + motion-lab.js §5 Duration Buckets demo ----
+  { file: 'web/templates/motion_lab.html', kind: 'required-string', pattern: 'duration-buckets', note: '[TestMotionLabT2DurationBuckets] test_html_has_duration_buckets_tab' },
+  { file: 'web/static/js/pages/motion-lab.js', kind: 'required-string', pattern: 'playDurationBucketsDemo', note: '[TestMotionLabT2DurationBuckets] test_js_has_play_duration_buckets_demo' },
+  { file: 'web/templates/motion_lab.html', kind: 'required-string', pattern: 'DURATION.fast', note: '[TestMotionLabT2DurationBuckets] test_html_shows_duration_fast_label' },
+
+  // ---- [TestMotionLabT2SpecialMotion] motion_lab.html + motion-lab.js §5 Special Motion 白名單 demo ----
+  { file: 'web/templates/motion_lab.html', kind: 'required-string', pattern: 'special-motion', note: '[TestMotionLabT2SpecialMotion] test_html_has_special_motion_tab' },
+  { file: 'web/static/js/pages/motion-lab.js', kind: 'required-string', pattern: 'playSpecialMotionCheckmarkDemo', note: '[TestMotionLabT2SpecialMotion] test_js_has_play_special_motion_checkmark_demo' },
+  { file: 'web/static/js/pages/motion-lab.js', kind: 'required-string', pattern: 'playSpecialMotionShakeDemo', note: '[TestMotionLabT2SpecialMotion] test_js_has_play_special_motion_shake_demo' },
+  { file: 'web/static/js/pages/motion-lab.js', kind: 'required-string', pattern: 'playSpecialMotionPulseDemo', note: '[TestMotionLabT2SpecialMotion] test_js_has_play_special_motion_pulse_demo' },
+  { file: 'web/templates/motion_lab.html', kind: 'required-string', pattern: 'whitelist-skip-note', note: '[TestMotionLabT2SpecialMotion] test_html_has_whitelist_skip_note' },
+
+  // ---- [TestShowcaseAnimationsGuard] B5-B15/T20 Showcase GSAP 基礎設施（slim-residual：4/5 子測遷，
+  // test_core_js_no_direct_gsap_getById 留 pytest，見上方 96d-T3 header 說明）----
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'window.ShowcaseAnimations', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B5 IIFE + global object' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'prefersReducedMotion', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B5' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'playEntry', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B5 method stub' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'playFlipReorder', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B5 method stub' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'playFlipFilter', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B5 method stub' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'captureFlipState', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B7' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'capturePositions', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B7' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'playModeCrossfade', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B5 method stub' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'registerPlugin(Flip)', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B5 plugin registration' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'showcaseSettle', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B5' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'gsap.killTweensOf', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B6 playEntry impl' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'getBoundingClientRect', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B6' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'gsap.set', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B6' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'Flip.getState', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B7 captureFlipState/capturePositions' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: '.av-card-preview', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B7' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'data-flip-id', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B7' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'Flip.from', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8 playFlipFilter' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'onEnter', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'onLeave', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'clearProps', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'return gsap.fromTo', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8 playFlipFilter returns tweens' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'return gsap.to', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B8' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: '.fromTo', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B12 playFlipReorder manual fromTo' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'killLightboxAnimations', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — T20' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "getById('showcaseLightboxOpen')", note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — T20' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: "getById('showcaseLightboxSwitch')", note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — T20' },
+  { file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', pattern: 'typeof gsap', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — T20' },
+  {
+    file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', anyOf: true,
+    pattern: ['gsap.fromTo', 'tl.fromTo'],
+    note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B10 playModeCrossfade fromTo call（OR）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/animations.js', kind: 'required-string', anyOf: true,
+    pattern: ["'use strict'", "\"'use strict'\""],
+    note: "[TestShowcaseAnimationsGuard] test_animations_js_contains — B5 strict mode declaration（單/雙引號變體 OR）",
+  },
+  { file: 'web/static/css/theme.css', kind: 'required-string', pattern: 'flip-guard', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B15 theme.css flip-guard rule' },
+  { file: 'web/static/css/theme.css', kind: 'required-string', pattern: 'transform: none', note: '[TestShowcaseAnimationsGuard] test_animations_js_contains — B15 theme.css flip-guard rule' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'animations.js', note: '[TestShowcaseAnimationsGuard] test_showcase_html_contains — animations.js script tag' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'data-flip-id', note: '[TestShowcaseAnimationsGuard] test_showcase_html_contains — data-flip-id' },
+  { file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: 'Flip.min.js', note: '[TestShowcaseAnimationsGuard] test_showcase_html_contains — 不重複載入 Flip.min.js' },
+  // _read_core_js() 合併讀取 state-base.js + state-videos.js + state-lightbox.js 三檔；engine 不支援
+  // 多檔合併成單一文字塊，改單檔化指向 state-videos.js（已逐字面 grep 核對現況下語意完全等價，
+  // 「位置收斂」而非縮窄，見 TASK-96d-T3.md §「合併讀取檔案的單檔化處理」）。
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: 'playEntry', note: '[TestShowcaseAnimationsGuard] test_core_js_contains — B6 playEntry call（單檔化，見上）' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: 'ShowcaseAnimations', note: '[TestShowcaseAnimationsGuard] test_core_js_contains — 單檔化' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: '_animateFilter', note: '[TestShowcaseAnimationsGuard] test_core_js_contains — B8 單檔化' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: 'playFlipFilter', note: '[TestShowcaseAnimationsGuard] test_core_js_contains — B8 playFlipFilter call 單檔化' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: '_animatePageChange', note: '[TestShowcaseAnimationsGuard] test_core_js_contains — B9 單檔化' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: 'scrollTo(0, 0)', note: '[TestShowcaseAnimationsGuard] test_core_js_contains — B9 單檔化' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: 'playModeCrossfade', note: '[TestShowcaseAnimationsGuard] test_core_js_contains — B10 單檔化' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: 'ShowcaseAnimations?.playModeCrossfade?.(', note: '[TestShowcaseAnimationsGuard] test_core_js_contains — B10 單檔化' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: 'capturePositions', note: '[TestShowcaseAnimationsGuard] test_core_js_contains — B12 sort helper 單檔化' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: 'playFlipReorder', note: '[TestShowcaseAnimationsGuard] test_core_js_contains — B12 單檔化' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: 'flip-guard', note: '[TestShowcaseAnimationsGuard] test_core_js_contains — B12/B13 flip-guard management 單檔化' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: '_animGeneration', note: '[TestShowcaseAnimationsGuard] test_core_js_contains — B13 generation token guard 單檔化' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: '_sortWithFlip', note: '[TestShowcaseAnimationsGuard] test_core_js_contains — B13 method 單檔化' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: 'captureFlipState', note: '[TestShowcaseAnimationsGuard] test_core_js_contains — B15 _animateFilter 單檔化' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: 'updatePagination', note: '[TestShowcaseAnimationsGuard] test_core_js_contains — B7 單檔化' },
+  {
+    file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', anyOf: true,
+    pattern: ['savedPage', 'saved_page', 'savePage'],
+    note: '[TestShowcaseAnimationsGuard] test_core_js_contains — B7 _sortWithFlip page preservation（OR，單檔化）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: '_animatePageChange',
+    scope: { anchor: /prevPage\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestShowcaseAnimationsGuard] test_core_js_prev_next_page_call_animate_page_change — prevPage() 方法體須呼叫 _animatePageChange（brace-balanced，單檔化：方法定義唯一位於 state-videos.js）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: '_animatePageChange',
+    scope: { anchor: /nextPage\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestShowcaseAnimationsGuard] test_core_js_prev_next_page_call_animate_page_change — nextPage() 方法體須呼叫 _animatePageChange（brace-balanced，單檔化）',
+  },
+  // test_core_js_no_direct_gsap_getById（scope-exclusion forbidden）不建 RULES 列，留 pytest（見上方 header）。
+
+  // ---- [TestMotionLabShowcase] B11 Motion Lab Showcase demo 完整性（determination：required-string
+  // 網，非直刪——Showcase tab / 4 個 demo 方法皆確認仍存在運作中，非死碼殘留，見 TASK-96d-T3.md
+  // 「determination」節 grep 證據）----
+  { file: 'web/templates/motion_lab.html', kind: 'required-string', pattern: 'showcase', note: '[TestMotionLabShowcase] test_motion_lab_html_contains — showcase tab（寬鬆子字串，與原 pytest 同寬）' },
+  { file: 'web/templates/motion_lab.html', kind: 'required-string', pattern: "tab === 'showcase'", note: '[TestMotionLabShowcase] test_motion_lab_html_contains — Alpine tab 切換邏輯' },
+  { file: 'web/static/js/pages/motion-lab.js', kind: 'required-string', pattern: 'playShowcaseEntry', note: '[TestMotionLabShowcase] test_motion_lab_js_contains — B1' },
+  { file: 'web/static/js/pages/motion-lab.js', kind: 'required-string', pattern: 'playFlipReorder', note: '[TestMotionLabShowcase] test_motion_lab_js_contains — B2' },
+  { file: 'web/static/js/pages/motion-lab.js', kind: 'required-string', pattern: 'playFlipFilter', note: '[TestMotionLabShowcase] test_motion_lab_js_contains — B3' },
+  { file: 'web/static/js/pages/motion-lab.js', kind: 'required-string', pattern: 'playPageTransition', note: '[TestMotionLabShowcase] test_motion_lab_js_contains — B4' },
+
+  // ---- [TestGhostFlyPlayLightboxOpen] ghost-fly.js playLightboxOpen 共用實作守衛（unscoped，
+  // 與 TestShowcaseAnimationsFluent.test_ghost_fly_js_contains 同檔不同 class/scope，互補不重複）----
+  { file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', pattern: 'playLightboxOpen', note: '[TestGhostFlyPlayLightboxOpen] test_ghost_fly_play_lightbox_open_contains' },
+  { file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', pattern: 'clearProps', note: '[TestGhostFlyPlayLightboxOpen] test_ghost_fly_play_lightbox_open_contains' },
+  { file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', pattern: 'timelineId', note: '[TestGhostFlyPlayLightboxOpen] test_ghost_fly_play_lightbox_open_contains' },
+
+  // ==== 96d-T4：scanner-strm 家族（string-contains/tag-scan，含 CD-96d-7 負守衛 + CD-96d-5 slim-residual）====
+
+  // ---- [TestStrmMappingGuard] settings.html strm 路徑映射 CRUD 編輯器 + state-config.js array→dict 轉換 +
+  // scanner.html 跨機器提醒（純 string-contains，pure-96d，無 cross-plan 半邊）----
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: 'x-for="(rule, idx) in form.strmRules"', note: '[TestStrmMappingGuard] test_settings_html_has_editor — strmRules x-for row 編輯器' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: 'x-model="rule.local"', note: '[TestStrmMappingGuard] test_settings_html_has_editor — 本機前綴欄' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: 'x-model="rule.remote"', note: '[TestStrmMappingGuard] test_settings_html_has_editor — 播放端前綴欄' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: "['jellyfin','emby','kodi'].includes(form.externalManager)", note: '[TestStrmMappingGuard] test_settings_html_has_editor — media-server 風味 x-show gating（無空格版，勿與 scanner.html 有空格版混淆）' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: '@click="addStrmRule()"', note: '[TestStrmMappingGuard] test_settings_html_has_editor — 新增規則' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: '@click="removeStrmRule(idx)"', note: '[TestStrmMappingGuard] test_settings_html_has_editor — 刪除規則' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'addStrmRule()', note: '[TestStrmMappingGuard] test_config_js_has_methods_and_conversion' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'removeStrmRule(idx)', note: '[TestStrmMappingGuard] test_config_js_has_methods_and_conversion' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'Object.fromEntries(', note: '[TestStrmMappingGuard] test_config_js_has_methods_and_conversion — array→dict 轉換' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'strm_path_mappings:', note: '[TestStrmMappingGuard] test_config_js_has_methods_and_conversion — payload 寫入' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'strmTemplateDirs', note: '[TestStrmMappingGuard] test_config_js_has_methods_and_conversion — 範本回顯 getter' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'forbidden-string', pattern: 'strmPathMappings', note: '[TestStrmMappingGuard] test_config_js_no_dict_passthrough — 舊 dict passthrough 已移除' },
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: 'scanner.folder.cross_machine_hint', note: '[TestStrmMappingGuard] test_scanner_html_has_cross_machine_hint' },
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: 'scanner.folder.cross_machine_settings_link', note: '[TestStrmMappingGuard] test_scanner_html_has_cross_machine_hint' },
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: "['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)", note: '[TestStrmMappingGuard] test_scanner_html_has_cross_machine_hint — media-server 風味 x-show gating（有空格版，勿與 settings.html 無空格版混淆）' },
+
+  // ---- [TestReadonlyConfirmGuard] scanner.html 唯讀 checkbox 確認 modal 骨架 + 攔截邏輯 + state-scan.js
+  // （cross-plan：96d 建 HTML/JS 半邊；i18n key + 「風味」半邊 → 96a i18n_lint，不建）----
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: ':checked="dir.readonly"', note: '[TestReadonlyConfirmGuard] test_scanner_html_checkbox_intercepted — 單向綁定，避免勾選閃爍' },
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: '@click.prevent="onReadonlyToggleClick(idx', note: '[TestReadonlyConfirmGuard] test_scanner_html_checkbox_intercepted — checkbox click 攔截（開放子字串，忠實照抄 pytest 原字面，故意不含收尾括號）' },
+  { file: 'web/templates/scanner.html', kind: 'forbidden-string', pattern: 'x-model="dir.readonly"', note: '[TestReadonlyConfirmGuard] test_scanner_html_checkbox_intercepted — 不可殘留舊雙向綁定（CD-96d-7 負守衛）' },
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: "'modal-open': readonlyConfirmModalOpen", note: '[TestReadonlyConfirmGuard] test_scanner_html_has_confirm_modal' },
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: '@click="readonlyConfirmAccept()"', note: '[TestReadonlyConfirmGuard] test_scanner_html_has_confirm_modal' },
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: '@click="readonlyConfirmCancel()"', note: '[TestReadonlyConfirmGuard] test_scanner_html_has_confirm_modal' },
+  { file: 'web/templates/scanner.html', kind: 'required-string', pattern: 'readonlyConfirmModalOpen && readonlyConfirmCancel()', note: '[TestReadonlyConfirmGuard] test_scanner_html_esc_chain_includes_readonly_confirm' },
+  ...[
+    'scanner.readonly_confirm_modal.title',
+    'scanner.readonly_confirm_modal.cancel',
+    'scanner.readonly_confirm_modal.confirm',
+    'scanner.readonly_confirm_modal.intro',
+    'scanner.readonly_confirm_modal.output_hint_offline',
+    'scanner.readonly_confirm_modal.output_hint_media_server',
+    'scanner.readonly_confirm_modal.nas_hint',
+  ].map((key) => ({
+    file: 'web/templates/scanner.html', kind: 'required-string', pattern: key,
+    note: '[TestReadonlyConfirmGuard] test_scanner_html_i18n_keys_referenced — for-loop 7 key',
+  })),
+  { file: 'web/static/js/pages/scanner/state-scan.js', kind: 'forbidden-string', pattern: '_detectReadonly', note: '[TestReadonlyConfirmGuard] test_state_scan_js_no_detect_readonly — 整支移除，含函式宣告與消費者（CD-96d-7 負守衛）' },
+  {
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: 'readonly: false', count: 2,
+    note: '[TestReadonlyConfirmGuard] test_state_scan_js_new_folders_readonly_false — addFolderPath/addManualPath 各自 push readonly: false（現況恰 2 次，L455/L480，高風險貼齊門檻列）',
+  },
+  ...[
+    'readonlyConfirmModalOpen',
+    'readonlyConfirmTargetIdx',
+    'onReadonlyToggleClick',
+    'readonlyConfirmCancel',
+    'readonlyConfirmAccept',
+  ].map((name) => ({
+    file: 'web/static/js/pages/scanner/state-scan.js', kind: 'required-string', pattern: name,
+    note: '[TestReadonlyConfirmGuard] test_state_scan_js_has_confirm_state_and_methods — for-loop 5 項',
+  })),
+
+  // ---- [TestOutputPathVisibilityGuard] scanner.html .folder-item-output x-show 白名單顯隱
+  // （pure-96d，scope 綁定 x-show 屬性值本身（非整個 tag），CD-96d-7 負守衛：本卡最高風險列，
+  // scanner.html 唯一 fail-open 守衛。bound to x-show value (Codex 96d P1 fix)：原 tag-scan
+  // 掃整個開頭 tag，required 字串移到 x-show 以外的屬性也會誤判綠燈（fail-open exploit）；
+  // 改用 capture-group scope 只在 x-show="..." 的值內比對，逐字對齊 pytest div.get("x-show","")；
+  // token-aware class match (Codex 96d P2 fix)：class 比對改用 buildTagWithClassRegex 同款
+  // (?<![\w-])…(?![\w-]) token 邊界，逐字對齊 pytest soup.find(class_=...) 的 token 語意
+  // （非 exact-equality），避免該 div 未來多掛第二個 class 時 pytest 綠燈但 lint 誤判 scope-not-found；
+  // attribute-name boundary via \s not \b (Codex 96d P1 fix round-3)：\b 是 word-boundary 不是
+  // HTML 屬性名邊界，`-` 是 non-word char，會讓 \bx-show= 誤配到 data-x-show= 裡的 x-show=、
+  // \bclass= 誤配到 data-class= 裡的 class=（真正的 x-show/class 屬性已被改名移除仍誤判綠燈，
+  // fail-open）；改用 \s（屬性名前必為空白/換行/縮排分隔符，data- 前綴屬性前只有 `-` 沒有空白）----
+  {
+    file: 'web/templates/scanner.html', kind: 'required-string',
+    pattern: 'dir.readonly',
+    scope: /<div\b(?=[^>]*\sclass="[^"]*(?<![\w-])folder-item-output(?![\w-])[^"]*")[^>]*?\sx-show="([^"]*)"/,
+    note: '[TestOutputPathVisibilityGuard] test_folder_item_output_xshow_gated_by_external_manager_whitelist — bound to x-show value (Codex 96d P1 fix)：fail-closed 白名單 required（CD-96d-7）',
+  },
+  {
+    file: 'web/templates/scanner.html', kind: 'required-string',
+    pattern: "['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)",
+    scope: /<div\b(?=[^>]*\sclass="[^"]*(?<![\w-])folder-item-output(?![\w-])[^"]*")[^>]*?\sx-show="([^"]*)"/,
+    note: '[TestOutputPathVisibilityGuard] test_folder_item_output_xshow_gated_by_external_manager_whitelist — bound to x-show value (Codex 96d P1 fix)：fail-closed 白名單 required（CD-96d-7）',
+  },
+  {
+    file: 'web/templates/scanner.html', kind: 'forbidden-string',
+    pattern: "!== 'off'",
+    scope: /<div\b(?=[^>]*\sclass="[^"]*(?<![\w-])folder-item-output(?![\w-])[^"]*")[^>]*?\sx-show="([^"]*)"/,
+    note: '[TestOutputPathVisibilityGuard] test_folder_item_output_xshow_gated_by_external_manager_whitelist — bound to x-show value (Codex 96d P1 fix)：fail-open forbidden（CD-96d-7）',
+  },
+
+  // ---- [TestReadonlyDisabledStateGuard] showcase.html 唯讀來源片四寫入入口停用態鏡像（element-bound tag-scan）
+  // （cross-plan：CSS 半邊 96c CG-RO-01 已綠、i18n 半邊 96a 已綠，皆不必補；96d 只建 HTML 半邊；CD-96d-7 負守衛）----
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagPattern: /<button\b[^>]*enrichVideo\(video\)[^>]*>/,
+    required: [
+      /:disabled="[^"]*is_readonly_source[^"]*"/,
+      /:disabled="[^"]*_enriching[^"]*"/,
+      /:class="[^"]*is-readonly-disabled[^"]*"/,
+      /:title="[^"]*readonly_tooltip[^"]*"/,
+    ],
+    requiredAnyOf: [/:disabled="!!/, /:disabled="[^"]*=== true/],
+    note: '[TestReadonlyDisabledStateGuard] test_grid_enrich_btn_readonly_disabled — ① 缺圖卡 enrich 按鈕 readonly disabled 鏡像',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagPattern: /<button\b[^>]*enrichVideo\(currentLightboxVideo\)[^>]*>/,
+    required: [
+      /:disabled="[^"]*currentLightboxVideo\?\.is_readonly_source[^"]*"/,
+      /:disabled="[^"]*_enriching[^"]*"/,
+      /:class="[^"]*is-readonly-disabled[^"]*"/,
+      /:data-tooltip="[^"]*readonly_tooltip[^"]*"/,
+    ],
+    requiredAnyOf: [/:disabled="!!/, /:disabled="[^"]*=== true/],
+    note: '[TestReadonlyDisabledStateGuard] test_lightbox_enrich_btn_readonly_disabled — ② 燈箱補資料按鈕 readonly disabled 鏡像',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagName: 'button', className: 'fetch-samples-btn',
+    required: [
+      /:disabled="[^"]*is_readonly_source[^"]*"/,
+      /:disabled="[^"]*_fetchSamplesFailed[^"]*"/,
+      /:class="[^"]*is-readonly-disabled[^"]*"/,
+      /:title="[^"]*readonly_tooltip[^"]*"/,
+      /:aria-label="[^"]*readonly_tooltip[^"]*"/,
+    ],
+    requiredAnyOf: [/:disabled="!!/, /:disabled="[^"]*=== true/],
+    note: '[TestReadonlyDisabledStateGuard] test_fetch_samples_btn_readonly_disabled — ③ 補劇照按鈕 readonly disabled 鏡像',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagName: 'button', className: 'lb-rescrape-gear',
+    required: [
+      /:disabled="[^"]*currentLightboxVideo\?\.is_readonly_source[^"]*"/,
+      /:class="[^"]*is-readonly-disabled[^"]*"/,
+      /:title="[^"]*readonly_tooltip[^"]*"/,
+    ],
+    requiredAnyOf: [/:disabled="!!/, /:disabled="[^"]*=== true/],
+    note: '[TestReadonlyDisabledStateGuard] test_rescrape_gear_readonly_disabled — ④ 齒輪進階重刮 readonly disabled 鏡像',
+  },
+  ...['playVideo(video.path)', 'openLocal(video.path)', 'playVideo(currentLightboxVideo?.path)',
+      'openLocal(currentLightboxVideo?.path)', 'openSimilarMode()'].map((expr) => ({
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagPattern: new RegExp(`<button\\b[^>]*${escapeRegExp(expr)}[^>]*>`),
+    forbidden: ['is_readonly_source'],
+    note: `[TestReadonlyDisabledStateGuard] test_read_type_buttons_not_readonly_disabled — 讀取類按鈕不得綁 is_readonly_source（CD-96d-7 負守衛）: ${expr}`,
+  })),
+
+  // ---- [TestRewriteStrmConfirmGuard] settings.html rewrite 確認 modal 骨架 + tone + state-config.js
+  // saveConfig media-server 存後鉤 + confirmRewriteStrm 實際端點呼叫（cross-plan：96a i18n+風味 半邊不建；
+  // CD-96d-5 已定案：rewrite_failed>=2 子測 slim-residual 留 pytest，本卡不建 RULES 覆蓋，見下方獨立註解）----
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: "'modal-open': rewriteStrmConfirmOpen", note: '[TestRewriteStrmConfirmGuard] test_settings_html_has_rewrite_confirm_modal' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: '@click="confirmRewriteStrm()"', note: '[TestRewriteStrmConfirmGuard] test_settings_html_has_rewrite_confirm_modal' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: '@click="cancelRewriteStrm()"', note: '[TestRewriteStrmConfirmGuard] test_settings_html_has_rewrite_confirm_modal' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: 'rewriteStrmConfirmOpen && cancelRewriteStrm()', note: '[TestRewriteStrmConfirmGuard] test_settings_html_rewrite_esc_chain' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: 'class="btn btn-primary" @click="confirmRewriteStrm()"', note: '[TestRewriteStrmConfirmGuard] test_settings_html_rewrite_headsup_tone — 確認鈕須 btn-primary（heads-up 非破壞性）' },
+  { file: 'web/templates/settings.html', kind: 'forbidden-string', pattern: 'btn-error" @click="confirmRewriteStrm()"', note: '[TestRewriteStrmConfirmGuard] test_settings_html_rewrite_headsup_tone — 不得用 btn-error（CD-96d-7 負守衛，與上一列互補）' },
+  { file: 'web/templates/settings.html', kind: 'required-string', pattern: 'settings.scraper.strm_mapping.rewrite_confirm.body', note: '[TestRewriteStrmConfirmGuard] test_settings_html_rewrite_i18n_body_with_count — body i18n key' },
+  {
+    file: 'web/templates/settings.html', kind: 'required-string', pattern: 'pendingRewriteCount',
+    scope: { anchor: /settings\.scraper\.strm_mapping\.rewrite_confirm\.body/, window: 200 },
+    note: '[TestRewriteStrmConfirmGuard] test_settings_html_rewrite_i18n_body_with_count — body x-text 200 字視窗內須含 count 插值',
+  },
+  ...['title', 'cancel', 'confirm'].map((key) => ({
+    file: 'web/templates/settings.html', kind: 'required-string', pattern: `settings.scraper.strm_mapping.rewrite_confirm.${key}`,
+    note: '[TestRewriteStrmConfirmGuard] test_settings_html_rewrite_i18n_body_with_count — for-loop 3 key',
+  })),
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'rewriteStrmConfirmOpen: false', note: '[TestRewriteStrmConfirmGuard] test_config_js_stubs_declared' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'pendingRewriteCount: 0', note: '[TestRewriteStrmConfirmGuard] test_config_js_stubs_declared' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'confirmRewriteStrm()', note: '[TestRewriteStrmConfirmGuard] test_config_js_methods_present' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'cancelRewriteStrm()', note: '[TestRewriteStrmConfirmGuard] test_config_js_methods_present' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: '/api/config/rewrite-strm?dry_run=true', note: '[TestRewriteStrmConfirmGuard] test_config_js_saveconfig_hook_condition — dry-run 計數呼叫' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'prevStrmMappings', note: '[TestRewriteStrmConfirmGuard] test_config_js_saveconfig_hook_condition — 存前快照（映射變更判定）' },
+  { file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: "['jellyfin', 'emby', 'kodi'].includes(this.form.externalManager)", note: '[TestRewriteStrmConfirmGuard] test_config_js_saveconfig_hook_condition — media-server 模式 gate（含 this.form. 前綴，勿與 scanner.html 版混淆）' },
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: "'/api/config/rewrite-strm'",
+    scope: /async confirmRewriteStrm\(\)[\s\S]*?(?=cancelRewriteStrm\(\))/,
+    note: '[TestRewriteStrmConfirmGuard] test_config_js_confirm_calls_real_endpoint_and_toast — 實際改寫端點呼叫，無 dry_run（RWS-scope 方法體）',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'settings.scraper.strm_mapping.rewrite_done',
+    scope: /async confirmRewriteStrm\(\)[\s\S]*?(?=cancelRewriteStrm\(\))/,
+    note: '[TestRewriteStrmConfirmGuard] test_config_js_confirm_calls_real_endpoint_and_toast — rewrite_done toast i18n key（RWS-scope 方法體）',
+  },
+  {
+    file: 'web/static/js/pages/settings/state-config.js', kind: 'required-string', pattern: 'result.rewritten',
+    scope: /async confirmRewriteStrm\(\)[\s\S]*?(?=cancelRewriteStrm\(\))/,
+    note: '[TestRewriteStrmConfirmGuard] test_config_js_confirm_calls_real_endpoint_and_toast — toast 帶端點回的精確 rewritten 數（RWS-scope 方法體）',
+  },
+  // [lint-guard: pytest-justified｜method-block-scoped count｜CD-96d-5] test_config_js_confirm_calls_real_endpoint_and_toast
+  // 內 `block.count("...rewrite_failed") >= 2`（live L9546-9547）子測 OPUS 裁決：CD-96d-5 是已定案 canonical
+  // decision，字面維持「確定留 pytest」，本卡不建 RULES 列覆蓋（TASK-96d-T4.md「與 CD-96d-5 矛盾的研究發現」節提出
+  // 可用 required-string + RWS-scope（見上 3 列同一 scope）+ count: 2 忠實表達的替代方案，供未來重新裁決參考，
+  // 但本次遵照裁決不採納）。故該 pytest 方法本身（含已被上方 3 列覆蓋的前 3 段斷言）仍不可整刪——pytest 是以方法
+  // 為刪除單位、非以 assert 為單位，T5 需處理此細節。
 ];
 
 // ---- helpers ----

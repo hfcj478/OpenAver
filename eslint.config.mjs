@@ -158,6 +158,35 @@ const SEL_LONGPRESS_IDENT = {
     "long-press.js helper 機制（74c-T3 已退役）的 longPressStart/longPressEnd/longPressCancel/longPressClickGuard identifier 禁止重新引入（96b-T5 前瞻防禦網）。",
 };
 
+// ── 96d-T1（TestSimilarStageGuard::test_no_clip_selector_in_js）：SEL_CLIP_BAN selector A
+// —— .clip- selector 字面字串搭配 closest/matches/querySelector(All) 全 repo 禁令，
+// universal（9/10 group，跳過 Group 5 = pages/motion-lab/constellation-host.js 單一檔案白名單，
+// 非整個 pages/motion-lab/ 目錄——該目錄目前唯一檔案就是 constellation-host.js，故現況等效，
+// 但若日後在 pages/motion-lab/ 底下新增其他 JS 檔，該新檔會落入 Group 6 catch-all 而被此規則
+// 攔截（fail-closed，過嚴），屆時須把 SEL_CLIP_BAN 排除範圍手動擴充到新檔，comment/code 才會
+// 重新對齊原 pytest 的整目錄 rglob 排除語意。Codex 96d P3 fix：comment/message 修正為誠實描述
+// 單一檔案例外，不動 files/ignores/selector 本身（避免 flat-config replace-trap + 誤用
+// constellation-host 專屬 selector 到假設中的其他檔案）──
+const SEL_CLIP_BAN = {
+  selector: [
+    // test_no_clip_selector_in_js（TestSimilarStageGuard）：closest/matches/querySelector(All) 搭配
+    // .clip- selector 字面字串，全 repo（除 Group 5 單一檔案 constellation-host.js 白名單）
+    "CallExpression[callee.property.name=/^(?:closest|matches|querySelector|querySelectorAll)$/][arguments.0.value=/\\.clip-/]",
+  ].join(', '),
+  message:
+    "TestSimilarStageGuard（96d-T1）：.clip- selector 已於 57c-T4/T5 rename 為 .similar-stage，禁止在 closest/matches/querySelector(All) 使用（pages/motion-lab/constellation-host.js 單一檔案的 .clip-lab-* sandbox 白名單除外，該檔不吃此規則；同目錄下其他檔案仍受此規則約束）。",
+};
+
+// ── 96d-T1（TestSimilarStageGuard::test_no_clip_alpine_methods_in_showcase_and_similar）：
+// SEL_CLIP_METHOD_IDENT —— 已退役 *Clip* Alpine method 識別字禁令。
+// ⚠ 只加進 Group 5b（state-similar.js），不可 universal——pages/motion-lab.js /
+// pages/motion-lab-state.js 的合法 playClipPathReveal 會被誤傷（96d-T1 實測發現，見 task card）。
+const SEL_CLIP_METHOD_IDENT = {
+  selector: "Identifier[name=/^(?:on|play|build|calc|destroy|init|open|close)Clip[A-Z]/]",
+  message:
+    "TestSimilarStageGuard（96d-T1）：已退役 *Clip* Alpine method 識別字（57c-T4/T5 rename 為 *Similar*），state-similar.js 禁止重新引入。",
+};
+
 export default [
   // ── 全域基礎設定 ──────────────────────────────────────────────
   {
@@ -238,6 +267,7 @@ export default [
         SEL_NULLISH_PERPAGE,
         SEL_TRACKED_EVENTSOURCE,
         SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
       ],
     },
   },
@@ -268,6 +298,7 @@ export default [
         SEL_NO_ERR_IN_ALERT,
         SEL_NULLISH_PERPAGE,
         SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
       ],
     },
   },
@@ -289,6 +320,7 @@ export default [
         SEL_NO_ERR_IN_ALERT,
         SEL_NULLISH_PERPAGE,
         SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
       ],
     },
   },
@@ -335,6 +367,7 @@ export default [
         SEL_NO_ERR_IN_ALERT,
         SEL_NULLISH_PERPAGE,
         SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
       ],
     },
   },
@@ -449,6 +482,8 @@ export default [
         SEL_NO_ERR_IN_ALERT,
         SEL_NULLISH_PERPAGE,
         SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
+        SEL_CLIP_METHOD_IDENT,
       ],
     },
   },
@@ -526,6 +561,7 @@ export default [
         // 自我限定範圍，file-scoped 語意等同既有 setAttribute 類禁令，非 universal。
         SEL_GRID_ROTATION,
         SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
       ],
     },
   },
@@ -597,6 +633,7 @@ export default [
         SEL_NO_ERR_IN_ALERT,
         SEL_NULLISH_PERPAGE,
         SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
       ],
     },
   },
@@ -629,6 +666,7 @@ export default [
         // 同 rule 後者整段 replace，須重述才不會漏掉）。
         SEL_TRACKED_EVENTSOURCE,
         SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
       ],
     },
   },
@@ -716,6 +754,7 @@ export default [
         SEL_NO_ERR_IN_ALERT,
         SEL_NULLISH_PERPAGE,
         SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
       ],
     },
   },
