@@ -143,6 +143,15 @@ function ruleBody(css, selectorSource) {
   return m ? m[1] : null;
 }
 
+// port TestRescrapeModalGuard._zindex_of（live）：抽 `selector { … z-index: N }` 的整數。
+// selector 是 rule head 的字面子字串（escapeRegExp 後比對），忠實鏡射 pytest 的
+// `re.escape(selector) + r"\s*\{[^}]*?z-index:\s*(\d+)"`（DOTALL；[^}] 已界定 block 邊界）。
+// 回 null 表未命中（rule 據此 fail，對應 pytest 的 assert m）。
+function zindexOf(css, selector) {
+  const m = css.match(new RegExp(`${escapeRegExp(selector)}\\s*\\{[^}]*?z-index:\\s*(\\d+)`, 's'));
+  return m ? parseInt(m[1], 10) : null;
+}
+
 // T3 poster-crop 家族 @media header 錨定條件（^...$ ⇔ pytest 字面 `@media (max-width: Npx) {`，
 // 排除 compound / coarse / comment 內 @media 誤命中）。
 const MW480 = /^\s*\(\s*max-width\s*:\s*480px\s*\)\s*$/;
@@ -1201,6 +1210,201 @@ const RULES = [
       if (!found) ctx.fail('CG-SB-03: .spotlight-search .btn-icon 區塊須含 flex-shrink: 0');
     },
   },
+
+  // ══ T3 sub-commit 3c：跨-PR 混合 CSS 半邊（D 組 CG-XP-01..05；net+tag only，DO NOT delete，
+  //    CD-96-12）。96c 只建自己承接的 CSS 半邊替代網 + 標 [lint-guard: migrate→<primary>]；
+  //    整 class 最終刪除由 primary（96d/96e）在所有半邊網皆綠後執行。忠實 port（CD-96c-2）。══
+
+  // CG-XP-01 ← TestRescrapeModalGuard CSS/asset 半邊（primary=96d；z-index-order 跨檔 + backdrop-token
+  //           + selector-exists + no-hardcoded-token + base.html link）
+  {
+    id: 'CG-XP-01',
+    file: 'components/rescrape-modal.css',
+    kind: 'fn',
+    check(ctx) {
+      const modalCss = ctx.raw; // rescrape-modal.css
+      const showcaseRaw = ctx.load('pages/showcase.css').raw;
+      const themeRaw = ctx.load('theme.css').raw;
+      const sourcePillRaw = ctx.load('components/source-pill.css').raw;
+
+      // ── test_rescrape_modal_css_exists：rescrape-modal.css 專屬 class ──
+      for (const sel of ['.rescrape-modal-box', '.rescrape-x', '.rescrape-num-input', '.rescrape-preview', '.rescrape-confirm-btn']) {
+        if (!modalCss.includes(sel)) ctx.fail(`CG-XP-01: rescrape-modal.css 缺少 ${sel}`);
+      }
+
+      // ── test_rescrape_modal_css_no_hardcoded_tokens：hex 白名單 #fff / 無 px radius ──
+      const badHex = (modalCss.match(/#[0-9a-fA-F]{3,8}\b/g) || []).filter((h) => !['#fff', '#ffffff'].includes(h.toLowerCase()));
+      if (badHex.length) ctx.fail(`CG-XP-01: rescrape-modal.css 含硬編碼 hex 色 ${JSON.stringify(badHex)}（僅 #fff 白名單）`);
+      const radiusPx = modalCss.match(/border-radius:\s*\d+px/g) || [];
+      if (radiusPx.length) ctx.fail(`CG-XP-01: rescrape-modal.css border-radius 用 px 字面 ${JSON.stringify(radiusPx)}（應用 --fluent-radius-* token）`);
+
+      // ── test_source_pill_css_has_action_loading_modifiers ──
+      for (const sel of ['.source-pill--action', '.source-pill.is-loading', '.pill-spin', '.source-pill:disabled']) {
+        if (!sourcePillRaw.includes(sel)) ctx.fail(`CG-XP-01: source-pill.css 缺少 ${sel} modifier`);
+      }
+      // ── test_source_pill_base_drag_rules_untouched ──
+      if (!sourcePillRaw.includes('cursor: grab')) ctx.fail('CG-XP-01: source-pill.css base drag 規則（cursor: grab）遭破壞');
+
+      // ── test_base_html_links_rescrape_modal_css（asset linkage 半邊）──
+      let baseHtml;
+      try {
+        baseHtml = ctx.loadWeb('templates/base.html');
+      } catch {
+        ctx.fail('CG-XP-01: 讀取 web/templates/base.html 失敗');
+        baseHtml = '';
+      }
+      if (!baseHtml.includes('/static/css/components/rescrape-modal.css')) {
+        ctx.fail('CG-XP-01: base.html 未 <link> rescrape-modal.css');
+      }
+
+      // ── test_rescrape_dialog_zindex_above_lightbox_stack_below_toast（跨檔 z-index order）──
+      const rescrapeZ = zindexOf(modalCss, '.rescrape-dialog.modal');
+      const lightboxZ = zindexOf(showcaseRaw, '.showcase-lightbox');
+      const similarZ = zindexOf(showcaseRaw, '.similar-stage');
+      const toastZ = zindexOf(themeRaw, '.fluent-toast-container');
+      if (rescrapeZ === null) ctx.fail('CG-XP-01: 無法在 rescrape-modal.css 找到 .rescrape-dialog.modal 的 z-index');
+      if (lightboxZ === null) ctx.fail('CG-XP-01: 無法在 showcase.css 找到 .showcase-lightbox 的 z-index');
+      if (similarZ === null) ctx.fail('CG-XP-01: 無法在 showcase.css 找到 .similar-stage 的 z-index');
+      if (toastZ === null) ctx.fail('CG-XP-01: 無法在 theme.css 找到 .fluent-toast-container 的 z-index');
+      if (rescrapeZ !== null && lightboxZ !== null && !(rescrapeZ > lightboxZ)) {
+        ctx.fail(`CG-XP-01: rescrape z-index ${rescrapeZ} 未高於 .showcase-lightbox ${lightboxZ}（會渲染在 lightbox 下方）`);
+      }
+      if (rescrapeZ !== null && similarZ !== null && !(rescrapeZ > similarZ)) {
+        ctx.fail(`CG-XP-01: rescrape z-index ${rescrapeZ} 未高於 .similar-stage ${similarZ}`);
+      }
+      if (rescrapeZ !== null && toastZ !== null && !(rescrapeZ < toastZ)) {
+        ctx.fail(`CG-XP-01: rescrape z-index ${rescrapeZ} 未低於 .fluent-toast-container ${toastZ}（成功 toast 會被彈窗蓋住）`);
+      }
+
+      // ── test_fluent_modal_zindex_above_showcase_lightbox ──
+      const fluentModalZ = zindexOf(themeRaw, '.fluent-modal');
+      if (fluentModalZ === null) ctx.fail('CG-XP-01: 無法在 theme.css 找到 .fluent-modal 的 z-index');
+      else if (lightboxZ !== null && !(fluentModalZ > lightboxZ)) {
+        ctx.fail(`CG-XP-01: base .fluent-modal z-index ${fluentModalZ} 未高於 .showcase-lightbox ${lightboxZ}（確認 modal 會渲染在燈箱下方）`);
+      }
+
+      // ── test_fluent_modal_class_open_backdrop_uses_tokens（theme.css .fluent-modal.modal-open）──
+      const bm = themeRaw.match(/\.fluent-modal\.modal-open\s*\{([^}]*)\}/s);
+      if (!bm) ctx.fail('CG-XP-01: theme.css 缺少 .fluent-modal.modal-open class-open 玻璃 backdrop 規則');
+      else {
+        const rule = bm[1];
+        if (!rule.includes('blur(var(--fluent-blur-light))')) ctx.fail('CG-XP-01: backdrop blur 未走 --fluent-blur-light token');
+        if (/blur\(\s*\d+px/.test(rule)) ctx.fail('CG-XP-01: backdrop 含硬編碼 blur(Npx)，應用 --fluent-blur-light token');
+        if (!rule.includes('var(--overlay-modal)')) ctx.fail('CG-XP-01: backdrop dim 未走 --overlay-modal token');
+        if (!rule.includes('-webkit-backdrop-filter: blur(var(--fluent-blur-light))')) ctx.fail('CG-XP-01: backdrop 缺少 -webkit-backdrop-filter 配對（Safari/iOS）');
+        if (!rule.includes('background: var(--overlay-modal)')) ctx.fail('CG-XP-01: dim 應 paint 在 dialog 本體（background: var(--overlay-modal)）');
+      }
+    },
+  },
+
+  // CG-XP-02 ← TestSourcePillSharedComponentGuard CSS 半邊（primary=96d；selector-exists + unscoped 負守衛
+  //           + settings.css 不再定義 pill）
+  {
+    id: 'CG-XP-02',
+    file: 'components/source-pill.css',
+    kind: 'fn',
+    check(ctx) {
+      const css = ctx.raw; // source-pill.css
+      // ── test_source_pill_css_exists_with_selectors：全部 7 selector ──
+      for (const sel of [
+        '.source-pill',
+        '.source-pill--uncensored',
+        '.source-pill--manual-only',
+        '.source-pill-mt-badge',
+        '.source-pill-badge',
+        '.source-pill.is-partsbin',
+        '.source-pill[data-enabled="false"] .pill-name',
+      ]) {
+        if (!css.includes(sel)) ctx.fail(`CG-XP-02: source-pill.css 缺少選擇器 ${sel}`);
+      }
+      // ── test_source_pill_css_is_unscoped：不得含 #settings-components（cross-page unscoped，負守衛）──
+      if (css.includes('#settings-components')) ctx.fail('CG-XP-02: source-pill.css 不應含 #settings-components scope（cross-page unscoped）');
+      // ── test_settings_css_no_longer_defines_pill：容器 settings-sources-pills 保留，排除後不得殘留 pill 本體 ──
+      const settingsCss = ctx.load('pages/settings.css').raw;
+      const stripped = settingsCss.replace(/settings-sources-pills\b/g, '');
+      if (stripped.includes('settings-sources-pill')) {
+        ctx.fail('CG-XP-02: settings.css 仍含 settings-sources-pill（pill 規則應已搬至 source-pill.css）');
+      }
+    },
+  },
+
+  // CG-XP-03 ← TestT4FooterStructure CSS 半邊（primary=96e；footer selectors + 640px media-value）。
+  // ⚠ pytest 主 regex `@media\'s*…640px…` 有 `\'s` typo，僅靠 fallback 命中——此處 port fallback 語意
+  //   （extractMediaBodies(css, /640px/)），不搬壞掉的主 regex（見 card §4 CG-XP-03）。
+  {
+    id: 'CG-XP-03',
+    file: 'pages/showcase.css',
+    kind: 'fn',
+    check(ctx) {
+      const css = ctx.raw; // showcase.css
+      for (const sel of ['.showcase-footer', '.footer-left', '.footer-center', '.footer-right', '.footer-pager']) {
+        if (!css.includes(sel)) ctx.fail(`CG-XP-03: showcase.css 缺少 ${sel}`);
+      }
+      const bodies = extractMediaBodies(css, /640px/);
+      if (!bodies.length) ctx.fail('CG-XP-03: showcase.css 缺少 @media (max-width: 640px)');
+      else {
+        const ok = bodies.some((b) => b.includes('.footer-left') && b.includes('.footer-center')
+          && (b.includes('display: none') || b.includes('display:none')));
+        if (!ok) {
+          const hasSel = bodies.some((b) => b.includes('.footer-left') && b.includes('.footer-center'));
+          if (!hasSel) ctx.fail('CG-XP-03: @media (max-width: 640px) 缺少 .footer-left 與 .footer-center');
+          else ctx.fail('CG-XP-03: @media (max-width: 640px) 缺少 display: none');
+        }
+      }
+    },
+  },
+
+  // CG-XP-04 ← TestPageTransitionDomGuard CSS 半邊（primary=96e；theme.css view-transition anchors，用 raw）
+  {
+    id: 'CG-XP-04',
+    file: 'theme.css',
+    kind: 'fn',
+    check(ctx) {
+      const css = ctx.raw; // theme.css
+      // ── test_theme_css_view_transition_opt_in ──
+      if (!css.includes('@view-transition')) ctx.fail('CG-XP-04: theme.css 缺少 @view-transition at-rule');
+      if (!/@view-transition\s*\{\s*navigation:\s*auto/.test(css)) ctx.fail('CG-XP-04: theme.css @view-transition 缺少 navigation: auto');
+      // ── test_theme_css_named_elements ──
+      if (!css.includes('view-transition-name: sidebar')) ctx.fail('CG-XP-04: theme.css 缺少 view-transition-name: sidebar');
+      if (!css.includes('view-transition-name: main-content')) ctx.fail('CG-XP-04: theme.css 缺少 view-transition-name: main-content');
+      // ── test_theme_css_showcase_optout ──
+      if (!/\.page-showcase\s+#main-content\s*\{\s*view-transition-name:\s*none/.test(css)) {
+        ctx.fail('CG-XP-04: theme.css 缺少 .page-showcase #main-content { view-transition-name: none }');
+      }
+      // ── test_theme_css_theme_toggle_denames_named_groups ──
+      if (!/html\.theme-transition-active\s+#sidebar\s*,\s*html\.theme-transition-active\s+#main-content\s*\{\s*view-transition-name:\s*none/.test(css)) {
+        ctx.fail('CG-XP-04: theme.css 缺少 theme-transition-active 期間 de-name sidebar/main-content');
+      }
+    },
+  },
+
+  // CG-XP-05 ← TestPageTransitionSettingsScopeGuard CSS 半邊（primary=96e；settings.css root VT 規則
+  //           作用域化：positive + EXHAUSTIVE negative——每個 ::view-transition-*(root) 出現點的緊鄰
+  //           前綴須恰為 html.theme-transition-active，封「錯誤前綴」盲區，非只查裸規則）
+  {
+    id: 'CG-XP-05',
+    file: 'pages/settings.css',
+    kind: 'fn',
+    check(ctx) {
+      const css = ctx.raw; // settings.css
+      const REQUIRED_PREFIX = 'html.theme-transition-active';
+      // ── test_settings_root_rules_scoped（positive）──
+      if (!css.includes(`${REQUIRED_PREFIX}::view-transition-old(root)`)) {
+        ctx.fail('CG-XP-05: settings.css root 規則未作用域化（缺 html.theme-transition-active 前綴）');
+      }
+      // ── test_settings_all_root_rules_scoped（exhaustive negative；先 stripComments）──
+      const cssNc = stripCssComments(css);
+      const rootRe = /::view-transition-(?:old|new|group|image-pair)\(root\)/g;
+      let m;
+      while ((m = rootRe.exec(cssNc)) !== null) {
+        const prefix = cssNc.slice(0, m.index);
+        if (!prefix.endsWith(REQUIRED_PREFIX)) {
+          const ctxStr = cssNc.slice(Math.max(0, m.index - 40), m.index + m[0].length);
+          ctx.fail(`CG-XP-05: settings.css 有未以 html.theme-transition-active 作用域化的 root VT 規則: …${JSON.stringify(ctxStr)}`);
+        }
+      }
+    },
+  },
 ];
 
 // ── per-file read+parse cache（同檔多 rule 共用，讀一次 → stripCssComments → parseRuleBlocks）──
@@ -1214,6 +1418,17 @@ function loadFile(rel) {
   return entry;
 }
 
+// web/ 相對檔（非 css 目錄）raw 讀取＋cache——供 asset-linkage 半邊（如 base.html <link> 存在性，
+// CG-XP-01 承接 test_base_html_links_rescrape_modal_css）。ROOT 覆蓋 → scratch 副本自動生效。
+const WEB = (rel) => join(ROOT, 'web', rel);
+const webCache = new Map();
+function loadWebFile(rel) {
+  if (webCache.has(rel)) return webCache.get(rel);
+  const raw = readFileSync(WEB(rel), 'utf-8');
+  webCache.set(rel, raw);
+  return raw;
+}
+
 // ── runner（read-fail try/catch → fail+continue；全 rule 跑完才 exit(1)，i18n_lint 累積器範式）──
 for (const rule of RULES) {
   let entry;
@@ -1223,7 +1438,7 @@ for (const rule of RULES) {
     fail(`${rule.id}: 讀檔失敗 ${rule.file}`);
     continue;
   }
-  const ctx = { text: entry.text, raw: entry.raw, blocks: entry.blocks, fail, rel: rule.file, load: loadFile };
+  const ctx = { text: entry.text, raw: entry.raw, blocks: entry.blocks, fail, rel: rule.file, load: loadFile, loadWeb: loadWebFile };
   KINDS[rule.kind](rule, ctx);
 }
 

@@ -97,6 +97,8 @@ class TestAppleTouchIconThemeColor:
                 f"apple-touch-icon.png 四角須為品牌底 #1a1a2e，實為 {img.getpixel((0, 0))}"
 
 
+# [lint-guard: migrate→96e] CSS 半邊已遷 css-guard CG-XP-04（theme.css view-transition anchors）；
+# 整 class 刪除由 96e 在所有半邊網綠後執行（CD-96-12）。base.html DOM 半邊仍 pytest。
 class TestPageTransitionDomGuard:
     """feature/76 T1: Cross-Document View Transitions DOM + CSS 契約守衛。
 
@@ -185,6 +187,8 @@ SETTINGS_CSS_T76 = Path(__file__).parent.parent.parent / "web" / "static" / "css
 THEME_TRANSITION_JS_T76 = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "settings" / "theme-transition.js"
 
 
+# [lint-guard: migrate→96e] CSS 半邊已遷 css-guard CG-XP-05（settings.css root VT 規則 exhaustive-scope）；
+# 整 class 刪除由 96e 在所有半邊網綠後執行（CD-96-12）。theme-transition.js lifecycle 半邊仍 pytest。
 class TestPageTransitionSettingsScopeGuard:
     """feature/76 T1a（CD-7/F7）：settings.css root 規則作用域化 + theme-transition.js class lifecycle。
 
@@ -2856,6 +2860,8 @@ LOCALE_FILES = ["zh_TW.json", "zh_CN.json", "en.json", "ja.json"]
 SHOWCASE_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "showcase.css"
 
 
+# [lint-guard: migrate→96e] CSS 半邊已遷 css-guard CG-XP-03（showcase.css footer + 640px media-value）；
+# 整 class 刪除由 96e 在所有半邊網綠後執行（CD-96-12）。showcase.html 結構半邊仍 pytest。
 class TestT4FooterStructure:
     """49a-T4: showcase.html 三段式底部 footer 守衛（method folded）"""
 
@@ -5933,6 +5939,9 @@ BASE_HTML               = Path(__file__).parent.parent.parent / "web" / "templat
 ADV_SEARCH_BOOTSTRAP    = Path(__file__).parent.parent.parent / "web" / "templates" / "_advanced_search_bootstrap.html"
 
 
+# [lint-guard: migrate→96d] CSS 半邊已遷 css-guard CG-XP-02（source-pill.css selector-exists + unscoped
+# 負守衛 + settings.css 不再定義 pill）；整 class 刪除由 96d 在所有半邊網綠後執行（CD-96-12）。
+# base.html link / bootstrap partial / include / settings.html markup 半邊仍 pytest。
 class TestSourcePillSharedComponentGuard:
     """TASK-62a-0: source pill 抽成 unscoped 共用 component + bootstrap partial 跨頁注入。
 
@@ -6050,6 +6059,9 @@ RESCRAPE_MODAL_HTML = Path(__file__).parent.parent.parent / "web" / "templates" 
 RESCRAPE_MODAL_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "components" / "rescrape-modal.css"
 
 
+# [lint-guard: migrate→96d] CSS/asset 半邊已遷 css-guard CG-XP-01（z-index-order 跨檔 + backdrop-token
+# + source-pill modifiers + rescrape-modal.css exists/no-hardcoded-token + base.html link）；
+# 整 class 刪除由 96d 在所有半邊網綠後執行（CD-96-12）。partial 結構 / i18n / include 半邊仍 pytest。
 class TestRescrapeModalGuard:
     """TASK-62a-2: 進階重刮彈窗 partial（pick/preview 換頁）+ source-pill action/loading
     modifier + zh_TW i18n 的靜態結構守衛。鏡射 TestSourcePillSharedComponentGuard。
