@@ -12,7 +12,12 @@ module.exports = {
     'color-no-hex': true,
     'declaration-property-value-disallowed-list': {
       '/^transition/': ['/\\b0?\\.\\d+s\\b/'],
-      '/^(-webkit-)?(backdrop-)?filter$/': ['/blur\\(\\s*\\d+px/'],
+      // CG-FLU-02 (96c-T2): faithful port of deleted pytest test_no_hardcoded_blur_literal
+      // regex `/blur\(\s*\.?\d/` — bans ANY numeric blur literal (decimal / unitless / non-px:
+      // blur(.5rem) / blur(8) / blur(2.5px)), not just \d+px. Allows blur(var(--fluent-blur*))
+      // (no digit right after '('). blur() is only valid in filter/backdrop-filter, so this
+      // property-scoped rule is equivalent to the pytest's whole-text scan in practice.
+      '/^(-webkit-)?(backdrop-)?filter$/': ['/blur\\(\\s*\\.?\\d/'],
       'box-shadow': ['/\\brgba\\(\\s*\\d/'],
       'border-radius': ['/^\\d+px/'],
       'object-position': ['/100%\\s+20%/'],
