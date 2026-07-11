@@ -130,6 +130,34 @@ const SEL_GRID_ROTATION = {
     "C6 約束（TestGridSettlePulse，96b-T4）：playGridSettle 動畫方法體內禁止出現 rotation 屬性（grid settle 落地效果不應帶旋轉）。",
 };
 
+// ── 96b-T5 (Opus-resolved decision 1)：SEL_TRACKED_EVENTSOURCE（只加 Group 1，非 universal）──
+// 來源：TestEventSourceTracking::test_no_bare_new_event_source_in_search_state
+// （tests/unit/test_frontend_lint.py:6009-6021）。只掃 pages/search/state/*.js（非遞迴），
+// 裸 new EventSource(...)（同一行未經 _trackConnection 包裝）禁止。
+// 🔴 只加進 Group 1：scanner/state-scan.js（3 處）與 showcase/state-lightbox.js（1 處）目前有
+// 現行合法但未被此 pytest 覆蓋的裸 new EventSource(...)，兩者落在 Group 6 catch-all，若加進
+// Group 3/Group 6/universal 會讓這兩檔立刻變 RED（真實迴歸，非假設）。Group 1 本身即精確邊界
+// （與 pytest 掃描目錄完全對齊），不需要任何白名單機制。
+const SEL_TRACKED_EVENTSOURCE = {
+  selector:
+    "NewExpression[callee.name='EventSource']:not(CallExpression[callee.property.name='_trackConnection'] > NewExpression[callee.name='EventSource'])",
+  message:
+    "T4.1 守衛（TestEventSourceTracking，96b-T5）：new EventSource(...) 必須包在 this._trackConnection(...) 內（search/state/** 專屬，連線追蹤 registry 依賴此包裝）。",
+};
+
+// ── 96b-T5 (Opus-resolved decision 3)：SEL_LONGPRESS_IDENT（universal，全部 10 個 group）──
+// 來源意圖：TestLongPressTouchSuppression docstring 描述的已退役 long-press.js helper 機制
+// （shared/long-press.js 整檔已於 74c-T3 刪除）。全 repo 現況零殘留（grep -rn longPress web/ 零命中）。
+// 前瞻防禦網（同 SEL_NO_PLAYTOICON／SEL_STARSETTLE_LITERAL 先例）：對已退役 identifier 建
+// universal ban，非現存斷言的忠實複製。單一 Identifier selector 同時涵蓋函式宣告/member access/
+// object property key 三種語法形式（ESTree 統一表示為 Identifier 節點，非-computed 情境下）。
+const SEL_LONGPRESS_IDENT = {
+  selector:
+    "Identifier[name=/^(?:longPressStart|longPressEnd|longPressCancel|longPressClickGuard)$/]",
+  message:
+    "long-press.js helper 機制（74c-T3 已退役）的 longPressStart/longPressEnd/longPressCancel/longPressClickGuard identifier 禁止重新引入（96b-T5 前瞻防禦網）。",
+};
+
 export default [
   // ── 全域基礎設定 ──────────────────────────────────────────────
   {
@@ -191,6 +219,8 @@ export default [
 
   // Group 1: search/state/** — createElement + showModal + window.confirm + BreathingManager（最嚴）
   // + starSettle Literal ban（Codex r1 P3）
+  // + SEL_TRACKED_EVENTSOURCE（96b-T5 Opus-resolved 決策 1）：只加此 group，見常數定義處註解
+  // + SEL_LONGPRESS_IDENT（96b-T5 Opus-resolved 決策 3，universal）
   {
     files: ["web/static/js/pages/search/state/**/*.js"],
     rules: {
@@ -206,6 +236,8 @@ export default [
         SEL_NO_PLAYTOICON,
         SEL_NO_ERR_IN_ALERT,
         SEL_NULLISH_PERPAGE,
+        SEL_TRACKED_EVENTSOURCE,
+        SEL_LONGPRESS_IDENT,
       ],
     },
   },
@@ -235,6 +267,7 @@ export default [
         SEL_SHOW_MODAL,
         SEL_NO_ERR_IN_ALERT,
         SEL_NULLISH_PERPAGE,
+        SEL_LONGPRESS_IDENT,
       ],
     },
   },
@@ -255,6 +288,7 @@ export default [
         SEL_SHOW_MODAL,
         SEL_NO_ERR_IN_ALERT,
         SEL_NULLISH_PERPAGE,
+        SEL_LONGPRESS_IDENT,
       ],
     },
   },
@@ -300,6 +334,7 @@ export default [
         SEL_SHOW_MODAL,
         SEL_NO_ERR_IN_ALERT,
         SEL_NULLISH_PERPAGE,
+        SEL_LONGPRESS_IDENT,
       ],
     },
   },
@@ -384,6 +419,7 @@ export default [
         SEL_SHOW_MODAL,
         SEL_NO_ERR_IN_ALERT,
         SEL_NULLISH_PERPAGE,
+        SEL_LONGPRESS_IDENT,
       ],
     },
   },
@@ -412,6 +448,7 @@ export default [
         SEL_SHOW_MODAL,
         SEL_NO_ERR_IN_ALERT,
         SEL_NULLISH_PERPAGE,
+        SEL_LONGPRESS_IDENT,
       ],
     },
   },
@@ -488,6 +525,7 @@ export default [
         // 兩者是不同檔）。SEL_GRID_ROTATION 靠 Property[key.name='playGridSettle'] descendant
         // 自我限定範圍，file-scoped 語意等同既有 setAttribute 類禁令，非 universal。
         SEL_GRID_ROTATION,
+        SEL_LONGPRESS_IDENT,
       ],
     },
   },
@@ -558,6 +596,7 @@ export default [
         SEL_SHOW_MODAL,
         SEL_NO_ERR_IN_ALERT,
         SEL_NULLISH_PERPAGE,
+        SEL_LONGPRESS_IDENT,
       ],
     },
   },
@@ -585,6 +624,7 @@ export default [
         },
         SEL_NO_ERR_IN_ALERT,
         SEL_NULLISH_PERPAGE,
+        SEL_LONGPRESS_IDENT,
       ],
     },
   },
@@ -671,6 +711,7 @@ export default [
         SEL_SHOW_MODAL,
         SEL_NO_ERR_IN_ALERT,
         SEL_NULLISH_PERPAGE,
+        SEL_LONGPRESS_IDENT,
       ],
     },
   },

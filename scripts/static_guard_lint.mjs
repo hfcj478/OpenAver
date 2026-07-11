@@ -808,6 +808,63 @@ const RULES = [
     file: 'web/templates/search.html', kind: 'required-string', pattern: 'duplicateModalOpen',
     note: '[TestNoDuplicateNativeDialog] test_duplicate_modal_uses_modal_open_class — search.html 含 duplicateModalOpen（Alpine state pattern，非原生 showModal/close）',
   },
+
+  // ==== 96b-T5（Opus-resolved 決策 2）：SEL_CROPMODE_LITERAL — port 自
+  // tests/unit/test_ghost_fly_cropmode.py::TestGhostFlyCropModeBoundary（3 method） ====
+  // 規則 1+2：cropMode / 'right-half' 只能出現在 shared/ghost-fly.js（定義站）+
+  // pages/showcase/state-similar.js（CROPMODE_CALLER_WHITELIST 唯一白名單 caller，經 GhostFly API）。
+  // state-lightbox.js / state-base.js 不在此白名單內（它們屬於下面規則 3 的獨立掃描名單，
+  // plan 文字曾誤讀成同一份白名單，本卡已用 grep 驗證全 repo 目前只有 ghost-fly.js /
+  // state-similar.js 兩檔含這些字串）。exclude 為 basename 比對，已 grep 驗證兩檔全 repo 各僅一份。
+  {
+    file: { dir: 'web/static/js', ext: ['.js'], recursive: true, exclude: ['ghost-fly.js', 'state-similar.js'] },
+    kind: 'forbidden-string', pattern: 'cropMode',
+    note: '[TestGhostFlyCropModeBoundary] test_cropmode_string_only_in_ghost_fly — cropMode 只能出現在 ghost-fly.js（定義站）/ state-similar.js（白名單 caller）',
+  },
+  {
+    file: { dir: 'web/static/js', ext: ['.js'], recursive: true, exclude: ['ghost-fly.js', 'state-similar.js'] },
+    kind: 'forbidden-string', pattern: ["'right-half'", '"right-half"'],
+    note: '[TestGhostFlyCropModeBoundary] test_right_half_literal_only_in_ghost_fly — right-half 字面量只能出現在 ghost-fly.js（定義站）/ state-similar.js（白名單 caller）',
+  },
+  // 規則 3：state-lightbox.js / state-base.js 禁 objectPosition...right（同一行）。
+  // state-similar.js 在 pytest 是 CALLER_SCOPE_FILES 的一員但因白名單命中而 pytest.skip，
+  // 不建列（與白名單語意一致，不對它重複套用此禁令）。
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string',
+    pattern: /objectPosition[^\n]*right/,
+    note: '[TestGhostFlyCropModeBoundary] test_caller_scope_no_object_position_right (state-lightbox.js) — 禁自算 objectPosition: right，須走 createCoverGhost(..., { cropMode })',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-base.js', kind: 'forbidden-string',
+    pattern: /objectPosition[^\n]*right/,
+    note: '[TestGhostFlyCropModeBoundary] test_caller_scope_no_object_position_right (state-base.js) — 禁自算 objectPosition: right，須走 createCoverGhost(..., { cropMode })',
+  },
+
+  // ==== 96b-T5（額外港入，補 §3.1 缺口）：TestLongPressTouchSuppression 的
+  // test_grid_enrich_btn_longpress_retired / test_lightbox_enrich_btn_longpress_retired
+  // 兩個 HTML tag-scoped method（submit btn + switchSourceBtn 兩條已由 T1 覆蓋，見既有
+  // TestSearchSubmitBtnNoLongPress / TestSwitchSourceBtnRemoved rows）。使
+  // TestLongPressTouchSuppression 全部 4 method 皆有替代網，供 T6 安全整刪。 ====
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagName: 'button', className: 'enrich-btn',
+    forbidden: [
+      'longPressStart', 'longPressEnd', 'longPressCancel', 'longPressClickGuard',
+      '@mousedown', '@mouseup', '@mouseleave', '@touchstart', '@touchend', '@touchcancel',
+    ],
+    required: ['@click.stop="enrichVideo(video)"'],
+    note: '[TestLongPressTouchSuppression] test_grid_enrich_btn_longpress_retired — grid .btn-glass-circle.enrich-btn 已無長壓接線，tap=enrichVideo(video)',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'tag-scan', mode: 'class-tag',
+    tagPattern: /<button\b(?=[^>]*class="lb-action-btn")(?=[^>]*enrichVideo\(currentLightboxVideo\))[^>]*>/,
+    forbidden: [
+      'longPressStart', 'longPressEnd', 'longPressCancel', 'longPressClickGuard',
+      '@mousedown', '@mouseup', '@mouseleave', '@touchstart', '@touchend', '@touchcancel',
+    ],
+    required: ['@click.stop="enrichVideo(currentLightboxVideo)"'],
+    note: '[TestLongPressTouchSuppression] test_lightbox_enrich_btn_longpress_retired — lightbox .lb-action-btn（enrichVideo(currentLightboxVideo)）已無長壓接線',
+  },
 ];
 
 // ---- helpers ----
