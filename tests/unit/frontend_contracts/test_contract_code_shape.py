@@ -975,3 +975,20 @@ class TestExternalManagerSwitchModeGuard:
         assert "{mode}" in node["body"] and "{count}" in node["body"], \
             "settings.switch_mode_confirm.body 缺 {mode}/{count} 插值"
         assert "風味" not in node["body"], "switch_mode_confirm.body 不應出現「風味」"
+
+
+# [lint-guard: pytest-justified] scanner.py Python-source 安全字串弱代理
+# （option-b，CD-96e-5〔c〕）——get_video/video_player/normpath/get_proxy_extensions/
+# is_path_under_dir 是否真的組成安全的路徑校驗邏輯，屬 Python 源碼語意，
+# 字串存在性只是弱代理，non-AST 機械掃描無法驗證邏輯正確，留 pytest。
+class TestVideoApiSafetyStrings:
+    """96e-T5 relocate（from TestVideoPlaybackGuard.test_video_api_files_contain
+    scanner.py 半邊）：web/routers/scanner.py 含 video proxy 安全守衛字串。"""
+
+    def test_scanner_py_safety_strings(self):
+        content = (PROJECT_ROOT / "web" / "routers" / "scanner.py").read_text(encoding="utf-8")
+        for expected in [
+            'def get_video(', 'async def video_player(', 'os.path.normpath',
+            'get_proxy_extensions', 'is_path_under_dir',
+        ]:
+            assert expected in content, f"scanner.py missing: {expected!r}"

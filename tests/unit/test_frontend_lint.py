@@ -20,12 +20,9 @@ SHOWCASE_MAIN_JS     = Path(__file__).parent.parent.parent / "web" / "static" / 
 
 SETTINGS_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "settings.html"
 SCANNER_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "scanner.html"
-SCANNER_SCAN_JS  = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "scanner" / "state-scan.js"
 SCANNER_BATCH_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "scanner" / "state-batch.js"
 SCANNER_ALIAS_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "scanner" / "state-alias.js"
 SCANNER_MAIN_JS  = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "scanner" / "main.js"
-MOTION_LAB_HTML = Path(__file__).parent.parent.parent / "web" / "templates" / "motion_lab.html"
-THEME_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "theme.css"
 TAILWIND_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "tailwind.css"
 
 BASE_HTML_T76 = Path(__file__).parent.parent.parent / "web" / "templates" / "base.html"
@@ -37,154 +34,12 @@ THEME_COLOR_DIM = "#2a303c"
 THEME_COLOR_LIGHT = "#ffffff"
 
 
-# [lint-guard: migrate→96e] CSS 半邊已遷 css-guard CG-XP-04（theme.css view-transition anchors）；
-# 整 class 刪除由 96e 在所有半邊網綠後執行（CD-96-12）。base.html DOM 半邊仍 pytest。
-class TestPageTransitionDomGuard:
-    """feature/76 T1: Cross-Document View Transitions DOM + CSS 契約守衛。
-
-    全 substring/regex 正向存在性（非行號 allowlist）。守衛 base.html 命名錨點 +
-    theme.css opt-in / 命名 / showcase opt-out。settings.css root 作用域化屬 T1a，
-    head skipTransition script 屬 T-showcase，皆不在此守衛。
-    """
-
-    def _base(self):
-        return BASE_HTML_T76.read_text(encoding="utf-8")
-
-    def _theme(self):
-        return THEME_CSS.read_text(encoding="utf-8")
-
-    def test_base_html_main_content_id(self):
-        """base.html <main> 含 id="main-content"（CD-4，T1 新增的命名錨點）"""
-        assert 'id="main-content"' in self._base(), \
-            "base.html <main> 缺少 id=\"main-content\"（feature/76 CD-4）"
-
-    def test_base_html_sidebar_id(self):
-        """base.html <nav> 含 id="sidebar"（現狀錨點，防回歸——VT 持久化依賴此 id）"""
-        assert 'id="sidebar"' in self._base(), \
-            "base.html <nav> 缺少 id=\"sidebar\"（feature/76 CD-3 sidebar 持久化依賴）"
-
-    def test_theme_css_view_transition_opt_in(self):
-        """theme.css 含 @view-transition + navigation: auto（CD-1 全站 opt-in）"""
-        css = self._theme()
-        assert "@view-transition" in css, "theme.css 缺少 @view-transition at-rule（feature/76 CD-1）"
-        assert re.search(r"@view-transition\s*\{\s*navigation:\s*auto", css), \
-            "theme.css @view-transition 缺少 navigation: auto（feature/76 CD-1）"
-
-    def test_theme_css_named_elements(self):
-        """theme.css 含 sidebar / main-content 兩個 view-transition-name（CD-2/CD-3）"""
-        css = self._theme()
-        assert "view-transition-name: sidebar" in css, \
-            "theme.css 缺少 view-transition-name: sidebar（feature/76 CD-3）"
-        assert "view-transition-name: main-content" in css, \
-            "theme.css 缺少 view-transition-name: main-content（feature/76 CD-2）"
-
-    def test_theme_css_showcase_optout(self):
-        """theme.css 含 showcase opt-out 單行（CD-11 輔助：.page-showcase + name:none）"""
-        css = self._theme()
-        assert re.search(r"\.page-showcase\s+#main-content\s*\{\s*view-transition-name:\s*none", css), \
-            "theme.css 缺少 .page-showcase #main-content { view-transition-name: none }（feature/76 CD-11 輔助）"
-
-    def test_theme_css_theme_toggle_denames_named_groups(self):
-        """主題切換（same-doc startViewTransition）期間 de-name sidebar/main-content（Codex P1）。
-
-        view-transition-name 對 same-document VT 同樣生效 → 不 de-name 則命名群組脫離 root、
-        破壞 theme-transition.js 的圓形 reveal（main-content 還會跑 250ms fade 撞 500ms 圓形）。
-        守 html.theme-transition-active 期間兩區 view-transition-name: none。
-        """
-        css = self._theme()
-        assert re.search(
-            r"html\.theme-transition-active\s+#sidebar\s*,\s*"
-            r"html\.theme-transition-active\s+#main-content\s*\{\s*view-transition-name:\s*none",
-            css,
-        ), "theme.css 缺少 theme-transition-active 期間 de-name sidebar/main-content（feature/76 Codex P1 主題切換共存）"
-
-    def test_base_html_showcase_skip_script_in_head(self):
-        """showcase 硬切 head script（pagereveal/pageswap + skipTransition）存在且在 </head> 之前（CD-11/F8）。
-
-        pagereveal 在 first rendering opportunity 前觸發 → listener 必須在 <head> 的
-        parser-blocking classic script，掛在 body 底（如 page-lifecycle.js）會漏接。
-        斷言三 token 皆落在 </head> 之前，鎖定位置。
-        """
-        html = self._base()
-        head_end = html.find("</head>")
-        assert head_end != -1, "base.html 找不到 </head>"
-        head = html[:head_end]
-        for token in ("pagereveal", "pageswap", "skipTransition"):
-            assert token in head, \
-                f"base.html <head> 缺少 {token!r}（feature/76 CD-11 showcase 硬切 head script 必須在 head、非 body 底）"
-        # 鎖定 parser-blocking classic：包住 skipTransition 的 <script> open tag 不得有
-        # type=module / defer / async（任一都會把 pagereveal 延後過 first render → 漏接、靜默壞掉）。
-        skip_idx = head.find("skipTransition")
-        open_start = head.rfind("<script", 0, skip_idx)
-        open_tag = head[open_start:head.find(">", open_start) + 1]
-        for banned in ('type="module"', "type='module'", "defer", "async"):
-            assert banned not in open_tag, \
-                (f"base.html showcase 硬切 script 的 <script> tag 含 {banned!r}（feature/76 CD-11）："
-                 "pagereveal listener 必須是 parser-blocking classic script，defer/async/module 會漏接事件")
-
-
-SETTINGS_CSS_T76 = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "settings.css"
-THEME_TRANSITION_JS_T76 = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "settings" / "theme-transition.js"
-
-
-# [lint-guard: migrate→96e] CSS 半邊已遷 css-guard CG-XP-05（settings.css root VT 規則 exhaustive-scope）；
-# 整 class 刪除由 96e 在所有半邊網綠後執行（CD-96-12）。theme-transition.js lifecycle 半邊仍 pytest。
-class TestPageTransitionSettingsScopeGuard:
-    """feature/76 T1a（CD-7/F7）：settings.css root 規則作用域化 + theme-transition.js class lifecycle。
-
-    防 settings.css 裸 ::view-transition-*(root) 規則汙染導航到 /settings、/design-system 的
-    跨頁 root crossfade。negative 守衛（無裸 root 規則）是關鍵——只查 positive substring 會
-    假陽性（漏抓新增的裸規則）。
-    """
-
-    # CSS 註解內可能出現字面 pseudo，先 strip 避免假陽性
-    _COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
-    _ROOT_PSEUDO_RE = re.compile(r"::view-transition-(?:old|new|group|image-pair)\(root\)")
-    _REQUIRED_PREFIX = "html.theme-transition-active"
-
-    def _settings_css(self):
-        return SETTINGS_CSS_T76.read_text(encoding="utf-8")
-
-    def _theme_js(self):
-        return THEME_TRANSITION_JS_T76.read_text(encoding="utf-8")
-
-    def test_settings_root_rules_scoped(self):
-        """settings.css root 規則已加 html.theme-transition-active 前綴（positive）"""
-        assert f"{self._REQUIRED_PREFIX}::view-transition-old(root)" in self._settings_css(), \
-            "settings.css root 規則未作用域化（缺 html.theme-transition-active 前綴，feature/76 CD-7）"
-
-    def test_settings_all_root_rules_scoped(self):
-        """settings.css 中『每一條』root VT 規則都恰以 html.theme-transition-active 作用域化（negative，exhaustive）。
-
-        SF-2：不只查「無裸 root 規則」，而是窮舉每個 ::view-transition-*(root) 出現點、斷言其緊鄰
-        前綴恰為 html.theme-transition-active。封住「錯誤前綴」盲區——裸規則、`:root::`、`.foo::`
-        等任何非 theme-transition-active 前綴皆會被抓（lookbehind 排除法漏抓後兩者）。
-        """
-        css_nc = self._COMMENT_RE.sub("", self._settings_css())
-        for m in self._ROOT_PSEUDO_RE.finditer(css_nc):
-            prefix = css_nc[:m.start()]
-            assert prefix.endswith(self._REQUIRED_PREFIX), \
-                ("settings.css 有未以 html.theme-transition-active 作用域化的 root VT 規則"
-                 f"（feature/76 CD-7/F7）: ...{css_nc[max(0, m.start() - 40):m.end()]!r}")
-
-    def test_theme_transition_js_class_lifecycle(self):
-        """theme-transition.js 在 startViewTransition 前 add、finished 後 remove theme-transition-active（F7）"""
-        js = self._theme_js()
-        assert "classList.add('theme-transition-active')" in js, \
-            "theme-transition.js 缺少 classList.add('theme-transition-active')（feature/76 F7）"
-        assert "transition.finished" in js, \
-            "theme-transition.js 缺少 transition.finished（class remove 掛點，feature/76 F7）"
-        assert "classList.remove('theme-transition-active')" in js, \
-            "theme-transition.js 缺少 classList.remove('theme-transition-active')（feature/76 F7）"
-
-
 BATCH_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "state" / "batch.js"
 SEARCH_FLOW_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "state" / "search-flow.js"
 BASE_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "state" / "base.js"
 SETTINGS_CONFIG_JS    = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "settings" / "state-config.js"
 SETTINGS_PROVIDERS_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "settings" / "state-providers.js"
 SETTINGS_UI_JS        = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "settings" / "state-ui.js"
-SEARCH_FILE_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "file.js"
 
 
 MAIN_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "main.js"
@@ -533,65 +388,17 @@ NAVIGATION_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / 
 ANIMATIONS_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "animations.js"
 
 
-MOTION_LAB_STATE_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "motion-lab-state.js"
-
-
-class TestMotionLabStateGuard:
-    """39b-T1: motion_lab.html inline x-data 已抽離至 motion-lab-state.js (method folded)"""
-
-    def _html(self):
-        return MOTION_LAB_HTML.read_text(encoding="utf-8")
-
-    def _js(self):
-        return MOTION_LAB_STATE_JS.read_text(encoding="utf-8")
-
-    def test_motion_lab_html_contains(self):
-        """motion_lab.html 含 motionLabPage factory ref + state JS + no inline x-data block"""
-        html = self._html()
-        for expected in [
-            'x-data="motionLabPage"',
-            "motion-lab-state.js",
-        ]:
-            assert expected in html, f"motion_lab.html missing: {expected!r}"
-        pattern = re.compile(r'x-data="([^"]{100,})"')
-        matches = pattern.findall(html)
-        assert len(matches) == 0, \
-            f"motion_lab.html has {len(matches)} x-data attributes >100 chars (inline object not removed)"
-        # no defer on state script
-        tag_pattern = re.compile(r'<script[^>]*motion-lab-state\.js[^>]*>')
-        tags = tag_pattern.findall(html)
-        assert len(tags) > 0, "motion_lab.html missing: motion-lab-state.js script tag"
-        for tag in tags:
-            assert "defer" not in tag, \
-                f"motion_lab.html motion-lab-state.js script tag should not have defer: {tag}"
-
-    def test_motion_lab_state_js_contains(self):
-        """motion-lab-state.js 存在且含必要方法"""
-        assert MOTION_LAB_STATE_JS.exists(), \
-            f"motion-lab-state.js not found: {MOTION_LAB_STATE_JS}"
-        js = self._js()
-        for expected in [
-            "function motionLabPage()",
-            "init()",
-            "destroy()",
-        ]:
-            assert expected in js, f"motion-lab-state.js missing: {expected!r}"
-
 
 class TestScannerStateGuard:
-    """39b-T2: 守衛 scanner.html inline script 已抽離至 scanner.js"""
+    """39b-T2: 守衛 scanner.html inline script 已抽離至 scanner.js
+    （slim-residual，pre_alpine_module 半邊已遷 static_guard_lint）"""
 
     def _html(self):
         return SCANNER_HTML.read_text(encoding="utf-8")
 
-    def test_scanner_html_has_pre_alpine_module_block(self):
-        """scanner.html 含 pre_alpine_module block override，且含 scanner/main.js module script（54c-T2）"""
-        html = self._html()
-        assert "pre_alpine_module" in html, \
-            "scanner.html 缺少 {% block pre_alpine_module %}（54c-T2 未加入 main.js 載入）"
-        assert "scanner/main.js" in html, \
-            "scanner.html pre_alpine_module block 缺少 main.js module script"
-
+    # [lint-guard: pytest-justified] extra_js block 缺席＝vacuous PASS（終態），
+    # static_guard_lint scope-anchor 缺席是 fail-closed RED（反向懲罰終態）；
+    # per-tag 行數 ≤10 soft-threshold 亦無對應 kind。留 pytest（96e-T2 Opus 裁決 2）。
     def test_scanner_no_inline_script(self):
         """scanner.html 的 extra_js 區段（若存在）不含超過 10 行的 inline script"""
         import re
@@ -609,62 +416,6 @@ class TestScannerStateGuard:
             line_count = script_tag.count('\n') + 1
             assert line_count <= 10, \
                 f"scanner.html extra_js 含超過 10 行 inline script（{line_count} 行）"
-
-
-SEARCH_STATE_DIR = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "state"
-
-
-class TestNoAlertInSearchJs:
-    """39c-T2c + T3.6: search/scanner/settings JS 不應使用原生 alert()，改用 showToast / fluent-modal
-    (A-class alert tests removed in T55c; clipboard E-class tests retained below)
-    """
-
-    def test_scanner_clipboard_has_availability_guard(self):
-        """T3.6 P2 fix: scanner/state-scan.js 兩處 clipboard call 必須有 availability guard
-
-        navigator.clipboard 在 HTTP / 舊 WebView 為 undefined，
-        若直接呼叫 navigator.clipboard.writeText(...) 會在 property access 階段
-        sync throw TypeError，.then().catch() chain 的 .catch 完全不會跑，
-        導致 copyLogs 的 fail modal / copyOutputPath 的 error toast 被跳過。
-        守衛 if (!navigator.clipboard?.writeText) 必須在兩處 clipboard call 之前。
-        """
-        content = SCANNER_SCAN_JS.read_text(encoding="utf-8")
-        # 兩處 copy 點都應該有 ?. optional chaining guard
-        guard_count = content.count("navigator.clipboard?.writeText")
-        assert guard_count >= 2, (
-            f"scanner/state-scan.js 應該有至少 2 處 navigator.clipboard?.writeText 守衛 "
-            f"（copyLogs + copyOutputPath），目前只有 {guard_count} 處。"
-            "若沒守衛，clipboard API 不存在時 .catch() 完全不會觸發。"
-        )
-
-    def test_all_clipboard_writetext_files_have_availability_guard(self):
-        """T3.7: 全 web/static/js 任何使用 navigator.clipboard.writeText 的檔案
-        必須同時含 ?. optional chaining 守衛形式（navigator.clipboard?.writeText）。
-
-        此守衛防止未來新檔案再犯同類 pre-existing bug（HTTP / 舊 WebView
-        clipboard undefined 時 sync TypeError 跳過 .catch chain）。
-        既知合法檔（截至 T3.7）：scanner.js（×2 + ×2 guards）、help.js、
-        result-card.js、showcase/core.js — 全部含 ?. 守衛形式。
-        """
-        js_root = Path(__file__).parent.parent.parent / "web" / "static" / "js"
-        offenders = []
-        for js_file in js_root.rglob("*.js"):
-            text = js_file.read_text(encoding="utf-8")
-            if "navigator.clipboard.writeText" not in text:
-                continue
-            if "navigator.clipboard?.writeText" not in text:
-                offenders.append(str(js_file.relative_to(js_root)))
-        assert not offenders, (
-            f"以下檔案使用 navigator.clipboard.writeText 但缺 ?. 守衛形式："
-            f"{offenders}。"
-            "請改寫成 if (!navigator.clipboard?.writeText) { ...fallback...; return; } "
-            "或 navigator.clipboard?.writeText ? ... : fallback 三元，"
-            "避免 clipboard undefined 時 sync TypeError 跳過 .catch。"
-        )
-
-
-
-
 
 
 RESULT_CARD_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "pages" / "search" / "state" / "result-card.js"
@@ -1100,204 +851,11 @@ class TestIMEGuard:
             f"search.html searchQuery @keydown.enter missing: 'preventDefault()' (handler: {expr!r})"
 
 
-class TestLongPathWarning:
-    """spec-48a §a5: scanner/state-scan.js long_paths warning (method folded)"""
-
-    def test_scanner_js_long_path_warning(self):
-        """scanner/state-scan.js long_paths 警告 toast 含 warn + 6000 + 260 + debug.log"""
-        js = SCANNER_SCAN_JS.read_text(encoding="utf-8")
-        assert "long_paths" in js, "scanner/state-scan.js missing: 'long_paths'"
-        assert "showToast" in js, "scanner/state-scan.js missing: 'showToast'"
-        idx = js.find("long_paths")
-        window = js[idx:idx + 500]
-        assert "'warn'" in window or '"warn"' in window, \
-            "scanner/state-scan.js long_paths toast missing: 'warn' type"
-        assert "6000" in window, "scanner/state-scan.js long_paths toast missing: '6000'"
-        assert "260" in window, "scanner/state-scan.js long_paths toast missing: '260'"
-        assert "debug.log" in window, "scanner/state-scan.js long_paths toast missing: 'debug.log'"
-
-
-class TestReadonlySourceErrorToastGuard:
-    """88c-P2: scanner/state-scan.js done handler 的完成 toast 須依 source_errors 分流。
-
-    唯讀來源整源失敗（readonly_stats.source_errors > 0）時 toast 不可純 success，
-    須走 warn；後端完成通知已同步納入 source_errors（Codex P2）。
-    """
-
-    def test_done_toast_consults_source_errors(self):
-        js = SCANNER_SCAN_JS.read_text(encoding="utf-8")
-        assert "data.readonly_stats" in js and "source_errors" in js, \
-            "scanner/state-scan.js done toast 未 consult readonly_stats.source_errors"
-        # 完成 toast 區塊須有依 source_errors 分流的 warn 分支
-        idx = js.find("const srcErrors")
-        assert idx != -1, "scanner/state-scan.js 缺 srcErrors 分流變數"
-        # 89b-T6：block 內新增 noOutput/unreachable/partial 宣告與 parts.push 後，
-        # 'warn' 字串位置後移，window 需放寬（原 800 不足以涵蓋整個 if/else block）。
-        window = js[idx:idx + 1300]
-        assert "'warn'" in window or '"warn"' in window, \
-            "scanner/state-scan.js source_errors 分支缺 warn toast"
-
-    def test_done_toast_consults_per_video_failed(self):
-        """PR#91 ②：完成 toast 也須 consult 個別影片失敗數（readonly_stats.failed），
-        failed>0 時走 warn 而非純 success。"""
-        js = SCANNER_SCAN_JS.read_text(encoding="utf-8")
-        idx = js.find("const srcErrors")
-        assert idx != -1, "scanner/state-scan.js 缺 srcErrors 分流變數"
-        window = js[idx:idx + 1300]
-        assert ".failed" in window, \
-            "scanner/state-scan.js 完成 toast 未 consult readonly_stats.failed"
-        assert "'warn'" in window or '"warn"' in window, \
-            "scanner/state-scan.js failed 分支缺 warn toast"
-
-    def test_done_toast_consults_no_output_unreachable_partial(self):
-        """89b-T6 Codex P1：完成通知後端 warn-gate 已納入 no_output/unreachable/partial
-        （web/routers/scanner.py），但 scanner 頁自己的完成 toast 未同步 consult，
-        三種情境仍顯示 success，違反 spec §89b.3.3「警告並略過，不誤報成功」。
-        本測試鎖住 done handler 也讀 readonly_stats.no_output/unreachable/partial，
-        且三者各自有走 warn 的分支。"""
-        js = SCANNER_SCAN_JS.read_text(encoding="utf-8")
-        idx = js.find("const srcErrors")
-        assert idx != -1, "scanner/state-scan.js 缺 srcErrors 分流變數"
-        window = js[idx:idx + 1200]
-
-        assert "const noOutput" in window and "readonly_stats" in window and ".no_output" in window, \
-            "scanner/state-scan.js 完成 toast 未 consult readonly_stats.no_output"
-        assert "const unreachable" in window and ".unreachable" in window, \
-            "scanner/state-scan.js 完成 toast 未 consult readonly_stats.unreachable"
-        assert "const partial" in window and ".partial" in window, \
-            "scanner/state-scan.js 完成 toast 未 consult readonly_stats.partial"
-
-        # warn 判斷條件須把三者都納入（而非只判斷 srcErrors/failedCount）
-        cond_idx = window.find("if (srcErrors > 0")
-        assert cond_idx != -1, "scanner/state-scan.js 找不到完成 toast 的 warn 判斷條件"
-        cond_line_end = window.find(")", window.find(") {", cond_idx))
-        cond_window = window[cond_idx:cond_idx + 300]
-        assert "noOutput > 0" in cond_window, \
-            "scanner/state-scan.js warn 判斷條件未納入 noOutput > 0"
-        assert "unreachable > 0" in cond_window, \
-            "scanner/state-scan.js warn 判斷條件未納入 unreachable > 0"
-        assert "partial > 0" in cond_window, \
-            "scanner/state-scan.js warn 判斷條件未納入 partial > 0"
-
-        # pruned 是正常成功結果，不應被納入 warn 判斷
-        assert "pruned > 0" not in cond_window, \
-            "scanner/state-scan.js warn 判斷條件不應納入 pruned（prune 非警告）"
-
-
-class TestSearchFileJsSubtitleHelper:
-    """48a T2 a2 — 前端 extractChineseTitle 同步套用 stripSubtitleMarkers helper（對齊 Python 端）"""
-
-    def _js(self):
-        return SEARCH_FILE_JS.read_text(encoding="utf-8")
-
-    def test_file_js_contains(self):
-        """file.js 包含 stripSubtitleMarkers helper、常數定義，且舊 regex 已移除"""
-        js = self._js()
-        for expected in [
-            "function stripSubtitleMarkers(",
-            "_SUBTITLE_BRACKETS",
-            "_SUBTITLE_TEXT_MARKERS",
-        ]:
-            assert expected in js, f"file.js missing: {expected!r}"
-        assert "/^中文字幕\\s*/" not in js, \
-            "file.js should not contain: '/^中文字幕\\s*/' (殘缺舊 regex，應改用 stripSubtitleMarkers())"
-
-    def test_extract_chinese_title_uses_strip_helper(self):
-        """extractChineseTitle() 應呼叫 stripSubtitleMarkers(name)，不再內嵌殘缺 regex"""
-        js = self._js()
-        start = js.find("function extractChineseTitle(")
-        assert start >= 0, "file.js 找不到 extractChineseTitle 函式定義"
-        # 找到函式開頭後的第一個 { ，往後掃直到配對的 }
-        brace_start = js.find("{", start)
-        assert brace_start >= 0
-        depth = 0
-        end = brace_start
-        for i in range(brace_start, len(js)):
-            ch = js[i]
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    end = i + 1
-                    break
-        body = js[start:end]
-        assert "stripSubtitleMarkers(name)" in body, \
-            "extractChineseTitle() 應呼叫 stripSubtitleMarkers(name) 剝除所有字幕標記變體"
-        assert "name.replace(/^中文字幕" not in body, \
-            "extractChineseTitle() 不應再內嵌殘缺 `/^中文字幕...` regex"
-
-
 class TestFetchSamplesButton:
     """spec-48b §b3 b6 — 守衛 showcase.html fetch-samples-btn（method folded）"""
 
-    def _html(self):
-        return SHOWCASE_HTML.read_text(encoding="utf-8")
-
-    def _js(self):
-        return (
-            SHOWCASE_ACTRESS_JS.read_text(encoding="utf-8") + "\n" +
-            SHOWCASE_LIGHTBOX_JS.read_text(encoding="utf-8")
-        )
-
-    def _fetch_samples_btn_tag(self, html: str):
-        m = re.search(
-            r'<button\b[^>]*class="[^"]*fetch-samples-btn[^"]*"[^>]*>',
-            html, re.DOTALL,
-        )
-        return m.group(0) if m else None
-
-    def test_html_contains(self):
-        """showcase.html fetch-samples-btn 含必要 Alpine 綁定 + loading state + icon"""
-        html = self._html()
-        tag = self._fetch_samples_btn_tag(html)
-        assert tag is not None, "showcase.html missing: class='fetch-samples-btn' button"
-        for attr in [
-            "x-show=", "sample_images", "@click=", "fetchSamples",
-            ":disabled=", "_fetchSamplesFailed",
-        ]:
-            assert attr in tag, f"fetch-samples-btn tag missing: {attr!r}"
-        # boolean coercion in :disabled
-        m = re.search(r':disabled=["\'"]([^"\']+)["\'""]', tag)
-        assert m, "fetch-samples-btn missing :disabled binding"
-        disabled_expr = m.group(1)
-        has_coercion = (
-            disabled_expr.startswith("!!")
-            or "=== true" in disabled_expr
-        )
-        assert has_coercion, \
-            f"fetch-samples-btn :disabled missing boolean coercion: {disabled_expr!r}"
-        # x-text and icon in button region
-        close_tag_pos = html.find('</button>', tag.__class__ is str and html.find(tag))
-        m2 = re.search(
-            r'<button\b[^>]*class="[^"]*fetch-samples-btn[^"]*"[^>]*>',
-            html, re.DOTALL,
-        )
-        close_tag_pos = html.find('</button>', m2.end())
-        btn_region = html[m2.start():close_tag_pos + len('</button>')]
-        for expected in [
-            "x-text=", "showcase.samples.fetch_btn",
-            "bi bi-cloud-download",
-            "_fetchSamplesLoading", "showcase.samples.fetching",
-        ]:
-            assert expected in btn_region or expected in html, \
-                f"showcase.html missing: {expected!r}"
-        for forbidden in ["☁"]:
-            assert forbidden not in btn_region, f"fetch-samples-btn should not contain: {forbidden!r}"
-
-    def test_core_js_contains(self):
-        """core.js 含 fetchSamples method + state init + closeLightbox reset"""
-        js = self._js()
-        for expected in ["_fetchSamplesLoading:", "_fetchSamplesFailed:"]:
-            assert expected in js or expected.replace(":", " :") in js, \
-                f"core.js missing: {expected!r}"
-        assert "fetchSamples" in js, "core.js missing: 'fetchSamples'"
-        close_lb_idx = js.find('closeLightbox() {')
-        assert close_lb_idx >= 0, "core.js missing: closeLightbox() method"
-        close_lb_body = js[close_lb_idx:close_lb_idx + 2000]
-        assert '_fetchSamplesFailed = {}' in close_lb_body, \
-            "closeLightbox() missing: '_fetchSamplesFailed = {}'"
-
+    # [lint-guard: pytest-justified] 4 語系 key hard-gate + ☁ value 檢查；
+    # i18n_lint parity 為 warn-only（CD-96-14 降級），gap 留待 milestone i18n sweep 收斂。
     def test_locale_files_have_samples_keys(self):
         """4 語系 showcase.samples 含 5 必要 key + fetch_btn 無 ☁ emoji"""
         required_keys = {"fetch_btn", "fetching", "success", "fetch_failed", "multi_video_error"}
@@ -1409,143 +967,6 @@ class TestGhostFlyInFlightGuard:
                 if depth == 0:
                     return js[start:i + 1]
         return ''
-
-
-# ============================================================================
-# 49a-T4: 底部 footer 整合（status bar 移除 + 三段式 footer + i18n 同步）
-# ============================================================================
-
-LOCALES_DIR = Path(__file__).parent.parent.parent / "locales"
-LOCALE_FILES = ["zh_TW.json", "zh_CN.json", "en.json", "ja.json"]
-SHOWCASE_CSS = Path(__file__).parent.parent.parent / "web" / "static" / "css" / "pages" / "showcase.css"
-
-
-# [lint-guard: migrate→96e] CSS 半邊已遷 css-guard CG-XP-03（showcase.css footer + 640px media-value）；
-# 整 class 刪除由 96e 在所有半邊網綠後執行（CD-96-12）。showcase.html 結構半邊仍 pytest。
-class TestT4FooterStructure:
-    """49a-T4: showcase.html 三段式底部 footer 守衛（method folded）"""
-
-    def _html(self):
-        return SHOWCASE_HTML.read_text(encoding="utf-8")
-
-    def _css(self):
-        return SHOWCASE_CSS.read_text(encoding="utf-8")
-
-    def test_showcase_html_contains(self):
-        """showcase.html footer 結構、快捷鍵、pager、openPagePicker 全部存在"""
-        html = self._html()
-        # removed
-        assert 'class="showcase-status-bar"' not in html, \
-            "showcase.html should not contain: 'class=\"showcase-status-bar\"'"
-        # structure
-        for expected in [
-            'class="showcase-footer"',
-            'class="footer-left"',
-            'class="footer-center"',
-            'class="footer-right"',
-            "bi-film",
-            "bi-person-circle",
-            "<kbd>A</kbd>",
-            "<kbd>S</kbd>",
-            "<kbd>ESC</kbd>",
-            "<kbd>←</kbd>",
-            "<kbd>→</kbd>",
-            'class="footer-pager"',
-            'x-show="!showFavoriteActresses && totalPages > 1"',
-            "prevPage()",
-            "nextPage()",
-            'x-ref="pageSelectFooter"',
-            'class="pager-current"',
-            "openPagePicker",
-        ]:
-            assert expected in html, f"showcase.html missing: {expected!r}"
-        # footer must not have x-data
-        idx = html.find('class="showcase-footer"')
-        assert idx >= 0
-        div_start = html.rfind('<div', 0, idx)
-        end = html.find('>', idx)
-        opening_tag = html[div_start:end + 1]
-        assert 'x-data' not in opening_tag, \
-            "showcase-footer opening tag should not have x-data"
-        # openPagePicker must use showPicker
-        js = SHOWCASE_VIDEOS_JS.read_text(encoding="utf-8")
-        assert "openPagePicker" in js, "core.js missing: 'openPagePicker'"
-        assert "showPicker" in js, "core.js missing: 'showPicker'"
-
-    def test_showcase_css_contains(self):
-        """showcase.css 含 footer rules + responsive 隱藏 footer-left/center"""
-        css = self._css()
-        for expected in [
-            ".showcase-footer",
-            ".footer-left",
-            ".footer-center",
-            ".footer-right",
-            ".footer-pager",
-        ]:
-            assert expected in css, f"showcase.css missing: {expected!r}"
-        # responsive media query
-        media_match = re.search(
-            r"@media\'s*\(max-width:\'s*640px\'s*\)\'s*\{(.*?)\n\}",
-            css, re.DOTALL,
-        )
-        if media_match is None:
-            media_match = re.search(
-                r"@media[^{]*640px[^{]*\{([^@]*?)\n\}",
-                css, re.DOTALL,
-            )
-        assert media_match is not None, "showcase.css missing: @media (max-width: 640px)"
-        body = media_match.group(1)
-        assert ".footer-left" in body and ".footer-center" in body, \
-            "@media (max-width: 640px) missing: .footer-left and .footer-center"
-        assert ("display: none" in body or "display:none" in body), \
-            "@media (max-width: 640px) missing: display: none"
-
-
-# ─── 81c-T1: swipe helper 純函式守衛 ──────────────────────────────────────────
-SWIPE_JS = Path(__file__).parent.parent.parent / "web" / "static" / "js" / "shared" / "swipe.js"
-
-
-class TestSwipeHelperGuard:
-    """81c-T1: 守衛 shared/swipe.js 的 detectSwipe 純函式（簽名 + 核心判別式 + threshold 不寫死）。
-
-    因專案無 JS 測試框架，邏輯正確性由 T2–T4 真機驗證；此守衛靜態鎖死函式存在、
-    五參數簽名、軸判別 `|dX|>|dY|`（防退化回只判水平）、threshold 由參數傳入（不寫死 50）、
-    left/right 方向字串皆存在。
-    """
-
-    def test_swipe_js_exists(self):
-        assert SWIPE_JS.exists(), f"swipe.js 不存在：{SWIPE_JS}"
-
-    def test_detect_swipe_signature(self):
-        """export function detectSwipe 五參數簽名存在"""
-        js = SWIPE_JS.read_text(encoding="utf-8")
-        pattern = re.compile(
-            r"export\s+function\s+detectSwipe\s*\(\s*"
-            r"startX\s*,\s*startY\s*,\s*endX\s*,\s*endY\s*,\s*threshold\s*\)"
-        )
-        assert pattern.search(js), \
-            "swipe.js 缺少 export function detectSwipe(startX, startY, endX, endY, threshold) 簽名"
-
-    def test_axis_discrimination_present(self):
-        """軸判別式 Math.abs(dX) > Math.abs(dY) 存在（CD-2，防退化回只判水平）"""
-        js = SWIPE_JS.read_text(encoding="utf-8")
-        assert "Math.abs(dX) > Math.abs(dY)" in js, \
-            "swipe.js 缺少軸判別 'Math.abs(dX) > Math.abs(dY)'（垂直捲動會誤觸）"
-
-    def test_threshold_from_param_not_hardcoded(self):
-        """threshold 判別 Math.abs(dX) > threshold 存在，且不寫死 50"""
-        js = SWIPE_JS.read_text(encoding="utf-8")
-        assert "Math.abs(dX) > threshold" in js, \
-            "swipe.js 缺少 threshold 判別 'Math.abs(dX) > threshold'"
-        # 判別式不可寫死 50（threshold 由呼叫端傳入，CD-1）
-        assert "Math.abs(dX) > 50" not in js, \
-            "swipe.js 不可寫死 'Math.abs(dX) > 50'（threshold 須由參數傳入）"
-
-    def test_direction_strings_present(self):
-        """方向字串 'left' 與 'right' 皆存在"""
-        js = SWIPE_JS.read_text(encoding="utf-8")
-        assert "'left'" in js, "swipe.js 缺少方向字串 'left'"
-        assert "'right'" in js, "swipe.js 缺少方向字串 'right'"
 
 
 class TestShowcaseSwipeGuard:
@@ -2114,73 +1535,6 @@ class TestPathContract:
         )
 
 
-class TestVideoPlaybackGuard:
-    """確認影片播放走 API proxy，不直接開 file:/// URI（瀏覽器安全策略會靜默阻擋）"""
-
-    def test_no_window_open_file_uri_in_js(self):
-        """前端 JS 不應有 window.open 搭配 file:/// URI（應走 /api/gallery/player）"""
-        js_dirs = [
-            PROJECT_ROOT / "web" / "static" / "js" / "pages",
-            PROJECT_ROOT / "web" / "static" / "js" / "components",
-        ]
-        # window.open(path  或 window.open(file:/// 或 location.href = path（且 path 含 file:）
-        pattern = r'window\.open\s*\(\s*path\s*,'
-        violations = []
-        for js_dir in js_dirs:
-            if not js_dir.exists():
-                continue
-            for js_file in js_dir.rglob("*.js"):
-                matches = find_pattern_in_file(js_file, pattern)
-                for line_num, line_content in matches:
-                    violations.append(
-                        f"{js_file.relative_to(PROJECT_ROOT)}:{line_num} — {line_content[:80]}"
-                    )
-        assert len(violations) == 0, (
-            f"發現 {len(violations)} 個 window.open(path, ...) 直接開啟路徑（瀏覽器會阻擋 file:/// URI）:\n"
-            + "\n".join(f"  - {v}" for v in violations)
-            + "\n\n提示：瀏覽器模式應使用 /api/gallery/player?path= 代理播放"
-        )
-
-    def test_video_api_files_contain(self):
-        """showcase/state-videos.js 和 scanner.py 包含必要 API proxy + 安全守衛字串"""
-        for path, expected_list in [
-            (
-                PROJECT_ROOT / "web" / "static" / "js" / "pages" / "showcase" / "state-videos.js",
-                ['/api/gallery/player'],
-            ),
-            (
-                PROJECT_ROOT / "web" / "routers" / "scanner.py",
-                # 66-T1: get_video async→def（移出 event loop，Starlette 自動 threadpool）；
-                # video_player 維持 async。security 守衛字串不變。
-                ['def get_video(', 'async def video_player(', 'os.path.normpath',
-                 'get_proxy_extensions', 'is_path_under_dir'],
-            ),
-        ]:
-            content = path.read_text(encoding='utf-8')
-            for expected in expected_list:
-                assert expected in content, f"{path.name} missing: {expected!r}"
-
-    def test_no_hardcoded_video_extensions_in_modules(self):
-        """gallery_scanner.py, scanner.py, pywebview_api.py must NOT contain hardcoded video extension sets
-        (dict entries like '.mp4': 'video/mp4' are OK — those are MIME mappings, not extension sets)"""
-        files_to_check = [
-            PROJECT_ROOT / "core" / "gallery_scanner.py",
-            PROJECT_ROOT / "web" / "routers" / "scanner.py",
-            PROJECT_ROOT / "windows" / "pywebview_api.py",
-        ]
-        import re
-        for file_path in files_to_check:
-            content = file_path.read_text(encoding='utf-8')
-            # Find set literals: = {'.mp4', '.avi', ...} (bare extension strings, no colon after)
-            # This looks for lines with extension-only assignments
-            # e.g., VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mkv', ...}
-            # But NOT: video_mime = {'.mp4': 'video/mp4', ...}
-            set_pattern = re.compile(r"""=\s*\{[^}]*'\.mp4'[^}:]*'\.avi'[^}:]*\}""", re.DOTALL)
-            matches = set_pattern.findall(content)
-            assert len(matches) == 0, \
-                f"{file_path.name} still contains hardcoded video extension set — should import from core.video_extensions"
-
-
 class TestHelpPage:
     """T4b 守衛 — Help 頁必要元素"""
 
@@ -2244,45 +1598,6 @@ class TestHelpPage:
             "help.js 缺少 capabilitiesBase（dataset 複製來源 — US-7 #7 primary source）"
         assert "${base}" in js, \
             "help.js curl 模板未用 derived base（應為 `${base}/api/capabilities` — 證 data-attr 是實際來源）"
-
-
-class TestPageLifecycleGuard:
-    """page-lifecycle.js 存在性守衛 — 確保 script tag 及三頁 __registerPage 呼叫不被移除"""
-
-    def test_base_html_loads_page_lifecycle(self):
-        """base.html 必須引用 page-lifecycle.js"""
-        base_html = PROJECT_ROOT / "web" / "templates" / "base.html"
-        content = base_html.read_text(encoding='utf-8')
-        assert 'page-lifecycle.js' in content, \
-            "base.html 缺少 page-lifecycle.js script tag — 刪除會導致三頁 __registerPage 呼叫靜默失敗"
-
-    def test_settings_js_calls_register_page(self):
-        """settings/state-config.js 必須呼叫 __registerPage"""
-        js_file = PROJECT_ROOT / "web" / "static" / "js" / "pages" / "settings" / "state-config.js"
-        content = js_file.read_text(encoding='utf-8')
-        assert '__registerPage' in content, \
-            "settings/state-config.js 缺少 __registerPage 呼叫 — dirty-check lifecycle 會失效"
-
-    def test_search_main_js_calls_register_page(self):
-        """search/main.js 必須呼叫 __registerPage"""
-        js_file = PROJECT_ROOT / "web" / "static" / "js" / "pages" / "search" / "main.js"
-        content = js_file.read_text(encoding='utf-8')
-        assert '__registerPage' in content, \
-            "search/main.js 缺少 __registerPage 呼叫 — Search 離頁 save/cleanup 會失效"
-
-    def test_showcase_core_calls_register_page(self):
-        """showcase/state-base.js 必須呼叫 __registerPage"""
-        js_file = PROJECT_ROOT / "web" / "static" / "js" / "pages" / "showcase" / "state-base.js"
-        content = js_file.read_text(encoding='utf-8')
-        assert '__registerPage' in content, \
-            "showcase/state-base.js 缺少 __registerPage 呼叫 — Showcase lightbox cleanup lifecycle 會失效"
-
-    def test_scanner_html_calls_register_page(self):
-        """scanner/state-scan.js 必須呼叫 __registerPage"""
-        js_file = PROJECT_ROOT / "web" / "static" / "js" / "pages" / "scanner" / "state-scan.js"
-        content = js_file.read_text(encoding='utf-8')
-        assert '__registerPage' in content, \
-            "scanner/state-scan.js 缺少 __registerPage 呼叫 — Scanner lifecycle 未接入統一機制"
 
 
 class TestStreamState:
@@ -3155,23 +2470,6 @@ class TestScannerMissingPillGuard:
         zh = self.ZH_TW.read_text(encoding='utf-8')
         for expected in ["missing_enrich_idle", "missing_resume_btn"]:
             assert expected in zh, f"zh_TW.json missing: {expected!r}"
-
-
-class TestScannerCopyFailModal:
-    """T3.6: scanner.html copyFailModal markup + scanner/state-scan.js 三 method + escape ladder"""
-
-    SCANNER_JS = PROJECT_ROOT / "web" / "static" / "js" / "pages" / "scanner" / "state-scan.js"
-    SCANNER_HTML = PROJECT_ROOT / "web" / "templates" / "scanner.html"
-
-    def test_scanner_copy_fail_modal_contains(self):
-        """T3.6: scanner.js 三 method + scanner.html markup + escape ladder"""
-        js = self.SCANNER_JS.read_text(encoding="utf-8")
-        for expected in ['openCopyFailModal', 'closeCopyFailModal', 'copyFailModalOpen']:
-            assert expected in js, f"scanner/state-scan.js missing: {expected!r}"
-        html = self.SCANNER_HTML.read_text(encoding="utf-8")
-        for expected in ['copy_fail_modal.title', 'copy-fail-pre',
-                         'copyFailModalOpen && closeCopyFailModal']:
-            assert expected in html, f"scanner.html missing: {expected!r}"
 
 
 class TestRescrapeVersionStateGuard:
@@ -4598,98 +3896,10 @@ STATE_RESCRAPE_JS = (
 )
 
 
-# ── 75a-T4 path constants ──────────────────────────────────────────────────
-CONSTELLATION_ANIMATIONS_JS = (
-    Path(__file__).parent.parent.parent
-    / "web" / "static" / "js" / "shared" / "constellation" / "animations.js"
-)
 T4_STATE_SIMILAR_JS = (
     Path(__file__).parent.parent.parent
     / "web" / "static" / "js" / "pages" / "showcase" / "state-similar.js"
 )
-T4_CONSTELLATION_HOST_JS = (
-    Path(__file__).parent.parent.parent
-    / "web" / "static" / "js" / "pages" / "motion-lab" / "constellation-host.js"
-)
-
-
-class TestSimilarSlotGsapGuard:
-    """75a-T4: GSAP width literal 守衛 — constellation/animations.js + state-similar.js。
-
-    animations.js: T1 後所有 width 已改為 SLOT_W/MAIN_W 具名常量（無 120/200 literal）；
-    用全文 ban 安全（確認無其他合法 120/200 出現）。
-    assert 'width: 120' not in js + assert 'width: 200' not in js；
-    正向斷言 POSTER_CROP_RATIO 常數存在。
-
-    state-similar.js: 全文只有一處 width: 107（gsap.set slot reset），無 120 出現；
-    用全文 ban 安全。
-    """
-
-    def _animations(self):
-        return CONSTELLATION_ANIMATIONS_JS.read_text(encoding="utf-8")
-
-    def _similar(self):
-        return T4_STATE_SIMILAR_JS.read_text(encoding="utf-8")
-
-    def test_animations_no_width_120_literal(self):
-        """animations.js 全文不含 width: 120（T1 後已改 SLOT_W 常量）"""
-        js = self._animations()
-        assert "width: 120" not in js, \
-            "animations.js must not contain literal 'width: 120' (use SLOT_W constant)"
-
-    def test_animations_no_width_200_literal(self):
-        """animations.js 全文不含 width: 200（T1 後已改 MAIN_W 常量）"""
-        js = self._animations()
-        assert "width: 200" not in js, \
-            "animations.js must not contain literal 'width: 200' (use MAIN_W constant)"
-
-    def test_animations_has_poster_crop_ratio_const(self):
-        """animations.js 含 POSTER_CROP_RATIO 具名常量（單一真理 NC#7）"""
-        js = self._animations()
-        assert "POSTER_CROP_RATIO" in js, \
-            "animations.js must define POSTER_CROP_RATIO constant (single source of truth NC#7)"
-
-    def test_animations_has_slot_w_const(self):
-        """animations.js 含 SLOT_W 具名常量"""
-        js = self._animations()
-        assert "SLOT_W" in js, \
-            "animations.js must define SLOT_W constant derived from POSTER_CROP_RATIO"
-
-    def test_animations_has_main_w_const(self):
-        """animations.js 含 MAIN_W 具名常量"""
-        js = self._animations()
-        assert "MAIN_W" in js, \
-            "animations.js must define MAIN_W constant derived from POSTER_CROP_RATIO"
-
-    def test_state_similar_no_width_120(self):
-        """state-similar.js 全文不含 width: 120（slot reset 應為 107）"""
-        js = self._similar()
-        assert "width: 120" not in js, \
-            "state-similar.js must not contain 'width: 120' (slot width should be 107)"
-
-    def test_state_similar_has_width_107(self):
-        """state-similar.js 含 width: 107（slot reset 正確值）"""
-        js = self._similar()
-        assert "width: 107" in js, \
-            "state-similar.js must contain 'width: 107' (slot reset value)"
-
-    def _host(self):
-        return T4_CONSTELLATION_HOST_JS.read_text(encoding="utf-8")
-
-    def test_constellation_host_no_width_120(self):
-        """constellation-host.js 全文不含 width: 120（reduced-motion click + reset baseline path
-        繞過 animations.js gsap.set，應為 107；Codex P3 補洞——plan 6 處 inventory 漏此 host 檔）"""
-        js = self._host()
-        assert "width: 120" not in js, \
-            "constellation-host.js must not contain 'width: 120' (slot box should be 107, NC#7 mirror)"
-
-    def test_constellation_host_has_width_107(self):
-        """constellation-host.js 含 width: 107（reduced-motion / reset slot 正確值）"""
-        js = self._host()
-        assert "width: 107" in js, \
-            "constellation-host.js must contain 'width: 107' (reduced-motion + reset slot value)"
-
-
 class TestSimilarJSThresholdGuard:
     """75a-T4: state-similar.js openSimilarMode 手機門檻 960px 守衛。
 
@@ -4791,113 +4001,6 @@ class TestUS9SearchGridMobileFix:
         assert "posterCrop: posterCrop" in js, (
             "grid-mode.js 應把 posterCrop 傳入 playGridToLightbox options"
         )
-
-
-# ============================================================================
-# TASK-75b-T11：≤480px hero 卡（女優精準匹配入口）直式比例修正守衛
-# showcase + search 兩頁 video-mode grid ≤480px hero 卡改 0.71 直式 + img cover
-# ============================================================================
-
-class TestCoverCacheBustGuard:
-    """BUGfix-lightbox-cover-stale: refreshVideoData 必須對 cover_url 與 cover_full_url 都追加 cache-bust。
-    守衛契約：擋「只 bust 一邊」回歸——任何人把任一欄位的 &t= 移除，對應守衛即紅。
-    三問：
-      1. 移除 cover_url &t= → test_cover_url_has_cache_bust 紅；cover_full_url bust 仍在 → 其守衛獨立 GREEN ✓
-      2. 移除 cover_full_url &t= → test_cover_full_url_has_cache_bust 紅；cover_url bust 仍在 → 其守衛獨立 GREEN ✓
-      3. 把 bust 搬出 refreshVideoData 函式體 → 兩條都紅 ✓
-      4. 只在 comment 留 '&t=' 字串但移除實作 → 紅（守衛先過濾純注釋行，不被 comment 騙過）✓
-    每條 regex 只匹配「同一條賦值語句內」：[^;\\n]* 不跨 ; 與換行，鎖在單一 statement，
-    防止 re.DOTALL 跨行把兩個欄位的 &t= 混用。
-    """
-
-    _LIGHTBOX_JS = (
-        Path(__file__).parent.parent.parent
-        / "web" / "static" / "js" / "pages" / "showcase" / "state-lightbox.js"
-    )
-
-    def _js(self):
-        return self._LIGHTBOX_JS.read_text(encoding="utf-8")
-
-    def _extract_refreshVideoData_body(self, js):
-        """定位 refreshVideoData 函式體（從函式宣告到第一個同層 closing brace）。
-        用計數括弧深度的方式抓完整函式體，確保邊界正確。
-        """
-        # 找 refreshVideoData 宣告起點
-        m = re.search(r'async\s+refreshVideoData\s*\(', js)
-        assert m, "state-lightbox.js 找不到 async refreshVideoData 函式宣告"
-        start = m.start()
-        # 從宣告後面找第一個 '{' 並計數到同層 '}'
-        body_start = js.index('{', start)
-        depth = 0
-        for i, ch in enumerate(js[body_start:], body_start):
-            if ch == '{':
-                depth += 1
-            elif ch == '}':
-                depth -= 1
-                if depth == 0:
-                    return js[body_start:i + 1]
-        raise AssertionError("state-lightbox.js: refreshVideoData 函式體找不到對應的結束括弧")
-
-    @staticmethod
-    def _strip_line_comments(body: str) -> str:
-        """移除函式體內的 // 注釋——整行注釋與「行內尾注釋」都砍。
-        去注釋後 regex 才不會被注釋裡的 `+ '&t='` 騙過：例如
-        `data.video.cover_url = data.video.cover_url // + '&t='`（bust 移進行內注釋）
-        若不砍行內注釋，[^;\\n]* 仍會配到注釋內的 + '&t=' 造成 false-pass。
-        以 (?<!:)// 切除，保護 URL 的 `://`（https:// 等不被誤砍；/api 單斜線不觸發）。
-        state-lightbox.js refreshVideoData 函式體內字串無 `//`、未用區塊注釋（/* */），
-        此 heuristic 對本守衛充分。
-        """
-        return "\n".join(
-            re.sub(r"(?<!:)//.*$", "", line)
-            for line in body.splitlines()
-        )
-
-    def test_cover_url_has_cache_bust(self):
-        """refreshVideoData 函式體內必須對 cover_url 賦值並串接 '&t=' cache-bust。
-        要求：必須匹配「data.video.cover_url = ... + '&t='」賦值結構，
-        且 regex 只匹配同一條賦值語句內（[^;\\n]* 不跨 ; 與換行），
-        不被跨語句的 DOTALL 匹配混淆——保證 cover_url 守衛與 cover_full_url 守衛彼此獨立。
-        先過濾純注釋行，確保配對只落在實際程式碼。
-        """
-        js = self._js()
-        body = self._strip_line_comments(self._extract_refreshVideoData_body(js))
-        m = re.search(
-            r"data\.video\.cover_url\s*=\s*[^;\n]*\+\s*['\"]&t=",
-            body
-        )
-        assert m, (
-            "refreshVideoData 函式體找不到 'data.video.cover_url = ... + &t=' 賦值語句。\n"
-            "cover_url 分支的 cache-bust 遺失，grid 封面更新後瀏覽器可能吃舊快取。\n"
-            f"當前函式體（去注釋後）：\n{body[:500]}"
-        )
-
-    def test_cover_full_url_has_cache_bust(self):
-        """refreshVideoData 函式體內必須對 cover_full_url 賦值並串接 '&t=' cache-bust。
-        這是本 bug 的核心守衛：lightbox overlay（.lb-full）用 cover_full_url，
-        URL 不變會吃瀏覽器 max-age=86400 舊快取。
-        要求：必須匹配「data.video.cover_full_url = ... + '&t='」賦值結構，
-        且 regex 只匹配同一條賦值語句內（[^;\\n]* 不跨 ; 與換行），
-        不被跨語句的 DOTALL 匹配混淆——保證 cover_full_url 守衛與 cover_url 守衛彼此獨立。
-        先過濾注釋行，確保不被注釋裡的 cover_full_url 字樣或別欄位的 &t= 騙過。
-        """
-        js = self._js()
-        body = self._strip_line_comments(self._extract_refreshVideoData_body(js))
-        m = re.search(
-            r"data\.video\.cover_full_url\s*=\s*[^;\n]*\+\s*['\"]&t=",
-            body
-        )
-        assert m, (
-            "refreshVideoData 函式體找不到 'data.video.cover_full_url = ... + &t=' 賦值語句。\n"
-            "lightbox overlay（.lb-full `:src='cover_full_url'`）不加 cache-bust 會吃 max-age=86400 舊快取。\n"
-            f"當前函式體（去注釋後）：\n{body[:500]}"
-        )
-
-
-SHOWCASE_SIMILAR_JS = (
-    Path(__file__).parent.parent.parent
-    / "web" / "static" / "js" / "pages" / "showcase" / "state-similar.js"
-)
 
 
 # ─── 90c-T5: external_manager switch-mode destructive confirm frontend guards ─
