@@ -174,6 +174,12 @@ const RULES = [
   { file: 'web/static/js/pages/search/state/persistence.js', kind: 'required-string', pattern: "_setTimer('autosave'", note: '[TestTimerTracking] persistence.js timer' },
   { file: 'web/static/js/pages/search/state/file-list.js', kind: 'required-string', pattern: "_setTimer('loadFavorite'", note: '[TestTimerTracking] file-list.js timer' },
 
+  // ---- [TestTimerTracking exclude-half]（96b-T6 補網：test_timer_tracking_js_excludes，退役 pattern
+  // 3 條 forbidden-string，關閉 T1 記錄的技術缺口後才整刪 TestTimerTracking） ----
+  { file: 'web/static/js/pages/search/state/base.js', kind: 'forbidden-string', pattern: '_toastTimer: null', note: '[TestTimerTracking exclude-half] base.js 舊 _toastTimer 已移除' },
+  { file: 'web/static/js/pages/search/state/result-card.js', kind: 'forbidden-string', pattern: '_toastTimer =', note: '[TestTimerTracking exclude-half] result-card.js 舊 _toastTimer 已移除' },
+  { file: 'web/static/js/pages/search/state/persistence.js', kind: 'forbidden-string', pattern: 'saveTimeout', note: '[TestTimerTracking exclude-half] persistence.js 舊 saveTimeout 已移除' },
+
   // ---- [TestTutorialExpandGuard]（handoff 96a→96b，7 個 step-id required） ----
   { file: 'web/static/js/components/tutorial.js', kind: 'required-string', pattern: "id: 'folder'", note: '[TestTutorialExpandGuard] tutorial step id' },
   { file: 'web/static/js/components/tutorial.js', kind: 'required-string', pattern: "id: 'generate'", note: '[TestTutorialExpandGuard] tutorial step id' },
@@ -778,6 +784,49 @@ const RULES = [
     pattern: /(?:gsap\.(?:to|from|fromTo|set|timeline)\(|ScrollTrigger\.(?:create|batch)\()/,
     note: '[TestMotionInfra] test_no_direct_gsap_calls_in_pages — components/**/*.js 禁直接 GSAP/ScrollTrigger 呼叫（motion-adapter.js 白名單 exclude）',
   },
+
+  // ==== 96b-T6 Phase 1：orphan-net-gap 補網（TASK-96b-T6.md §C，Opus-resolved 決策 (a)）====
+  // TestMotionInfra 的 test_motion_js_files_contain / test_base_html_loads_gsap_and_adapters 兩個
+  // method 從未被 T1-T5 任一張卡建網（T1 的 14-class 清單未列入，T2/T3/T4/T5 亦未補），是橫跨 5 個
+  // task 的協調斷點。本節依 CD-96b-9 補齊，讓 TestMotionInfra 全部 3 method 皆有替代網後才可整刪。
+
+  // ---- [TestMotionInfra] test_motion_js_files_contain — motion-prefs.js / motion-adapter.js 必要 API 字串 ----
+  { file: 'web/static/js/components/motion-prefs.js', kind: 'required-string', pattern: 'prefersReducedMotion', note: '[TestMotionInfra] test_motion_js_files_contain — motion-prefs.js API' },
+  { file: 'web/static/js/components/motion-prefs.js', kind: 'required-string', pattern: 'openaver:motion-pref-change', note: '[TestMotionInfra] test_motion_js_files_contain — motion-prefs.js API' },
+  { file: 'web/static/js/components/motion-prefs.js', kind: 'required-string', pattern: 'addListener', note: '[TestMotionInfra] test_motion_js_files_contain — motion-prefs.js API' },
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: 'createContext', note: '[TestMotionInfra] test_motion_js_files_contain — motion-adapter.js API' },
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: 'playEnter', note: '[TestMotionInfra] test_motion_js_files_contain — motion-adapter.js API' },
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: 'playLeave', note: '[TestMotionInfra] test_motion_js_files_contain — motion-adapter.js API' },
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: 'playStagger', note: '[TestMotionInfra] test_motion_js_files_contain — motion-adapter.js API' },
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: 'playModal', note: '[TestMotionInfra] test_motion_js_files_contain — motion-adapter.js API' },
+  { file: 'web/static/js/components/motion-adapter.js', kind: 'required-string', pattern: '_shouldAnimate', note: '[TestMotionInfra] test_motion_js_files_contain — motion-adapter.js API' },
+
+  // ---- [TestMotionInfra] test_base_html_loads_gsap_and_adapters — base.html 載入 4 個 script 且順序正確 ----
+  { file: 'web/templates/base.html', kind: 'required-string', pattern: 'gsap.min.js', note: '[TestMotionInfra] test_base_html_loads_gsap_and_adapters — base.html script' },
+  { file: 'web/templates/base.html', kind: 'required-string', pattern: 'motion-prefs.js', note: '[TestMotionInfra] test_base_html_loads_gsap_and_adapters — base.html script' },
+  { file: 'web/templates/base.html', kind: 'required-string', pattern: 'motion-adapter.js', note: '[TestMotionInfra] test_base_html_loads_gsap_and_adapters — base.html script' },
+  { file: 'web/templates/base.html', kind: 'required-string', pattern: 'alpine.min.js', note: '[TestMotionInfra] test_base_html_loads_gsap_and_adapters — base.html script' },
+  {
+    file: 'web/templates/base.html', kind: 'order',
+    items: [
+      { pattern: 'gsap.min.js' },
+      { pattern: 'motion-prefs.js' },
+      { pattern: 'motion-adapter.js' },
+      { pattern: 'alpine.min.js' },
+    ],
+    note: '[TestMotionInfra] test_base_html_loads_gsap_and_adapters — 載入順序 gsap < motion-prefs < motion-adapter < alpine（4-anchor 鏈式）',
+  },
+
+  // ---- [TestEventSourceTracking] test_event_source_tracking_js_contains — 從未被 T1-T5 任一張卡建網
+  // （T5 只建了 forbidden 半邊 eslint SEL_TRACKED_EVENTSOURCE，required 半邊是本卡發現的第二個
+  // orphan-net-gap），本節補齊 required 半邊後 class 全部 2 method 皆有替代網。 ----
+  { file: 'web/static/js/pages/search/state/base.js', kind: 'required-string', pattern: '_activeConnections', note: '[TestEventSourceTracking] test_event_source_tracking_js_contains — base.js connection registry' },
+  { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: '_trackConnection', note: '[TestEventSourceTracking] test_event_source_tracking_js_contains — search-flow.js tracking methods' },
+  { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: '_untrackConnection', note: '[TestEventSourceTracking] test_event_source_tracking_js_contains — search-flow.js tracking methods' },
+  { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: '_closeAllConnections', note: '[TestEventSourceTracking] test_event_source_tracking_js_contains — search-flow.js tracking methods' },
+  { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: '_trackConnection(new EventSource(', note: '[TestEventSourceTracking] test_event_source_tracking_js_contains — search-flow.js tracking methods' },
+  { file: 'web/static/js/pages/search/state/search-flow.js', kind: 'required-string', pattern: '_closeAllConnections()', note: '[TestEventSourceTracking] test_event_source_tracking_js_contains — search-flow.js tracking methods' },
+  { file: 'web/static/js/pages/search/state/file-list.js', kind: 'required-string', pattern: '_trackConnection(', note: '[TestEventSourceTracking] test_event_source_tracking_js_contains — file-list.js tracking method' },
 
   // ---- [TestOpenAIErrorI18nGuard] settings/state-providers.js：openai error 分支使用 window.t(errorKey)
   // i18n，非裸 error.message（39a-PR-fix P1）。實測全部 3 個 method 皆 required-string 正斷言，
