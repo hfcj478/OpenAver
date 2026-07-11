@@ -152,6 +152,13 @@ function zindexOf(css, selector) {
   return m ? parseInt(m[1], 10) : null;
 }
 
+// T4 inline-style scan mode：抽 motion_lab.html 所有 <style>…</style> block 內容合併（忠實鏡射
+// TestMotionLabHtmlHardcoded/TestMotionLabObjectPositionGuard 的 _style_blocks：
+// `re.findall(r"<style[^>]*>(.*?)</style>", html, re.DOTALL)` join `\n`；`[\s\S]*?` = Python DOTALL `.*?`）。
+function extractStyleBlocks(html) {
+  return [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n');
+}
+
 // T3 poster-crop 家族 @media header 錨定條件（^...$ ⇔ pytest 字面 `@media (max-width: Npx) {`，
 // 排除 compound / coarse / comment 內 @media 誤命中）。
 const MW480 = /^\s*\(\s*max-width\s*:\s*480px\s*\)\s*$/;
@@ -1422,6 +1429,95 @@ const RULES = [
       }
     },
   },
+
+  // ══ T4：motion_lab.html <style>-block CSS-token 遷移（inline-style scan mode，CD-96c-3；
+  //    忠實 port TestMotionLabHtmlHardcoded/TestMotionLabObjectPositionGuard，CD-96c-2）。
+  //    NOTE：live pytest 掃 <style>…</style> block（非 style="…" attr）——docstring 明載「不掃
+  //    HTML style 屬性」（demo 區合法 inline style 不納守衛）。故 port <style> scan，不 broaden。
+  //    rule.html 指向 web-rel 檔 → runner 用 loadWebFile 讀 raw + extractStyleBlocks → ctx.styleCss。══
+
+  // CG-ML-01 ← TestMotionLabHtmlHardcoded（blur/hex/radius/duration 4 子測，<style> block）
+  {
+    id: 'CG-ML-01',
+    html: 'templates/motion_lab.html',
+    kind: 'fn',
+    check(ctx) {
+      const css = ctx.styleCss;
+      // (1) test_no_hardcoded_blur_px：全文 findall blur(Npx)（不 skip 註解，鏡射 re.findall on whole css）
+      const blurMatches = css.match(/blur\(\d+px\)/g) || [];
+      if (blurMatches.length) {
+        ctx.fail(`CG-ML-01: motion_lab.html <style> 仍有 hardcoded blur(Npx)（改用 var(--fluent-blur-*)）：${JSON.stringify(blurMatches)}`);
+      }
+      // (2)(3)(4) 逐行掃 hex / border-radius px / transition（各自 comment-skip，鏡射三獨立 method）
+      const lines = css.split('\n');
+      const phase2Whitelist = new Set(['transition: background 0.15s;', 'transition: opacity 0.15s;']);
+      const hexViol = [];
+      const radiusViol = [];
+      const transViol = [];
+      for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+        const stripped = line.trim();
+        // 跳過純註釋行（行首 /* // *）
+        if (stripped.startsWith('/*') || stripped.startsWith('//') || stripped.startsWith('*')) continue;
+        // (2) 裸 hex（先移除所有 var(…) fallback；/g 鏡射 re.sub 全換）
+        const lineNoVar = line.replace(/var\([^)]*\)/g, '');
+        if (/#[0-9a-fA-F]{3,8}\b/.test(lineNoVar)) hexViol.push(`L${i + 1}: ${stripped}`);
+        // (3) border-radius 裸 px（50% 及 var() 內 fallback 除外）
+        if (line.includes('border-radius') && !/border-radius\s*:\s*50%/.test(line)) {
+          const lnv = line.replace(/var\([^)]*\)/g, '');
+          if (/border-radius\s*:[^;]*\d+px/.test(lnv)) radiusViol.push(`L${i + 1}: ${stripped}`);
+        }
+        // (4) transition 裸秒數 / 非 fluent 前綴 alias（phase2 whitelist 只 gate 此分支）
+        if (!phase2Whitelist.has(stripped) && line.includes('transition:')) {
+          if (/transition:[^;]*\b0?\.\d+s\b/.test(line) && !line.includes('var(--')) {
+            transViol.push(`L${i + 1}: ${stripped}`);
+          } else if (/var\(--(?:duration|ease)-/.test(line)) {
+            transViol.push(`L${i + 1}: ${stripped}`);
+          }
+        }
+      }
+      if (hexViol.length) {
+        ctx.fail(`CG-ML-01: motion_lab.html <style> 殘留裸 hex 硬編碼（改用 token；var() 內 fallback 除外）：\n  ${hexViol.join('\n  ')}`);
+      }
+      if (radiusViol.length) {
+        ctx.fail(`CG-ML-01: motion_lab.html <style> border-radius 殘留裸 px（改用 var(--fluent-radius-*)；50%/var() fallback 除外）：\n  ${radiusViol.join('\n  ')}`);
+      }
+      if (transViol.length) {
+        ctx.fail(`CG-ML-01: motion_lab.html <style> transition 殘留裸秒數或非 fluent 前綴 alias（改用 var(--fluent-duration-*)/var(--fluent-ease-*)；picker 兩處 0.15s 已 whitelist）：\n  ${transViol.join('\n  ')}`);
+      }
+    },
+  },
+
+  // CG-ML-02 ← TestMotionLabObjectPositionGuard（clip-lab object-position + slot width 2 子測）
+  {
+    id: 'CG-ML-02',
+    html: 'templates/motion_lab.html',
+    kind: 'fn',
+    check(ctx) {
+      const css = ctx.styleCss;
+      // _style_blocks 另 assert 非空
+      if (!css) {
+        ctx.fail('CG-ML-02: motion_lab.html has no <style> blocks');
+        return;
+      }
+      // test_clip_lab_img_object_position_right_center
+      const m = css.match(/\.clip-lab-slot-img\s*,\s*\.clip-lab-main-img\s*\{([^}]+)\}/);
+      if (!m) {
+        ctx.fail('CG-ML-02: motion_lab.html <style>: .clip-lab-slot-img, .clip-lab-main-img rule not found');
+      } else {
+        const block = m[1];
+        if (!block.includes('right center')) ctx.fail('CG-ML-02: .clip-lab-slot-img,.clip-lab-main-img block must contain object-position: right center');
+        if (block.includes('100% 20%')) ctx.fail('CG-ML-02: .clip-lab-slot-img,.clip-lab-main-img block must not contain 100% 20%');
+      }
+      // test_clip_lab_slot_no_120（.clip-lab-slot 不誤命中 .clip-lab-slot-img：slot 後為 -，非 \s*{）
+      const m2 = css.match(/\.clip-lab-slot\s*\{([^}]+)\}/);
+      if (!m2) {
+        ctx.fail('CG-ML-02: motion_lab.html <style>: .clip-lab-slot rule not found');
+      } else if (m2[1].includes('width: 120px')) {
+        ctx.fail('CG-ML-02: .clip-lab-slot block must not contain width: 120px (should be 107px)');
+      }
+    },
+  },
 ];
 
 // ── per-file read+parse cache（同檔多 rule 共用，讀一次 → stripCssComments → parseRuleBlocks）──
@@ -1448,14 +1544,28 @@ function loadWebFile(rel) {
 
 // ── runner（read-fail try/catch → fail+continue；全 rule 跑完才 exit(1)，i18n_lint 累積器範式）──
 for (const rule of RULES) {
-  let entry;
-  try {
-    entry = loadFile(rule.file);
-  } catch {
-    fail(`${rule.id}: 讀檔失敗 ${rule.file}`);
-    continue;
+  let ctx;
+  if (rule.html) {
+    // T4 inline-style scan mode：rule.html 指 web-rel（非 CSS）檔，用 loadWebFile 讀 raw +
+    // extractStyleBlocks 抽 <style> block → ctx.styleCss。ROOT 覆蓋 → scratch 副本自動生效。
+    let raw;
+    try {
+      raw = loadWebFile(rule.html);
+    } catch {
+      fail(`${rule.id}: 讀檔失敗 ${rule.html}`);
+      continue;
+    }
+    ctx = { html: raw, styleCss: extractStyleBlocks(raw), fail, rel: rule.html, load: loadFile, loadWeb: loadWebFile };
+  } else {
+    let entry;
+    try {
+      entry = loadFile(rule.file);
+    } catch {
+      fail(`${rule.id}: 讀檔失敗 ${rule.file}`);
+      continue;
+    }
+    ctx = { text: entry.text, raw: entry.raw, blocks: entry.blocks, fail, rel: rule.file, load: loadFile, loadWeb: loadWebFile };
   }
-  const ctx = { text: entry.text, raw: entry.raw, blocks: entry.blocks, fail, rel: rule.file, load: loadFile, loadWeb: loadWebFile };
   KINDS[rule.kind](rule, ctx);
 }
 
