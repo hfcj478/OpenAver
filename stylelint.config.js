@@ -19,6 +19,7 @@ module.exports = {
       // feature/76：禁手動把 view-transition-name 設為 root（root 是隱式預設，手動覆寫會
       // 與主題切換的 ::view-transition-*(root) 機制混亂）。命名一律走 sidebar/main-content/none。
       'view-transition-name': ['root'],
+      'aspect-ratio': ['/\\b71\\s*\\/\\s*100\\b/'],  // 96c-T1: 禁 .poster-crop 硬編比例，須用 var(--poster-crop-ratio)
     },
     'selector-disallowed-list': ['/:is\\([^)]*manual-input/'],
     // Standard config rules relaxed for OpenAver's existing CSS conventions
