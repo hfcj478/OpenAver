@@ -3698,6 +3698,9 @@
   .whitespace-nowrap {
     white-space: nowrap;
   }
+  .whitespace-pre-line {
+    white-space: pre-line;
+  }
   .alert-error {
     @layer daisyui.l1.l2 {
       color: var(--color-error-content);
@@ -4990,7 +4993,7 @@ body {
   justify-content: center;
   box-shadow: 0 4px 12px oklch(0% 0 0 / 0.3);
 }
-:is(#ds-gallery-components, .ds-gallery-composition) .btn-glass-circle:hover {
+:is(#ds-gallery-components, .ds-gallery-composition) .btn-glass-circle:not(:disabled):hover {
   background: rgba(255, 255, 255, 0.3);
   border-color: rgba(255, 255, 255, 0.6);
   transform: scale(1.08);
@@ -5723,27 +5726,6 @@ body {
   align-items: center;
   flex-wrap: wrap;
   gap: 2px;
-}
-:is(#settings-components, #ds-settings-components) .folder-layers-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-:is(#settings-components, #ds-settings-components) .folder-layer-group {
-  display: flex;
-  align-items: center;
-  flex: 1;
-}
-:is(#settings-components, #ds-settings-components) .folder-layer-group.disabled {
-  opacity: 0.5;
-}
-:is(#settings-components, #ds-settings-components) .folder-layer-group.disabled input, :is(#settings-components, #ds-settings-components) .folder-layer-group.disabled button {
-  cursor: not-allowed;
-}
-:is(#settings-components, #ds-settings-components) .folder-separator {
-  font-size: 1rem;
-  color: var(--text-muted);
-  font-weight: 600;
 }
 :is(#settings-components, #ds-settings-components) .btn-variable-sm {
   display: flex;

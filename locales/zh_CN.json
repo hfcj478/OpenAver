@@ -194,6 +194,7 @@
       "translate_failed": "翻译失败，请重试",
       "db_not_synced": "未联动 — 整理完成后不会出现在 Showcase",
       "db_sync_failed": "DB 同步失败（文件已整理但未出现在 Showcase）",
+      "db_synced_mobile": "已入库",
       "skipped_nfo_multipart": "已跳过 NFO — 此文件为多段影片的第 2 段以后，由第 1 段的 NFO 管理"
     },
     "duplicate": {
@@ -317,7 +318,6 @@
     "section": {
       "search": "搜索与刮削",
       "scraper_advanced": "高级刮削设置",
-      "gallery_advanced": "高级显示选项",
       "system": "系统设置"
     },
     "search": {
@@ -356,9 +356,11 @@
       "suffix_keywords_hint": "文件名包含这些关键字时保留为 {suffix}，多个按列表顺序拼接",
       "create_folder_label": "建立文件夹",
       "folder_layers_label": "文件夹层级",
-      "folder_layer_outer": "外层",
-      "folder_layer_middle": "中层",
-      "folder_layer_inner": "内层",
+      "add_layer": "新增一层",
+      "remove_layer": "移除此层",
+      "layer_placeholder": "输入变量或字面文字",
+      "chip_delete": "删除",
+      "preview_empty_tag": "空值范例",
       "preview_prefix": "预览",
       "filename_format_label": "文件命名格式",
       "max_title_length_label": "标题长度限制",
@@ -378,7 +380,25 @@
       "external_manager_emby_hint": "另存 `{番号}-poster.jpg`／`{番号}-fanart.jpg` 并补上 NFO 识别字段；多段（cd1／cd2／part1）自动合并；整理后保留文件名 VR 投影标记（供 DeoVR 等头显 App 识别）。注意：Emby 读海报与 NFO，但不认 `{番号}-fanart.jpg` 背景图命名（fanart 在 Emby 不显示，Jellyfin／Kodi 正常）。",
       "external_manager_kodi_hint": "另存 `{番号}-poster.jpg`／`{番号}-fanart.jpg`（Kodi 各种文件夹结构都识别），并补上 NFO 识别字段；cd1／cd2／part1 多段自动合并。",
       "download_sample_images_label": "下载剧照（extrafanart）",
-      "download_sample_images_hint": "整理时自动下载剧照至 extrafanart/ 子目录（需启用「建立文件夹」）"
+      "download_sample_images_hint": "整理时自动下载剧照至 extrafanart/ 子目录（需启用「建立文件夹」）",
+      "strm_mapping": {
+        "title": "播放端路径替换",
+        "intro": "当 Emby／Jellyfin／Kodi 在另一台机器、看到的来源路径与本机不同时，用这些规则把「本机扫描前缀」替换成「播放端前缀」。没有规则时 strm 直接写本机路径。",
+        "local_placeholder": "本机前缀（例：Z:\\115）",
+        "remote_placeholder": "播放端前缀（例：/volume1/movie）",
+        "add_rule": "新增规则",
+        "remove": "删除规则",
+        "template_hint": "以下为只读来源当前的本机扫描路径模板，请对齐你实际扫到的路径前缀：",
+        "template_use": "填入左栏",
+        "rewrite_confirm": {
+          "title": "改写既有 .strm 文件",
+          "body": "路径规则已变更，将依新规则改写 {count} 个既有 .strm 文件（你的视频文件不会被改动）。",
+          "cancel": "先不改写",
+          "confirm": "立即改写"
+        },
+        "rewrite_done": "已改写 {count} 个 .strm 文件",
+        "rewrite_failed": "改写既有 .strm 失败，路径规则已保存但既有文件尚未更新；请稍后再保存一次重试。"
+      }
     },
     "gallery": {
       "output_dir_label": "输出目录",
@@ -401,7 +421,12 @@
       "items_per_page_label": "每页显示数量",
       "all": "全部",
       "min_size_label": "最小视频尺寸",
-      "min_size_hint": "0 = 不过滤"
+      "min_size_hint": "0 = 不过滤",
+      "tier_display": "列表显示默认",
+      "also_showcase_note": "也是你浏览页（Showcase）的默认",
+      "export_section": "离线 HTML 导出（Windows 本机查看用）",
+      "export_notice": "此导出文件为 Windows 本机双击查看设计；macOS / Linux 请改用 app 浏览页。（成因：封面以 <code>file://</code> 嵌入，Mac 浏览器会拦截本机跨目录文件）",
+      "mode_export_only_note": "仅影响此导出文件（不影响 app Showcase）"
     },
     "system": {
       "default_page_label": "启动时打开页面",
@@ -489,6 +514,16 @@
       "body_off": "切回「单机」模式后，局域网设备将立即无法连接。确认切换？",
       "confirm": "确认切换",
       "confirm_on": "仍要开启"
+    },
+    "switch_mode_confirm": {
+      "title": "切换媒体服务器模式",
+      "body": "切换到「{mode}」会移除当前 {count} 个只读来源及它们生成的媒体卡（你输出夹里的文件不会被删除），之后重新加入即可在新模式下重建。其他已打开的标签页请刷新后再操作。",
+      "cancel": "取消",
+      "confirm": "确认切换并移除",
+      "failed": "切换模式失败，请稍后再试。",
+      "generate_in_progress": "生成进行中，请等生成完成后再切换模式。",
+      "mode_off": "默认模式",
+      "mode_media": "Emby·Jellyfin·Kodi 模式"
     }
   },
   "scanner": {
@@ -519,7 +554,12 @@
       "remove_title": "移除",
       "output_prefix": "输出:",
       "settings_link": "设定",
-      "copy_path": "复制路径"
+      "copy_path": "复制路径",
+      "readonly_label": "只读",
+      "output_path_label": "输出到",
+      "output_path_placeholder": "这台能写入的输出夹（给 Emby／Jellyfin／Kodi 扫描，可放 NAS）...",
+      "cross_machine_hint": "（与上面「输出到」文件夹无关）strm 文件里写的是这台看到的只读来源视频路径。若播放的 Emby／Jellyfin／Kodi 在别台机器、看到的路径不同，请到设置页设路径替换规则。",
+      "cross_machine_settings_link": "设置路径替换"
     },
     "terminal": {
       "filter_all": "全部",
@@ -542,10 +582,6 @@
       "jellyfin_prefix": "Jellyfin 专用封面格式缺失:",
       "jellyfin_suffix": "部",
       "jellyfin_update_title": "补齐 Jellyfin poster + fanart",
-      "jellyfin_check_btn": "检查 Jellyfin 图片",
-      "jellyfin_check_idle_label": "Jellyfin 专用封面尚未检查",
-      "jellyfin_checking": "检查中...",
-      "jellyfin_check_done_ok": "已检查，全部正常",
       "last_run_prefix": "上次执行: ",
       "last_added": "(新增 {count} 部)",
       "generate_idle": "生成网页",
@@ -558,6 +594,10 @@
       "jellyfin_help_line4": "点击「补齐」自动从已有封面产生，纯本地处理不联网。",
       "jellyfin_idle": "补齐图片",
       "jellyfin_loading": "补齐中...",
+      "jellyfin_check_btn": "检查 Jellyfin 图片",
+      "jellyfin_check_idle_label": "Jellyfin 专用封面尚未检查",
+      "jellyfin_checking": "检查中...",
+      "jellyfin_check_done_ok": "已检查，全部正常",
       "btn_done": "已完成",
       "missing_both_prefix": "缺 NFO+封面:",
       "missing_nfo_prefix": "缺 NFO:",
@@ -567,6 +607,11 @@
       "missing_enrich_loading": "补全中...",
       "missing_enrich_preparing": "准备中...",
       "missing_enrich_done": "补全完成",
+      "missing_enrich_card_searching": "搜索中…",
+      "missing_enrich_card_no_cover": "已补资料（无封面）",
+      "missing_enrich_card_not_found": "查无",
+      "missing_enrich_card_error": "失败",
+      "missing_enrich_card_readonly": "跳过（只读）",
       "missing_enrich_toast_success": "补全完成！{success} 部成功",
       "missing_enrich_toast_mixed": "补全完成！{success} 部成功，{failed} 部失败",
       "missing_enrich_batch_fail": "批次补全失败 ({status}): {error}",
@@ -661,6 +706,15 @@
       "image_check": "图片检查进行中，离开将会中断！",
       "folder_dirty": "您有未保存的文件夹变更",
       "confirm": "{message}确定要离开吗？"
+    },
+    "readonly_confirm_modal": {
+      "title": "设为只读来源？",
+      "cancel": "取消",
+      "confirm": "确认设为只读",
+      "intro": "只读来源代表 OpenAver 不会改动这个文件夹里的任何文件（不搬移、不改名、不写入 NFO 或封面），改为在输出夹另外生成一份本地媒体库（每片一文件夹：NFO＋封面）供 OpenAver 自己浏览与播放。适合塞满视频的只读网盘、NAS 共享、SMB 挂载等不可写入的位置。如果你只是本机一般收藏、文件夹可以正常写入，就不需要勾这个。",
+      "output_hint_offline": "当前为默认模式，产物会自动落在 App 内置的固定本地夹，不需要另外指定输出夹。",
+      "output_hint_media_server": "当前为 Emby·Jellyfin·Kodi 模式，确认后会展开「输出到」栏位。请指定一个这台机器能写入的文件夹（可以是本机，也可以是挂载到这台的 NAS 共享）——不是只读来源本身。",
+      "nas_hint": "想喂给 NAS 上的 Emby／Jellyfin／Kodi？默认模式只生成 OpenAver 自己浏览用的本地库、不会生成 .strm 快捷方式文件。若你要让媒体服务器扫这批片，请先到「设置」把模式切到 Emby·Jellyfin·Kodi 模式。"
     }
   },
   "showcase": {
@@ -683,7 +737,12 @@
       "success": "已覆盖写入（封面 + NFO）",
       "fail": "重新刮削失败，请稍后再试。",
       "jl_desktop_only": "仅限桌面应用程序（standalone）可用",
-      "jl_cf_solving": "Cloudflare 验证中……通过后将自动继续"
+      "jl_cf_solving": "Cloudflare 验证中……通过后将自动继续",
+      "versions_found": "找到 {count} 部同番号作品",
+      "version_prev_aria": "上一个版本",
+      "version_next_aria": "下一个版本",
+      "adopt_version": "采用此版本",
+      "adopt_switch_source": "替换此版本"
     },
     "placeholder": {
       "search": "搜索番号、女优、标题..."
@@ -801,7 +860,8 @@
     },
     "enrich": {
       "success": "补资料完成",
-      "failed": "补资料失败，请稍后再试"
+      "failed": "补资料失败，请稍后再试",
+      "readonly_tooltip": "此片由只读来源生成，更新请至扫描页重新生成"
     },
     "video": {
       "delete": "从收藏移除",
@@ -1019,7 +1079,12 @@
       "h6_multiversion": "同片多版本（流出 / 4K / 中文字幕）怎么在 Emby/Jellyfin 合并？",
       "multiversion_intro": "多版本合并是 Emby 与 Jellyfin 共同支持的原生功能（同一套「文件夹名 - 标签」规则），不是哪一家独有。把同一片各版本放进以番号命名的文件夹，文件名都以文件夹名开头加「 - 标签」：",
       "multiversion_rule1": "每个版本文件名<strong>必须以文件夹名开头</strong> + 「 - 标签」（空格-连字号-空格）",
-      "multiversion_rule2": "多版本与 cd1/cd2 多段<strong>不能同时用于同一部片</strong>（媒体服务器官方限制）"
+      "multiversion_rule2": "多版本与 cd1/cd2 多段<strong>不能同时用于同一部片</strong>（媒体服务器官方限制）",
+      "h6_strm_deploy": "只读来源 + 让 Emby／Jellyfin／Kodi 扫到片（跨机器部署）",
+      "strm_deploy_step1": "把只读网盘／NAS 共享挂到 OpenAver 这台后，在 Scanner 把该文件夹勾成「只读」——OpenAver 不会动里面任何文件（不搬移、不改名、不写入）。",
+      "strm_deploy_step2": "在「输出到」指定一个<strong>这台能写入</strong>的文件夹（可以是挂载到这台的 NAS 可写共享）——生成的 <code>.strm</code>＋NFO＋封面会放这里，再让 Emby／Jellyfin／Kodi 指向它建媒体库。这个输出夹不是只读来源本身。",
+      "strm_deploy_step3": "若播放的那台机器看到的只读来源路径跟 OpenAver 看到的不一样（例如 OpenAver 上是 <code>Z:\\115</code>、NAS 上是 <code>/volume1/115</code>），到<strong>设置页</strong>的「播放端路径替换」加一条对应规则，否则 <code>.strm</code> 会指向播放端找不到的路径。",
+      "strm_deploy_step4": "之后改了映射规则，既有的 <code>.strm</code> 会自动一次改写，不用重建整个媒体库。"
     },
     "showcase": {
       "title": "视频浏览 (Showcase)",
@@ -1222,7 +1287,8 @@
     "batch_enrich_failed": "批量补完中断",
     "jl_cf_timeout": "JavLibrary CF 验证超时",
     "thumb_prewarm_start": "开始建立封面缩略图缓存",
-    "thumb_prewarm_done": "封面缩略图缓存已完成"
+    "thumb_prewarm_done": "封面缩略图缓存已完成",
+    "scanner_cancelled": "扫描已取消"
   },
   "similar_mode": {
     "button_aria_label": "探索相似视频",

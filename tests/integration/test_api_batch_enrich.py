@@ -337,6 +337,71 @@ class TestBatchEnrich:
         assert response.status_code == 422
 
 
+class TestBatchEnrichReadonlyGuard:
+    """TASK-90c-T1：batch 逐項唯讀 guard。混合批（1 唯讀 + 1 可寫）→ 唯讀項
+    yield result-item(success:False, 唯讀) + failed_count+=1 + continue（不 raise、
+    不逐項 _emit_notif）；可寫項照常 enrich。load_config patch 呼叫處 binding，
+    batch 走 await asyncio.to_thread(load_config) 仍生效；iter_gallery_sources 用 real。"""
+
+    @pytest.fixture(autouse=True)
+    def _stub_search_jav(self, mocker):
+        mocker.patch(
+            "web.routers.scraper.search_jav",
+            return_value={"title": "stub", "source": "javbus"},
+        )
+
+    def _readonly_config(self):
+        return {
+            "gallery": {
+                "directories": [{"path": "/tmp/ro_src", "readonly": True}],
+                "path_mappings": {},
+            },
+            "search": {},
+            "scraper": {},
+        }
+
+    def test_mixed_batch_readonly_skipped_writable_enriched(self, client, mocker):
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=self._readonly_config(),
+        )
+        mock_enrich = mocker.patch(
+            "web.routers.scraper.enrich_single", return_value=_ok_result()
+        )
+        emit_spy = mocker.patch("web.routers.scraper._emit_notif")
+
+        response = client.post("/api/batch-enrich", json={
+            "items": [
+                {"file_path": "/tmp/ro_src/RO-001.mp4", "number": "RO-001"},
+                {"file_path": "/tmp/rw/RW-002.mp4", "number": "RW-002"},
+            ],
+            "mode": "refresh_full",
+        })
+
+        assert response.status_code == 200
+        events = parse_sse(response.text)
+        result_items = [e for e in events if e["type"] == "result-item"]
+        assert len(result_items) == 2
+
+        by_number = {e["number"]: e for e in result_items}
+        # 唯讀項：success False + 唯讀 error
+        assert by_number["RO-001"]["success"] is False
+        assert "唯讀" in by_number["RO-001"]["error"]
+        assert by_number["RO-001"]["file_path"] == "/tmp/ro_src/RO-001.mp4"
+        # 可寫項：照常 enrich 成功
+        assert by_number["RW-002"]["success"] is True
+
+        # enrich_single 只被可寫項呼叫一次（唯讀項在到達前 continue）
+        assert mock_enrich.call_count == 1
+
+        # done summary 計數對稱
+        done = [e for e in events if e["type"] == "done"][0]
+        assert done["summary"] == {"total": 2, "success": 1, "failed": 1}
+
+        # _emit_notif 只在批次層呼叫（started + done_with_errors），唯讀項不逐項發 notif
+        assert emit_spy.call_count == 2
+
+
 class TestBatchEnrichThumbnailInvalidation:
     """feature/71 T8 邊界5 + PR #60 Codex P2：每筆成功 → invalidate 用 canonical key
     （輸入 URI 原值，非 double-encoded）；失敗不呼叫；去重後至多一次。

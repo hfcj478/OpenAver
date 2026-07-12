@@ -18,6 +18,8 @@
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, StrictBool, StrictStr
+from typing import Literal
+from pathlib import Path
 import asyncio
 import httpx
 import threading
@@ -28,7 +30,20 @@ from core.config import (
     load_config,
     mutate_config,
     reset_config_file,
+    iter_gallery_sources,
 )
+from core.database import VideoRepository, get_db_path, init_db
+from core import thumbnail_cache
+from core.path_utils import uri_to_fs_path, reverse_path_mapping, CURRENT_ENV
+from core.generate_state import (
+    try_begin_switch,
+    end_switch,
+    try_begin_config_save,
+    end_config_save,
+    is_generate_in_progress,
+)
+from core.readonly_source import is_path_readonly, _canonical_source_prefix
+from core.readonly_producer import _write_strm
 from core.source_config import MAX_ENABLED_SOURCES
 from core.translate_service import LANGUAGE_PROMPTS
 
@@ -58,35 +73,67 @@ def get_config() -> dict:
 @router.put("/config")
 def update_config(config: AppConfig) -> dict:
     """更新所有設定"""
-    # Cap 守衛（CD-61-16，endpoint-level；非 model_validator）：
-    # 同時啟用且非 manual_only 的來源數不得超過 MAX_ENABLED_SOURCES。
-    # 防止前端繞過 UI 直接 PUT。manual_only 不計入 cap basis（CD-61-17）。
-    cap_basis = sum(1 for s in config.sources if s.enabled and not s.manual_only)
-    if cap_basis > MAX_ENABLED_SOURCES:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "cap_exceeded", "max": MAX_ENABLED_SOURCES},
-        )
+    # PR #93 P2-e：整份設定儲存納入 switch 互斥窗口（owner 拍板：互斥鎖）。否則另一分頁帶
+    # 「切模式前的舊 directories 快照」的整份存檔會與 purge 交錯、把剛被 purge 的離線來源
+    # 條目寫回 gallery.directories（DB 卡已刪）→ 殭屍條目。
+    # 上一輪的 is_switch_in_progress() preflight 是 TOCTOU（存檔可在 switch 開始前通過檢查、
+    # 卻在 switch 做完後才落盤）→ 改真互斥：儲存持有 _config_save_active 整段窗口，
+    # try_begin_switch 見此旗標即拒絕；兩者同一 _lock 下原子、不交錯。end_config_save 必於 finally。
+    # 已知殘留（owner 接受）：切換「已完全做完」後才到達的舊快照存檔仍會覆寫（純 lost-update、
+    # 非交錯，任何 mutex 都擋不到），靠切模式破壞性 confirm 的「其他分頁請重整」提示兜底；
+    # 次秒級、可自癒（重 generate 重建卡）、無資料損毀。
+    # 只擋整份存檔；update_general_field 只寫單一 general 欄位、不碰 directories → 不納入。
+    # PR #93 五審三次 P2（owner 拍板：精準 gate）：掃描/產生進行中，禁止「有動到 strm 播放
+    # 映射」的整份存檔。generate 起始時把 config 凍結一場沿用（scanner.generate_avlist 一次
+    # load_config → produce_source 全程用該快照），若中途改 scraper.strm_path_mappings 存檔，
+    # 該次 generate 之後才產出的 .strm 仍用舊映射，且無任何東西會再自動重寫它們（rewrite 只修
+    # 當下已在 DB 的片）→ 靜默半修、永久指錯播放端路徑。精準只擋「真的動到映射」的存檔：
+    # is_generate_in_progress() 短路後才 load_config diff，改主題/檔名等其他設定不受影響。
+    # 點對點檢查（非全互斥），微秒級殘留窗口同 P2-e 已知限制等級（generate 若在 check 與
+    # mutate_config 間隙才起跑，屬同類可接受殘留；掃描本就秒級以上、幾乎不觸發）。
+    if is_generate_in_progress() and (
+        config.scraper.strm_path_mappings
+        != load_config().get("scraper", {}).get("strm_path_mappings", {})
+    ):
+        return {"success": False, "reason": "generate_in_progress_strm_mapping",
+                "error": "掃描／產生進行中，請完成後再修改媒體伺服器播放路徑映射。"}
+    save_token = object()  # 每 request 唯一身份 token（比照 generate 的 _active_tokens）
+    reason = try_begin_config_save(save_token)
+    if reason is not None:
+        return {"success": False, "reason": reason,
+                "error": "設定切換中，請稍後再儲存。"}
     try:
-        payload = config.model_dump()
-        # server_mode is toggle-lifecycle state owned exclusively by
-        # PUT /api/config/general/server_mode (which calls lan_listener.start/stop
-        # atomically with the persist). A full-config save must NEVER overwrite the
-        # currently-persisted value — whether the incoming payload omits the field
-        # (Pydantic default → False) or contains a stale/incorrect value.
-        # Read the canonical persisted value inside mutate_config so the
-        # read-preserve-write is atomic under _config_write_lock.
-        def _write_preserving_server_mode(cfg: dict) -> None:
-            current_server_mode = cfg.get("general", {}).get("server_mode", False)
-            payload["general"]["server_mode"] = current_server_mode
-            cfg.update(payload)
+        # Cap 守衛（CD-61-16，endpoint-level；非 model_validator）：
+        # 同時啟用且非 manual_only 的來源數不得超過 MAX_ENABLED_SOURCES。
+        # 防止前端繞過 UI 直接 PUT。manual_only 不計入 cap basis（CD-61-17）。
+        cap_basis = sum(1 for s in config.sources if s.enabled and not s.manual_only)
+        if cap_basis > MAX_ENABLED_SOURCES:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "cap_exceeded", "max": MAX_ENABLED_SOURCES},
+            )
+        try:
+            payload = config.model_dump()
+            # server_mode is toggle-lifecycle state owned exclusively by
+            # PUT /api/config/general/server_mode (which calls lan_listener.start/stop
+            # atomically with the persist). A full-config save must NEVER overwrite the
+            # currently-persisted value — whether the incoming payload omits the field
+            # (Pydantic default → False) or contains a stale/incorrect value.
+            # Read the canonical persisted value inside mutate_config so the
+            # read-preserve-write is atomic under _config_write_lock.
+            def _write_preserving_server_mode(cfg: dict) -> None:
+                current_server_mode = cfg.get("general", {}).get("server_mode", False)
+                payload["general"]["server_mode"] = current_server_mode
+                cfg.update(payload)
 
-        mutate_config(_write_preserving_server_mode)
-        _reset_translate_service()  # 重置翻譯服務，讓新配置生效
-        return {"success": True, "message": "設定已儲存"}
-    except Exception as e:
-        logger.error("儲存設定失敗: %s", e)
-        return {"success": False, "error": "儲存設定失敗"}
+            mutate_config(_write_preserving_server_mode)
+            _reset_translate_service()  # 重置翻譯服務，讓新配置生效
+            return {"success": True, "message": "設定已儲存"}
+        except Exception as e:
+            logger.error("儲存設定失敗: %s", e)
+            return {"success": False, "error": "儲存設定失敗"}
+    finally:
+        end_config_save(save_token)
 
 
 @router.delete("/config")
@@ -249,6 +296,231 @@ def get_lan_port() -> dict:
     }
 
 
+class SwitchExternalManagerRequest(BaseModel):
+    # 值域必須與 core.config.ScraperConfig.external_manager 完全一致（四值）。
+    # 用 Literal-typed model（不收裸 str）：mutator 直接把 body 值寫進 raw dict
+    # （不經 AppConfig model_validate），若收裸 str 非法值會靜默落盤。FastAPI 對
+    # 非法 Literal 值自動回 422（gotchas-backend「Literal 守不到純 str 入口」72d）。
+    external_manager: Literal["off", "jellyfin", "emby", "kodi"]
+
+
+@router.post("/config/switch-external-manager")
+def switch_external_manager(request: SwitchExternalManagerRequest) -> dict:
+    """切換全域 external_manager，並破壞性重設離線（唯讀）來源（spec §90b(iv) 真理來源）。
+
+    server-side 原子完成：枚舉離線來源的 DB 卡 → delete_by_paths 刪除 + 縮圖失效 →
+    mutate_config 原子移除離線 config 條目 + 設新 external_manager。零檔案系統刪除。
+
+    ⚠️ 破壞性、不可逆：永久刪除離線來源的 DB video row（連同 user_tags）。DB 刪除與
+    config 寫入無分散式交易，刻意採「先 DB 刪、後 config 落盤」的可自癒失敗序（非假
+    rollback）——若 config 落盤失敗，卡已刪、離線來源仍在 config，重觸發時 delete_by_paths
+    對已缺席 path no-op、重試 mutate_config 收斂成功。
+
+    註：保持同步 def —— body 走 DB + config 檔案 I/O，依 async-offload 守衛須在
+    Starlette threadpool 執行，不可改 async def 卡 event loop。
+    """
+    # Finding 2 + PR #93 P1/P2 雙向互斥 + switch 序列化 guard：try_begin_switch 原子地
+    #   (a) generate 在飛 → 'generate_in_progress'（原 forward guard，前端顯示「產生進行中」）；
+    #   (b) 另一個 switch 已持窗口 → 'switch_in_progress'（PR #93 P2：否則第二個 switch 也進、
+    #       第一個 end_switch() 會在第二個窗口中把 _switch_active 清掉 → generate 趁隙補回卡）；
+    #   (c) 整份設定儲存持窗口 → 'config_save_in_progress'（PR #93 P2-e：否則 switch 的 purge
+    #       與該儲存的 mutate_config 交錯 → 舊快照存檔把剛 purge 的離線來源條目寫回）；
+    #   (d) 否則回 None、佔住 _switch_active 整個 purge 窗口 → 期間新 generate 掛號被
+    #       try_mark_generate_active 拒絕、新整份儲存被 try_begin_config_save 拒絕，杜絕反向 race。
+    #       成功佔住後必 end_switch()（finally 保證）。
+    reason = try_begin_switch()
+    if reason is not None:
+        _switch_refuse_msg = {
+            "generate_in_progress": "產生進行中，請稍後再切換模式。",
+            "config_save_in_progress": "設定儲存中，請稍後再切換模式。",
+        }
+        return {
+            "success": False,
+            "reason": reason,
+            "error": _switch_refuse_msg.get(reason, "另一個切換正在進行中，請稍後再試。"),
+        }
+    try:
+        return _switch_external_manager_locked(request)
+    finally:
+        end_switch()
+
+
+def _switch_external_manager_locked(request: SwitchExternalManagerRequest) -> dict:
+    """switch_external_manager 的 purge 主體（已持 _switch_active 窗口，見呼叫端）。"""
+    # Step 1：讀 config 枚舉 offline_sources（唯讀，config 鎖外）
+    gallery = load_config().get("gallery", {})
+    mappings = gallery.get("path_mappings", {})
+    offline_sources = [s for s in iter_gallery_sources(gallery) if s.readonly and s.path]
+
+    # _canonical_source_prefix 對「髒來源路徑」會拋 ValueError（共用 readonly_source 的同名
+    # helper，杜絕重複實作漂移 + PR #93 P2-f：file:/// URI 型來源也套 path_mappings 對齊 DB
+    # 命名空間，否則 purge miss 該唯讀卡）。破壞性端點絕不可因單一髒路徑 500 卡死使用者切換 →
+    # 髒來源 skip（無法比對其卡 → 保守不刪）。同時前綴預算一次，免 deleted_paths 每片重算。
+    def _safe_prefixes(sources) -> list:
+        out = []
+        for s in sources:
+            try:
+                out.append(_canonical_source_prefix(s.path, mappings))
+            except ValueError:
+                continue
+        return out
+
+    offline_prefixes = _safe_prefixes(offline_sources)
+    # 可寫（非唯讀）來源前綴：巢狀/重疊時由可寫來源「主張」其卡，從刪除集扣除。
+    # spec §90b(iv)-1 保證「可寫來源與其 DB 卡不受影響」；可寫夾若巢狀在唯讀夾之下
+    # （如唯讀 D:/media + 可寫 D:/media/local），可寫卡同落唯讀前綴，若不扣除會被誤刪
+    # （連同 user_tags 永久流失）。破壞性操作保守偏向「不刪」。
+    writable_prefixes = _safe_prefixes(
+        [s for s in iter_gallery_sources(gallery) if s.path and not s.readonly]
+    )
+
+    # Step 2：枚舉待刪 DB 卡（無 `not in current_paths` gate —— 無條件清該離線來源全部卡）
+    db_path = get_db_path()
+    init_db(db_path)
+    repo = VideoRepository(db_path)
+    # 最具體來源勝（PR #93 Codex P2-b）：與 showcase/scraper 的 is_readonly_source 判定
+    # 共用同一個 is_path_readonly，不再內聯抄「任一可寫壓任一唯讀」壞規則——否則可寫父
+    # 底下的唯讀子夾卡會被誤豁免不刪、config 條目卻被移除 → 切模式後留殭屍唯讀卡。
+    # v.path 為 DB canonical file:/// URI，前綴集已 coerce，直接比對（比照原內聯）。
+    deleted_paths = [
+        v.path
+        for v in repo.get_all()
+        if is_path_readonly(v.path, offline_prefixes, writable_prefixes)
+    ]
+
+    # Step 3：DB 刪除（單 DELETE IN + commit，原子；空 list 回 0 安全）+ 縮圖失效
+    deleted_cards = repo.delete_by_paths(deleted_paths)
+    for p in deleted_paths:
+        try:
+            thumbnail_cache.invalidate(p)
+        except Exception:  # noqa: BLE001 — best-effort：縮圖失效失敗不阻斷主流程
+            logger.exception("thumbnail_cache.invalidate failed (non-fatal): %s", p)
+
+    # Step 4：mutate_config 原子改 config（移除離線條目 + 設 external_manager）
+    # 先 DB 後 config：若此步拋錯 → 卡已刪、離線來源仍在 config → 回 success:False
+    # （可自癒殘留，重觸發收斂）。不照抄 server_mode 的 rollback（DB 刪除不可逆）。
+    def _mutator(cfg: dict) -> None:
+        gal = cfg.setdefault("gallery", {})
+        dirs = gal.get("directories", []) or []
+        # 保留非 readonly 條目：dict 看 readonly 旗標；bare str 永遠非 readonly（保留）
+        gal["directories"] = [
+            d for d in dirs
+            if not (isinstance(d, dict) and d.get("readonly") is True)
+        ]
+        cfg.setdefault("scraper", {})["external_manager"] = request.external_manager
+
+    try:
+        mutate_config(_mutator)
+    except Exception as e:  # noqa: BLE001
+        logger.error("switch_external_manager config 落盤失敗（卡已刪、離線仍在 config，可自癒）: %s", e)
+        return {"success": False, "error": "無法儲存媒體伺服器模式設定"}
+
+    # Step 6：回傳（Step 5 = 零檔案系統刪除，全程未 rmtree/unlink/os.remove）
+    return {
+        "success": True,
+        "removed_sources": len(offline_sources),
+        "deleted_cards": deleted_cards,
+        "external_manager": request.external_manager,
+    }
+
+
+def _collect_strm_targets(repo, path_mappings: dict) -> list:
+    """枚舉「已產出且夾內有既有 .strm」的片，回 [(strm_path: Path, source_fs_path: str)]。
+
+    dry_run 與實際改寫共用此函式 → 「哪些片有 strm」的判定完全一致，保證
+    count（dry_run）== rewritten（實際，除非個別片 best-effort 寫失敗）。
+
+    - filter `output_dir` 非空（''＝未產出的骨架 row，不入枚舉）。
+    - 用 glob 定位既有 .strm（非 _build_old_base 重建，Codex P1）：`_resolve_movie_dir`
+      保證一夾一片，`<output_dir>/*.strm` 至多命中一個 → 用磁碟實際檔名的 stem，對
+      config 漂移（同次改 filename_format）免疫；無既有 strm → skip 不新建。
+    """
+    targets = []
+    for v in repo.get_all():
+        if not v.output_dir:
+            continue
+        # per-row 容錯：單列壞 output_dir（uri_to_fs_path/glob 拋錯）只 skip 該列，
+        # 不害整批 rewrite 中止（比照 _write_strm 的 per-movie best-effort 契約）。
+        try:
+            # uri-no-reverse: already paired with reverse_path_mapping on next line
+            movie_dir_fs = uri_to_fs_path(v.output_dir)
+            # 與 _resolve_movie_dir（core/readonly_producer.py）寫檔當下用同一套 targeted
+            # reverse-map：WSL+UNC mapped 輸出根下，output_dir 存的是映射端 URI，需反解回
+            # 本機實際掛載路徑才 glob 得到磁碟上真正的 .strm（否則恆定位映射端、count 永 0，
+            # 改映射後既有 strm 永不改寫）。無映射/非 wsl → 退回 uri_to_fs_path 直解不變。
+            if CURRENT_ENV == 'wsl' and path_mappings:
+                movie_dir_fs = reverse_path_mapping(movie_dir_fs, path_mappings) or movie_dir_fs
+            strm = next(Path(movie_dir_fs).glob('*.strm'), None)
+        except Exception as e:  # noqa: BLE001 — best-effort：壞列 skip 不阻斷整批
+            logger.warning("rewrite_strm 略過壞 output_dir 列（%r）: %s", v.output_dir, e)
+            continue
+        if strm is None:
+            continue
+        # source path 也要走同一套 reverse-map（PR #93 二審 P2）：v.path 在 WSL+gallery
+        # path_mappings 下同樣存映射端 URI，但 _write_strm 的 strm_path_mappings（播放端重寫）
+        # 本機前綴 = 原始掃描路徑。若只 uri_to_fs_path 得映射端 //NAS/... 會對不上 strm 規則
+        # → 改寫內容 ≠ 初次生成內容（掉了播放端映射）。反解回原掃描路徑，令改寫 == 生成。
+        # uri-no-reverse: already paired with reverse_path_mapping on next line
+        source_fs_path = uri_to_fs_path(v.path)
+        if CURRENT_ENV == 'wsl' and path_mappings:
+            source_fs_path = reverse_path_mapping(source_fs_path, path_mappings) or source_fs_path
+        targets.append((strm, source_fs_path))
+    return targets
+
+
+@router.post("/config/rewrite-strm")
+def rewrite_strm(dry_run: bool = False) -> dict:
+    """就地改寫使用者媒體庫既有 .strm（依當前 strm_path_mappings 重套播放端路徑）。
+
+    spec §90a.3/§90a.4 驗收 5（CD-90a-7）：改路徑規則 → 既有全部 .strm 立即同步新映射
+    （消除 stale-strm bug）。**只覆寫一行純文字**，不刪檔、不動 nfo/封面、不改 DB path、
+    不重刮。
+
+    - `dry_run=true`：只枚舉+glob 計數（供前端 heads-up N），零檔案寫入 → `{success, count}`。
+    - `dry_run=false`（預設）：實際 `_write_strm` 覆寫 → `{success, rewritten}`。
+    - off 模式自守（external_manager == 'off'）：直接回 0，不 enumerate/glob/寫檔
+      （off 風味產出片本就無 .strm）。
+
+    同步 def（DB + 檔案 I/O 走 threadpool，比照 switch_external_manager）。`_write_strm`
+    的 config 實參＝scraper 區塊（它同層讀 strm_path_mappings），不可傳 full config。
+    """
+    key = "count" if dry_run else "rewritten"
+    # PR #93 五審三次 P2：掃描/產生進行中拒絕改寫。producer 正用 generate 起始的舊 config
+    # 快照續產出，此時 rewrite 與其併行 → 兩者對同一片可能各寫一次、且 rewrite 修不到 generate
+    # 之後才產出的片 → stale。與 update_config 的映射 gate 成對（存檔擋掉即不會觸發自動改寫，
+    # 此處再擋獨立/直接呼叫，防禦縱深）。dry_run 也擋，讓前端 heads-up 階段就明確拒絕。
+    if is_generate_in_progress():
+        return {"success": False, "reason": "generate_in_progress",
+                "error": "掃描／產生進行中，請完成後再改寫 .strm。"}
+    try:
+        cfg = load_config()
+        scraper_cfg = cfg.get('scraper', {})
+        # off-mode 自守（防禦縱深；主 gate 在前端）
+        if scraper_cfg.get('external_manager', 'off') == 'off':
+            return {"success": True, key: 0}
+
+        db_path = get_db_path()
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+        # gallery.path_mappings（WSL↔本機 FS 映射；≠ scraper.strm_path_mappings 播放端重寫）
+        # 供 _collect_strm_targets 反解 mapped output_dir 回本機路徑再 glob。
+        path_mappings = cfg.get('gallery', {}).get('path_mappings', {})
+        targets = _collect_strm_targets(repo, path_mappings)
+
+        if dry_run:
+            return {"success": True, "count": len(targets)}
+
+        rewritten = 0
+        for strm, source_fs_path in targets:
+            # str(strm)[:-5] 去 '.strm' → base_stem；用磁碟實際檔名（Codex P1 免疫）
+            if _write_strm(str(strm)[:-5], source_fs_path, scraper_cfg):
+                rewritten += 1
+        return {"success": True, "rewritten": rewritten}
+    except Exception as e:  # noqa: BLE001 — 端點層例外收斂為 success:False（比照 config.py 慣例）
+        logger.error("rewrite_strm 失敗: %s", e)
+        return {"success": False, "error": "改寫 strm 失敗"}
+
+
 @router.get("/version")
 async def get_version() -> dict:
     """取得版本資訊"""
@@ -258,19 +530,25 @@ async def get_version() -> dict:
 
 @router.get("/config/format-variables")
 async def get_format_variables() -> dict:
-    """取得可用的格式變數"""
+    """取得可用的格式變數
+
+    每個變數帶 ``folder_ok`` 情境旗標（CD-95a-6/8）：``{suffix}`` 為檔名限定
+    （版本標記屬影片名稱，不在資料夾層級再分版本），其餘變數 folder/filename 兩情境皆可用。
+    前端命名區以此端點為變數集 + 情境的單一真理來源（SSOT）；label 仍走 i18n
+    ``settings.var.*``（本端點不承擔多語）。
+    """
     return {
         "variables": [
-            {"name": "{num}", "description": "番號", "example": "SONE-205"},
-            {"name": "{title}", "description": "標題", "example": "新人出道..."},
-            {"name": "{actor}", "description": "演員（第一位）", "example": "三上悠亜"},
-            {"name": "{actors}", "description": "所有演員", "example": "三上悠亜, 明日花"},
-            {"name": "{maker}", "description": "片商", "example": "S1"},
-            {"name": "{date}", "description": "發行日期", "example": "2024-01-15"},
-            {"name": "{year}", "description": "年份", "example": "2024"},
-            {"name": "{month}", "description": "月份（2位）", "example": "01"},
-            {"name": "{day}", "description": "日（2位）", "example": "15"},
-            {"name": "{suffix}", "description": "版本標記（自動偵測）", "example": "-4k"},
+            {"name": "{num}", "description": "番號", "example": "SONE-205", "folder_ok": True},
+            {"name": "{title}", "description": "標題", "example": "新人出道...", "folder_ok": True},
+            {"name": "{actor}", "description": "演員（第一位）", "example": "三上悠亜", "folder_ok": True},
+            {"name": "{actors}", "description": "所有演員", "example": "三上悠亜, 明日花", "folder_ok": True},
+            {"name": "{maker}", "description": "片商", "example": "S1", "folder_ok": True},
+            {"name": "{date}", "description": "發行日期", "example": "2024-01-15", "folder_ok": True},
+            {"name": "{year}", "description": "年份", "example": "2024", "folder_ok": True},
+            {"name": "{month}", "description": "月份（2位）", "example": "01", "folder_ok": True},
+            {"name": "{day}", "description": "日（2位）", "example": "15", "folder_ok": True},
+            {"name": "{suffix}", "description": "版本標記（自動偵測）", "example": "-4k", "folder_ok": False},
         ]
     }
 

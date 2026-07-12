@@ -1276,6 +1276,18 @@ class TestExtractChineseTitle:
         result = extract_chinese_title("ABP-001 美少女 三上悠亞.mp4", "ABP-001", actors=["三上悠亞"])
         assert result == "美少女"
 
+    def test_7letter_prefix_generic_cleanup_no_residual(self):
+        """TASK-caps 回歸鎖：core/organizer.py:112 通用番號清理 cap {2,7}。
+
+        番號 PARATHD-02976（7 字母前綴）出現在檔名，但 number 參數（ABC-999）
+        故意不匹配它 —— 所以必須靠通用 `[A-Za-z]{2,7}-?\\d{3,5}` cleanup 移除。
+        cap={2,7} → 完整剝除，片名為 '純中文標題'。
+        cap={2,6}（回歸）→ 只吃到 'ARATHD-02976'，殘留首字 'P' → 'P純中文標題'。
+        此案在 {2,6} 下會 FAIL，鎖住 cap 對齊不被誤縮。
+        """
+        result = extract_chinese_title("PARATHD-02976 純中文標題.mp4", "ABC-999")
+        assert result == "純中文標題"
+
 
 class TestExtractChineseTitleSubtitleMarkers:
     """spec-48a.md §a2 行為對照表 — 字幕標記 edge cases

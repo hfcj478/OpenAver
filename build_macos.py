@@ -403,12 +403,8 @@ def optimize_package():
             shutil.rmtree(pycache)
             pycache_count += 1
 
-    # 刪除 .dist-info
-    dist_info_count = 0
-    for dist_info in app_dir.rglob("*.dist-info"):
-        if dist_info.is_dir():
-            shutil.rmtree(dist_info)
-            dist_info_count += 1
+    # 不刪 .dist-info：curl_cffi 等 import 當下讀自身 metadata，缺 dist-info
+    # 會拋 PackageNotFoundError 導致 released 版該功能靜默失效（spec-97 根因）。
 
     # 刪除不需要的開發工具套件
     removed_packages = []
@@ -423,7 +419,7 @@ def optimize_package():
                     removed_packages.append(item.name)
                     break
 
-    print(f"  刪除 {pycache_count} 個 __pycache__, {dist_info_count} 個 .dist-info")
+    print(f"  刪除 {pycache_count} 個 __pycache__（保留 .dist-info）")
     if removed_packages:
         print(f"  移除 {len(removed_packages)} 個開發工具: {', '.join(removed_packages[:5])}{'...' if len(removed_packages) > 5 else ''}")
 

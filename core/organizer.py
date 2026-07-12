@@ -109,7 +109,7 @@ def extract_chinese_title(filename: str, number: str, actors: List[str] = None) 
     # 移除番號（各種格式）
     if number:
         name = re.sub(rf'\[?{re.escape(number)}\]?\s*', '', name, flags=re.IGNORECASE)
-    name = re.sub(r'\[?[A-Za-z]{2,6}-?\d{3,5}\]?\s*', '', name)
+    name = re.sub(r'\[?[A-Za-z]{2,7}-?\d{3,5}\]?\s*', '', name)
 
     # 清除來源後綴
     name = clean_source_suffix(name)

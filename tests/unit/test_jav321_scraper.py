@@ -154,6 +154,36 @@ MAKER_PLAIN_TEXT_HTML = """\
 </body></html>
 """
 
+# HTML with 平均評価 (rating) + description block (summary)
+# - 平均評価: 4.5 inside .col-md-9 (rating, MUST be 4.5 not 0.45 — D5 no ÷10)
+# - description inside .panel-body .row .col-md-12 (summary fallback selector)
+# Snapshot .col-xs-12.col-md-12 stays a DIRECT child of .panel-body (NOT in .row),
+# so it must NOT be caught by the .row .col-md-12 summary selector.
+RATING_SUMMARY_HTML = """\
+<html><body>
+<a href="/video/jufd-851">JUFD-851</a>
+<h3>JUFD-851 タイトル <small>jufd-851</small></h3>
+<div class="panel-body">
+  <div class="row">
+    <div class="col-md-3"><img class="img-responsive" src="http://pics.dmm.co.jp/digital/video/jufd00851/jufd00851ps.jpg"></div>
+    <div class="col-md-9">
+      <b>出演者</b>: <a href="/star/123/1">テスト女優</a> &nbsp; <br>
+      <b>メーカー</b>: <a href="/company/Fitch/1">Fitch</a><br>
+      <b>品番</b>: jufd-851<br>
+      <b>配信開始日</b>: 2018-01-13<br>
+      <b>収録時間</b>: 147 minutes<br>
+      <b>平均評価</b>: 4.5<br>
+      <b>シリーズ</b>: <a href="/series/xxx">究極の爆乳密写シコシコサポート</a><br>
+    </div>
+  </div>
+  <div class="row">
+    <div class="col-md-12">  これはテスト説明文です。  </div>
+  </div>
+  <div class="col-xs-12 col-md-12"><p><a href="/snapshot/jufd00851/1/1"><img src="http://pics.dmm.co.jp/digital/video/jufd00851/jufd00851jp-1.jpg"></a></p></div>
+</div>
+</body></html>
+"""
+
 # Full fields HTML — used for verifying existing fields are unchanged
 EXISTING_FIELDS_HTML = FULL_FIELDS_HTML
 
@@ -342,6 +372,48 @@ class TestNoGenreTags:
 
         assert video is not None
         assert video.tags == []
+
+
+class TestRatingSummary:
+    """平均評価 → rating（文字讀、不 ÷10，D5）+ 描述 .row .col-md-12 → summary（TrimSpace）"""
+
+    def test_rating_not_divided_by_ten(self, scraper):
+        # <b>平均評価</b>: 4.5 → rating == 4.5（防呆：非 0.45，鎖死 D5 不 ÷10）
+        video = run_search(scraper, RATING_SUMMARY_HTML)
+        assert video is not None
+        assert video.rating == 4.5
+
+    def test_summary_stripped(self, scraper):
+        # .panel-body .row .col-md-12 描述 → summary 非空、TrimSpace 過
+        video = run_search(scraper, RATING_SUMMARY_HTML)
+        assert video is not None
+        assert video.summary == "これはテスト説明文です。"
+
+    def test_summary_skips_empty_col_placeholder_real_fixture(self, scraper):
+        # Codex PR #97 re-review：真實 jav321 頁在真正描述前有一個「空的」
+        # .col-md-12 佔位（見 fixture），舊 select_one 停在空佔位 → summary 恆空。
+        # 用真實 fixture 鎖死：須跳過空佔位、抓到真正的描述文字。
+        with open("tests/fixtures/scrapers/jav321_MIDV-018.html", encoding="utf-8") as f:
+            html = f.read()
+        with patch("core.scrapers.jav321.post_html", return_value=html):
+            video = scraper.search("MIDV-018")
+        assert video is not None
+        assert video.summary.startswith("女流AV監督・長崎みなみ")
+        assert video.rating == 4.5  # 同 fixture 的 平均評価: 4.5（順帶回歸）
+
+
+class TestNoRatingSummary:
+    """既有 fixture（無 平均評価 / 描述）→ rating is None、summary == '' 無回歸"""
+
+    def test_no_rating(self, scraper):
+        video = run_search(scraper, FULL_FIELDS_HTML)
+        assert video is not None
+        assert video.rating is None
+
+    def test_no_summary(self, scraper):
+        video = run_search(scraper, FULL_FIELDS_HTML)
+        assert video is not None
+        assert video.summary == ""
 
 
 class TestSearchResultElseBranch:

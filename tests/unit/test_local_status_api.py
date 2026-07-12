@@ -10,7 +10,7 @@ from core.database import init_db, Video, VideoRepository
 
 @pytest.fixture
 def client(make_client, populated_db):
-    return make_client(["core.database.get_db_path", "web.routers.search.get_db_path"], mock_db_path=populated_db)
+    return make_client(["core.database.connection.get_db_path", "web.routers.search.get_db_path"], mock_db_path=populated_db)
 
 @pytest.fixture
 def populated_db(make_populated_db):

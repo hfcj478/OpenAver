@@ -87,12 +87,23 @@ class TestImageProxyUNCAllowlist:
                 'path_mappings': {},
             },
         })
-        mocker.patch('os.path.realpath', return_value=r'\\DISKSTATION\usbshare1\a.jpg')
+        # TASK-89a-T2 (CD-89a-7): scope the fake host-case rewrite to the two UNC
+        # strings this test is about. A blanket return_value would ALSO corrupt the
+        # off-flavor fixed-root candidate that _image_whitelist_dirs now always
+        # injects (config omits `scraper` → defaults off), making every realpath()
+        # return the same value and spuriously widening the whitelist.
+        request_path = r'\\DiskStation\usbshare1\a.jpg'
+        dir_path = r'\\DiskStation\usbshare1'
+        fake_realpath_result = r'\\DISKSTATION\usbshare1\a.jpg'
+        mocker.patch(
+            'os.path.realpath',
+            side_effect=lambda p: fake_realpath_result if p in (request_path, dir_path) else p,
+        )
         mocker.patch('os.path.exists', return_value=True)
         mocker.patch('web.routers.scanner.FileResponse',
                      return_value=__import__('starlette.responses', fromlist=['Response']).Response(status_code=200))
 
-        response = client.get('/api/gallery/image', params={'path': r'\\DiskStation\usbshare1\a.jpg'})
+        response = client.get('/api/gallery/image', params={'path': request_path})
         assert response.status_code == 200
 
     def test_unc_outside_allowlist_still_403(self, client, mocker):
@@ -103,10 +114,79 @@ class TestImageProxyUNCAllowlist:
                 'path_mappings': {},
             },
         })
-        mocker.patch('os.path.realpath', return_value=r'\\OtherServer\secret\a.jpg')
+        # TASK-89a-T2 (CD-89a-7): scope the realpath rewrite to the ONE request
+        # path (same rationale as test_unc_host_uppercase_allowed) so a blanket
+        # mock doesn't corrupt the off-flavor fixed-root candidate that
+        # _image_whitelist_dirs now always injects. This must still exercise the
+        # realpath ESCAPE it exists for: the request normpath-looks INSIDE the
+        # whitelist (\\DiskStation\usbshare1\evil.jpg) but realpath resolves it
+        # OUT to \\OtherServer\secret — without the realpath step it would be
+        # 200, so the mock is load-bearing (drop it → test goes 200 → RED).
+        # Whitelist dir + off-candidate stay identity (not escaped).
+        inside_looking = r'\\DiskStation\usbshare1\evil.jpg'
+        escaped_outside = r'\\OtherServer\secret\evil.jpg'
+        mocker.patch(
+            'os.path.realpath',
+            side_effect=lambda p: escaped_outside if p == inside_looking else p,
+        )
         mocker.patch('os.path.exists', return_value=True)
 
-        response = client.get('/api/gallery/image', params={'path': r'\\OtherServer\secret\a.jpg'})
+        response = client.get('/api/gallery/image', params={'path': inside_looking})
+        assert response.status_code == 403
+
+
+class TestImageProxyOutputPath:
+    """TASK-88c-T1: /api/gallery/image 白名單納入各來源非空 output_path"""
+
+    def test_cover_under_output_path_allowed(self, client, tmp_path, mocker):
+        """封面在唯讀來源的 output_path 底下 → 200（原 403 → 現 200，Acceptance #16）"""
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        cover = out_dir / "MOVIE-001" / "poster.jpg"
+        cover.parent.mkdir()
+        cover.write_bytes(b'\xff\xd8\xff\xe0' + b'\x00' * 50)  # JPEG magic
+
+        # TASK-89a-T2 (CD-89a-7): this test asserts a cover under the *configured*
+        # output_path is whitelisted — that is media-server semantics now, so pin
+        # external_manager to jellyfin. Under off, resolve_output_root ignores
+        # output_path and returns the fixed output/lib/<name> root instead.
+        mocker.patch('web.routers.scanner.load_config', return_value={
+            'scraper': {'external_manager': 'jellyfin'},
+            'gallery': {
+                'directories': [
+                    {'path': str(src_dir), 'readonly': True, 'output_path': str(out_dir)},
+                ],
+                'path_mappings': {},
+            },
+        })
+
+        response = client.get('/api/gallery/image', params={'path': str(cover)})
+        assert response.status_code == 200
+        assert response.headers['content-type'] == 'image/jpeg'
+
+    def test_file_outside_output_path_still_403(self, client, tmp_path, mocker):
+        """檔案在 output_path 外、且不在任何 src.path 底下 → 403（守衛不退化）"""
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        cover = elsewhere / "poster.jpg"
+        cover.write_bytes(b'\xff\xd8\xff\xe0' + b'\x00' * 50)
+
+        mocker.patch('web.routers.scanner.load_config', return_value={
+            'gallery': {
+                'directories': [
+                    {'path': str(src_dir), 'readonly': True, 'output_path': str(out_dir)},
+                ],
+                'path_mappings': {},
+            },
+        })
+
+        response = client.get('/api/gallery/image', params={'path': str(cover)})
         assert response.status_code == 403
 
 
@@ -450,9 +530,45 @@ class TestGenerateFromIds:
 
         fake_bytes = b'\xff\xd8\xff\xe0' + b'\x00' * 2000
         mocker.patch('web.routers.scanner.Path.read_bytes', return_value=fake_bytes)
-        mocker.patch('web.routers.scanner.uri_to_fs_path', return_value='/fake/cover.jpg')
+        mocker.patch('web.routers.scanner.uri_to_local_fs_path', return_value='/fake/cover.jpg')
 
         result = _embed_cover(to_file_uri('/fake/cover.jpg'))
+
+        expected_b64 = base64.b64encode(fake_bytes).decode('ascii')
+        assert result == f'data:image/jpeg;base64,{expected_b64}'
+
+    def test_embed_cover_reverse_maps_wsl_unc_path_mappings(self, mocker, tmp_path, monkeypatch):
+        """TASK-91-T2b #14：_embed_cover(img_ref, path_mappings) 在 WSL+UNC mapping
+        環境下，Path.read_bytes 讀的必須是反解後的本機路徑（可真的 open()），非裸
+        uri_to_fs_path() 產生的映射端 UNC 字串。"""
+        import core.path_utils as path_utils
+        from web.routers.scanner import _embed_cover
+
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+
+        nas_dir = tmp_path / "nas"
+        nas_dir.mkdir()
+        cover = nas_dir / "cover.jpg"
+        fake_bytes = b'\xff\xd8\xff\xe0' + b'\x00' * 2000
+        cover.write_bytes(fake_bytes)
+        mappings = {str(nas_dir): "//NAS/share"}
+
+        result = _embed_cover("file://///NAS/share/cover.jpg", mappings)
+
+        expected_b64 = base64.b64encode(fake_bytes).decode('ascii')
+        assert result == f'data:image/jpeg;base64,{expected_b64}', (
+            f"應反解成本機路徑真的讀到檔案，實際: {result[:80]}"
+        )
+
+    def test_embed_cover_no_mappings_default_none_equivalent_to_before(self, mocker):
+        """#14 邊界：path_mappings 預設 None → 與改動前裸 uri_to_fs_path 呼叫等價
+        （保護既有呼叫端 generate_from_ids 舊行為不回歸）。"""
+        from web.routers.scanner import _embed_cover as _ec
+
+        fake_bytes = b'\xff\xd8\xff\xe0' + b'\x00' * 2000
+        mocker.patch('web.routers.scanner.Path.read_bytes', return_value=fake_bytes)
+
+        result = _ec(to_file_uri('/fake/cover2.jpg'))  # 不傳 path_mappings
 
         expected_b64 = base64.b64encode(fake_bytes).decode('ascii')
         assert result == f'data:image/jpeg;base64,{expected_b64}'

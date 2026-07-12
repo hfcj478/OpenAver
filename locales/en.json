@@ -194,6 +194,7 @@
       "translate_failed": "Translation failed. Please try again.",
       "db_not_synced": "Not linked — organized files won't appear in Showcase",
       "db_sync_failed": "DB sync failed (file organized but not showing in Showcase)",
+      "db_synced_mobile": "Saved",
       "skipped_nfo_multipart": "NFO skipped — this file is part 2+ of a multipart movie, managed by part 1's NFO"
     },
     "duplicate": {
@@ -317,7 +318,6 @@
     "section": {
       "search": "Search & Scrape",
       "scraper_advanced": "Advanced Scrape Settings",
-      "gallery_advanced": "Advanced Display Options",
       "system": "System Settings"
     },
     "search": {
@@ -356,9 +356,11 @@
       "suffix_keywords_hint": "Filenames containing these keywords are kept as {suffix}; multiple keywords concatenate in list order",
       "create_folder_label": "Create Folder",
       "folder_layers_label": "Folder Layers",
-      "folder_layer_outer": "Outer",
-      "folder_layer_middle": "Middle",
-      "folder_layer_inner": "Inner",
+      "add_layer": "Add layer",
+      "remove_layer": "Remove layer",
+      "layer_placeholder": "Enter a variable or literal text",
+      "chip_delete": "Delete",
+      "preview_empty_tag": "Empty value example",
       "preview_prefix": "Preview",
       "filename_format_label": "File Naming Format",
       "max_title_length_label": "Title Length Limit",
@@ -378,7 +380,25 @@
       "external_manager_emby_hint": "Also writes `{stem}-poster.jpg` / `{stem}-fanart.jpg`, adds NFO recognition fields, and auto-merges multipart (cd1/cd2/part1); the filename VR projection tag is preserved on organize (for headset apps like DeoVR). Note: Emby reads the poster and NFO but does not recognize the `{stem}-fanart.jpg` backdrop name (fanart won't show in Emby; Jellyfin/Kodi are fine).",
       "external_manager_kodi_hint": "Also writes `{stem}-poster.jpg` / `{stem}-fanart.jpg` (Kodi recognizes various folder layouts) and adds NFO recognition fields; cd1/cd2/part1 multipart auto-merges.",
       "download_sample_images_label": "Download Stills (extrafanart)",
-      "download_sample_images_hint": "Download stills to extrafanart/ during organize (requires Create Folder enabled)"
+      "download_sample_images_hint": "Download stills to extrafanart/ during organize (requires Create Folder enabled)",
+      "strm_mapping": {
+        "title": "Playback-side path mapping",
+        "intro": "When Emby / Jellyfin / Kodi runs on another machine and sees the source under a different path, use these rules to replace the \"local scan prefix\" with the \"playback-side prefix.\" With no rules, the strm is written with the local path as-is.",
+        "local_placeholder": "Local prefix (e.g. Z:\\115)",
+        "remote_placeholder": "Playback-side prefix (e.g. /volume1/movie)",
+        "add_rule": "Add rule",
+        "remove": "Remove rule",
+        "template_hint": "Below are the current local scan-path templates for your read-only sources. Align them with the path prefix you actually scan:",
+        "template_use": "Fill left field",
+        "rewrite_confirm": {
+          "title": "Rewrite existing .strm files",
+          "body": "The path rules changed. {count} existing .strm file(s) will be rewritten with the new rules (your video files are not touched).",
+          "cancel": "Not now",
+          "confirm": "Rewrite now"
+        },
+        "rewrite_done": "Rewrote {count} .strm file(s)",
+        "rewrite_failed": "Failed to rewrite existing .strm files. The path rules were saved but existing files were not updated; save again later to retry."
+      }
     },
     "gallery": {
       "output_dir_label": "Output Directory",
@@ -401,7 +421,12 @@
       "items_per_page_label": "Items per Page",
       "all": "All",
       "min_size_label": "Minimum Video Size",
-      "min_size_hint": "0 = no filter"
+      "min_size_hint": "0 = no filter",
+      "tier_display": "List display defaults",
+      "also_showcase_note": "Also the default for your Showcase page",
+      "export_section": "Offline HTML export (for local viewing on Windows)",
+      "export_notice": "This export file is designed for local double-click viewing on Windows; on macOS / Linux, use the app’s Showcase page instead. (Reason: covers are embedded via <code>file://</code>, which Mac browsers block for local cross-directory files.)",
+      "mode_export_only_note": "Affects only this export file (not the app’s Showcase)"
     },
     "system": {
       "default_page_label": "Default Page on Startup",
@@ -489,6 +514,16 @@
       "body_off": "After switching back to standalone mode, LAN devices will immediately lose access. Confirm switch?",
       "confirm": "Confirm",
       "confirm_on": "Enable Anyway"
+    },
+    "switch_mode_confirm": {
+      "title": "Switch media server mode",
+      "body": "Switching to \"{mode}\" removes the current {count} read-only source(s) and the media cards they generated (files in your output folder are not deleted). Re-add them afterward to rebuild under the new mode. Reload any other open tabs before continuing.",
+      "cancel": "Cancel",
+      "confirm": "Switch and remove",
+      "failed": "Failed to switch mode. Please try again later.",
+      "generate_in_progress": "Generation in progress. Please wait for it to finish before switching modes.",
+      "mode_off": "Default mode",
+      "mode_media": "Emby / Jellyfin / Kodi mode"
     }
   },
   "scanner": {
@@ -519,7 +554,12 @@
       "remove_title": "Remove",
       "output_prefix": "Output:",
       "settings_link": "Settings",
-      "copy_path": "Copy Path"
+      "copy_path": "Copy Path",
+      "readonly_label": "Read-only",
+      "output_path_label": "Output to",
+      "output_path_placeholder": "A writable output folder on this machine (for Emby / Jellyfin / Kodi to scan; can be on a NAS)...",
+      "cross_machine_hint": "(Unrelated to the \"Output to\" folder above) The strm file contains the read-only source's video path as seen on this machine. If the Emby / Jellyfin / Kodi that plays it runs on another machine and sees a different path, set a path-mapping rule on the Settings page.",
+      "cross_machine_settings_link": "Set path mapping"
     },
     "terminal": {
       "filter_all": "All",
@@ -542,10 +582,6 @@
       "jellyfin_prefix": "Jellyfin cover format missing:",
       "jellyfin_suffix": " videos",
       "jellyfin_update_title": "Generate Jellyfin poster + fanart",
-      "jellyfin_check_btn": "Check Jellyfin Images",
-      "jellyfin_check_idle_label": "Jellyfin cover status not checked yet",
-      "jellyfin_checking": "Checking...",
-      "jellyfin_check_done_ok": "Checked — all images present",
       "last_run_prefix": "Last run: ",
       "last_added": "({count} added)",
       "generate_idle": "Generate",
@@ -558,6 +594,10 @@
       "jellyfin_help_line4": "Click \"Fix\" to auto-generate from existing covers. Fully local, no network required.",
       "jellyfin_idle": "Fix Images",
       "jellyfin_loading": "Fixing...",
+      "jellyfin_check_btn": "Check Jellyfin Images",
+      "jellyfin_check_idle_label": "Jellyfin cover status not checked yet",
+      "jellyfin_checking": "Checking...",
+      "jellyfin_check_done_ok": "Checked — all images present",
       "btn_done": "Done",
       "missing_both_prefix": "Missing NFO+Cover:",
       "missing_nfo_prefix": "Missing NFO:",
@@ -567,6 +607,11 @@
       "missing_enrich_loading": "Enriching...",
       "missing_enrich_preparing": "Preparing...",
       "missing_enrich_done": "Enrich complete",
+      "missing_enrich_card_searching": "Searching…",
+      "missing_enrich_card_no_cover": "Data only (no cover)",
+      "missing_enrich_card_not_found": "Not found",
+      "missing_enrich_card_error": "Failed",
+      "missing_enrich_card_readonly": "Skipped (read-only)",
       "missing_enrich_toast_success": "Enrich complete! {success} succeeded",
       "missing_enrich_toast_mixed": "Enrich complete! {success} succeeded, {failed} failed",
       "missing_enrich_batch_fail": "Batch enrich failed ({status}): {error}",
@@ -661,6 +706,15 @@
       "image_check": "Image check is in progress — leaving will interrupt it!",
       "folder_dirty": "You have unsaved folder changes",
       "confirm": "{message} Leave anyway?"
+    },
+    "readonly_confirm_modal": {
+      "title": "Set as a read-only source?",
+      "cancel": "Cancel",
+      "confirm": "Set read-only",
+      "intro": "A read-only source means OpenAver never modifies any file in this folder (no moving, no renaming, no writing NFO or covers). Instead it generates a separate local media library in the output folder (one folder per title: NFO + cover) for OpenAver's own browsing and playback. This suits write-protected locations packed with videos — read-only cloud drives, NAS shares, SMB mounts. If this is just an ordinary local collection in a folder you can write to normally, you do not need to check this.",
+      "output_hint_offline": "You are in Default mode. Output lands automatically in the app's built-in fixed local folder; no separate output folder is needed.",
+      "output_hint_media_server": "You are in Emby / Jellyfin / Kodi mode. After confirming, an \"Output to\" field appears. Specify a folder this machine can write to (local, or a NAS share mounted on this machine) — not the read-only source itself.",
+      "nas_hint": "Want to feed Emby / Jellyfin / Kodi on a NAS? Default mode only builds a local library for OpenAver's own browsing and does not create .strm shortcut files. To let a media server scan these titles, first switch the mode to Emby / Jellyfin / Kodi mode on the Settings page."
     }
   },
   "showcase": {
@@ -683,7 +737,12 @@
       "success": "Overwritten (cover + NFO)",
       "fail": "Re-scrape failed, please try again later.",
       "jl_desktop_only": "Available in standalone desktop app only",
-      "jl_cf_solving": "Cloudflare check in progress — will resume automatically once passed"
+      "jl_cf_solving": "Cloudflare check in progress — will resume automatically once passed",
+      "versions_found": "Found {count} title(s) with the same ID",
+      "version_prev_aria": "Previous version",
+      "version_next_aria": "Next version",
+      "adopt_version": "Use this version",
+      "adopt_switch_source": "Replace with this version"
     },
     "placeholder": {
       "search": "Search ID, actress, title..."
@@ -801,7 +860,8 @@
     },
     "enrich": {
       "success": "Enriched successfully",
-      "failed": "Enrich failed, please try again"
+      "failed": "Enrich failed, please try again",
+      "readonly_tooltip": "This title was generated from a read-only source; to update it, regenerate on the Scanner page"
     },
     "video": {
       "delete": "Remove from Collection",
@@ -1019,7 +1079,12 @@
       "h6_multiversion": "Multi-version manual merge (native Emby / Jellyfin feature)",
       "multiversion_intro": "Merging multiple versions of the same title (censored / uncensored leak / subtitled) into one entry with a version dropdown in Emby or Jellyfin is a feature both support natively (the same {folder name} - {label} rule), not exclusive to either. Just arrange the files manually as below:",
       "multiversion_rule1": "Each version's filename <strong>must start with the folder name</strong> followed by \" - label\" (space, hyphen, space)",
-      "multiversion_rule2": "Multi-version and cd1/cd2 multipart <strong>cannot be used together on the same title</strong> (media server official limitation)"
+      "multiversion_rule2": "Multi-version and cd1/cd2 multipart <strong>cannot be used together on the same title</strong> (media server official limitation)",
+      "h6_strm_deploy": "Read-only source + letting Emby / Jellyfin / Kodi find your titles (cross-machine setup)",
+      "strm_deploy_step1": "After mounting the read-only cloud drive / NAS share on the OpenAver machine, check that folder as \"Read-only\" in the Scanner — OpenAver won't touch any file inside (no moving, renaming, or writing).",
+      "strm_deploy_step2": "Under \"Output to,\" specify a folder <strong>this machine can write to</strong> (which can be a writable NAS share mounted on this machine) — the generated <code>.strm</code> + NFO + covers go here, and you point Emby / Jellyfin / Kodi at it to build the library. This output folder is not the read-only source itself.",
+      "strm_deploy_step3": "If the machine that plays them sees the read-only source under a different path than OpenAver does (e.g. <code>Z:\\115</code> on OpenAver, <code>/volume1/115</code> on the NAS), add a matching rule under \"Playback-side path mapping\" on the <strong>Settings page</strong>; otherwise the <code>.strm</code> will point to a path the player can't find.",
+      "strm_deploy_step4": "If you later change the mapping rules, the existing <code>.strm</code> files are rewritten automatically in one pass — no need to rebuild the whole library."
     },
     "showcase": {
       "title": "Video Browser (Showcase)",
@@ -1222,7 +1287,8 @@
     "batch_enrich_failed": "Batch enrich interrupted",
     "jl_cf_timeout": "JavLibrary CF challenge timed out",
     "thumb_prewarm_start": "Starting cover thumbnail cache generation",
-    "thumb_prewarm_done": "Cover thumbnail cache complete"
+    "thumb_prewarm_done": "Cover thumbnail cache complete",
+    "scanner_cancelled": "Scan cancelled"
   },
   "similar_mode": {
     "button_aria_label": "Explore similar videos",

@@ -375,7 +375,7 @@ _TOOLS: list[dict] = [
         "output_schema": {
             "streaming": "text/event-stream — SSE 格式逐筆推送",
             "progress": "{type: 'progress', current, total, number}",
-            "result_item": "{type: 'result-item', number, file_path, success, nfo_written, cover_written, source_used, error?}",
+            "result_item": "{type: 'result-item', number, file_path, success, nfo_written, cover_written, source_used, reason, error?}（reason: hit|no_cover|not_found|error|readonly）",
             "done": "{type: 'done', summary: {total, success, failed}}",
         },
         "side_effect": True,

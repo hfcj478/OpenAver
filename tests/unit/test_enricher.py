@@ -319,6 +319,13 @@ class TestFillMissingScraperNotFound:
 
         assert result.success is False
         assert "SONE-205" in result.error or "找不到" in result.error
+        # 89b-T2: not-found branch marks scrape_attempted_at (same as refresh_full).
+        mock_repo.update_scrape_attempted_at.assert_called_once()
+        call_args = mock_repo.update_scrape_attempted_at.call_args[0]
+        assert call_args[0] == to_file_uri(FS_PATH)
+        assert call_args[1] > 0
+        # not-found path must not create/upsert any new row (only mark attempted).
+        mock_repo.upsert.assert_not_called()
 
 
 # ── 9. db_to_sidecar: DB 完整，不打 scraper ──────────────────────────────────
@@ -443,8 +450,15 @@ class TestRefreshFullScraperFail:
         """邊界條件 13: refresh_full + scraper 失敗 → error"""
         with (
             patch("os.path.exists", return_value=True),
+            # 89b-T2: must mock VideoRepository — refresh_full not-found now calls
+            # repo.update_scrape_attempted_at(); without this mock it would hit the
+            # real project output/openaver.db (see TASK-89b-T2 現況分析 §3).
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
             patch("core.enricher.search_jav", return_value=None),
         ):
+            mock_repo = MagicMock()
+            mock_repo_cls.return_value = mock_repo
+
             from core.enricher import enrich_single
             result = enrich_single(
                 file_path=FS_PATH,
@@ -454,6 +468,14 @@ class TestRefreshFullScraperFail:
 
         assert result.success is False
         assert "SONE-205" in result.error or "找不到" in result.error
+        # 89b-T2: not-found branch marks scrape_attempted_at via to_file_uri(fs_path) inline
+        # (NOT the later-assigned `path_uri` var — that would NameError before this branch).
+        mock_repo.update_scrape_attempted_at.assert_called_once()
+        call_args = mock_repo.update_scrape_attempted_at.call_args[0]
+        assert call_args[0] == to_file_uri(FS_PATH)
+        assert call_args[1] > 0
+        # not-found path must not create/upsert any new row (only mark attempted).
+        mock_repo.upsert.assert_not_called()
 
 
 # ── 14. write_nfo=False ───────────────────────────────────────────────────────
@@ -886,6 +908,27 @@ class TestDbUpsertPathIsFileUri:
         assert "file:///file:///" not in path
 
 
+# ── 26b. 89b-T2: _db_upsert 寫入 scrape_attempted_at ─────────────────────────
+
+class TestDbUpsertScrapeAttemptedAt:
+    """89b-T2: _db_upsert 成功路徑 Video 帶 scrape_attempted_at > 0（供 T3/T4 消費）"""
+
+    def test_scrape_attempted_at_set(self):
+        from core.enricher import _db_upsert
+
+        captured = []
+        mock_repo = MagicMock()
+        mock_repo.upsert.side_effect = lambda v: captured.append(v)
+        mock_repo.get_by_numbers.return_value = {}
+        mock_repo.get_by_path.return_value = None
+
+        meta = {"title": "T", "actresses": [], "maker": "S", "tags": [], "release_date": ""}
+        _db_upsert(mock_repo, "SONE-205", "/video/SONE-205.mp4", meta)
+
+        assert len(captured) == 1
+        assert captured[0].scrape_attempted_at > 0
+
+
 # ── 27. F1: _db_upsert cover_path 處理 ────────────────────────────
 
 class TestDbUpsertCoverPath:
@@ -941,6 +984,50 @@ class TestDbUpsertCoverPath:
         assert captured[0].cover_path == to_file_uri("C:/lib/SONE-205/cover.jpg")
         # 確認用 path URI 查詢，不是用 number
         mock_repo.get_by_path.assert_called_once()
+
+
+# ── 27b. TASK-89a-T5 (CD-89a-5 / Codex C2): output_dir 保留（鏡射 TestDbUpsertCoverPath）──
+
+class TestDbUpsertOutputDir:
+    """C2 端到端回歸鎖：enricher 補完/重刮不得洗掉 producer 寫入的 output_dir。"""
+
+    def test_c2_end_to_end_preserves_existing_output_dir(self):
+        """existing.output_dir 非空（producer row）→ _db_upsert 寫入的 Video.output_dir
+        必須等於原值（顯式保留，非僅依賴 T1 DB CASE-WHEN 兜底）。"""
+        from core.enricher import _db_upsert
+
+        captured = []
+        mock_repo = MagicMock()
+        mock_repo.upsert.side_effect = lambda v: captured.append(v)
+
+        existing_video = MagicMock()
+        existing_video.output_dir = to_file_uri("/output/lib/SONE-205")
+        existing_video.cover_path = ""
+        existing_video.user_tags = []
+        existing_video.sample_images = []
+        mock_repo.get_by_path.return_value = existing_video
+
+        meta = {"title": "T", "actresses": [], "maker": "S", "tags": [], "release_date": ""}
+        _db_upsert(mock_repo, "SONE-205", "/video/SONE-205.mp4", meta)
+
+        assert len(captured) == 1
+        assert captured[0].output_dir == to_file_uri("/output/lib/SONE-205")
+
+    def test_no_existing_row_output_dir_defaults_empty(self):
+        """existing is None（首次遇到此 path）→ output_dir 傳空字串，不炸，交由 T1
+        DB CASE-WHEN 兜底（行為與現況一致，不 regress）。"""
+        from core.enricher import _db_upsert
+
+        captured = []
+        mock_repo = MagicMock()
+        mock_repo.upsert.side_effect = lambda v: captured.append(v)
+        mock_repo.get_by_path.return_value = None
+
+        meta = {"title": "T", "actresses": [], "maker": "S", "tags": [], "release_date": ""}
+        _db_upsert(mock_repo, "SONE-205", "/video/SONE-205.mp4", meta)
+
+        assert len(captured) == 1
+        assert captured[0].output_dir == ""
 
 
 # ── 28. F2: has_subtitle 由 find_subtitle_files 決定 ────────────────────────────
@@ -1976,3 +2063,314 @@ class TestKodiStemNaming:
         assert fanart_text.strip() != "fanart.jpg", (
             "NFO <fanart> 不應是 bare 'fanart.jpg'"
         )
+
+
+# ── TASK-91-T3: 站台 1/2/3 — uri_to_local_fs_path WSL+UNC path_mappings 反解 ──
+
+_WSL_UNC_MAPPINGS = {"/home/user/nas": "//NAS/share"}
+_WSL_UNC_URI = "file://///NAS/share/dir/movie.mp4"
+_WSL_UNC_REVERSED = "/home/user/nas/dir/movie.mp4"
+
+
+class TestEnrichSinglePathMappingReverse:
+    """站台1（enrich_single :358）：fs_path 必須是 path_mappings 反解後的本機路徑，
+    不是裸 uri_to_fs_path 產出的 UNC 字面值（mutation-sensitive）。"""
+
+    def test_wsl_unc_mapping_reverses_fs_path(self, monkeypatch):
+        from core import path_utils
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+
+        captured = []
+
+        def fake_exists(p):
+            captured.append(p)
+            return False  # 提早以「檔案不存在」return，不需 mock 整條 pipeline
+
+        with patch("os.path.exists", side_effect=fake_exists):
+            from core.enricher import enrich_single
+            result = enrich_single(
+                file_path=_WSL_UNC_URI,
+                number="SONE-205",
+                path_mappings=_WSL_UNC_MAPPINGS,
+            )
+
+        assert result.error == "檔案不存在"
+        assert captured, "os.path.exists 應被呼叫"
+        assert captured[0] == _WSL_UNC_REVERSED, (
+            f"fs_path 應反解為本機路徑 {_WSL_UNC_REVERSED}，實際: {captured[0]!r}"
+        )
+
+    def test_non_file_uri_fallback_passthrough_unchanged(self, monkeypatch):
+        """邊界4：非 file:/// 輸入的 try/except passthrough 不可回歸。"""
+        from core import path_utils
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+
+        bare_path = "just-a-bare-local-string-not-a-uri"
+        captured = []
+
+        def fake_exists(p):
+            captured.append(p)
+            return False
+
+        with patch("os.path.exists", side_effect=fake_exists):
+            from core.enricher import enrich_single
+            result = enrich_single(
+                file_path=bare_path,
+                number="SONE-205",
+                path_mappings=_WSL_UNC_MAPPINGS,
+            )
+
+        assert result.error == "檔案不存在"
+        assert captured[0] == bare_path, (
+            f"非 URI 輸入應原樣 passthrough，實際: {captured[0]!r}"
+        )
+
+
+class TestFetchSamplesOnlyPathMappingReverse:
+    """站台2（fetch_samples_only :618）：同站台1的反解行為。"""
+
+    def test_wsl_unc_mapping_reverses_fs_path(self, monkeypatch):
+        from core import path_utils
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+
+        captured = []
+
+        def fake_exists(p):
+            captured.append(p)
+            return False
+
+        with patch("os.path.exists", side_effect=fake_exists):
+            from core.enricher import fetch_samples_only
+            result = fetch_samples_only(
+                file_path=_WSL_UNC_URI,
+                number="SONE-205",
+                path_mappings=_WSL_UNC_MAPPINGS,
+            )
+
+        assert result.error == "檔案不存在"
+        assert captured, "os.path.exists 應被呼叫"
+        assert captured[0] == _WSL_UNC_REVERSED, (
+            f"fs_path 應反解為本機路徑 {_WSL_UNC_REVERSED}，實際: {captured[0]!r}"
+        )
+
+    def test_non_file_uri_fallback_passthrough_unchanged(self, monkeypatch):
+        """邊界4：非 file:/// 輸入的 try/except passthrough 不可回歸。"""
+        from core import path_utils
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+
+        bare_path = "just-a-bare-local-string-not-a-uri"
+        captured = []
+
+        def fake_exists(p):
+            captured.append(p)
+            return False
+
+        with patch("os.path.exists", side_effect=fake_exists):
+            from core.enricher import fetch_samples_only
+            result = fetch_samples_only(
+                file_path=bare_path,
+                number="SONE-205",
+                path_mappings=_WSL_UNC_MAPPINGS,
+            )
+
+        assert result.error == "檔案不存在"
+        assert captured[0] == bare_path, (
+            f"非 URI 輸入應原樣 passthrough，實際: {captured[0]!r}"
+        )
+
+
+class TestResolveNfoCoverPathsMappingReverse:
+    """站台3（resolve_nfo_cover_paths :667）：純函式，直接測反解後的 nfo/cover 路徑。"""
+
+    def test_wsl_unc_mapping_reverses_paths(self, monkeypatch):
+        from core import path_utils
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+
+        from core.enricher import resolve_nfo_cover_paths
+        nfo_path, cover_path = resolve_nfo_cover_paths(
+            _WSL_UNC_URI,
+            path_mappings=_WSL_UNC_MAPPINGS,
+        )
+
+        assert nfo_path == "/home/user/nas/dir/movie.nfo", (
+            f"nfo_path 應反解為本機路徑，實際: {nfo_path!r}"
+        )
+        assert cover_path == "/home/user/nas/dir/movie.jpg", (
+            f"cover_path 應反解為本機路徑，實際: {cover_path!r}"
+        )
+
+    def test_non_file_uri_fallback_passthrough_unchanged(self, monkeypatch):
+        """邊界4：非 file:/// 輸入的 try/except passthrough 不可回歸。"""
+        from core import path_utils
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+
+        bare_path = "just-a-bare-local-string-not-a-uri"
+        from core.enricher import resolve_nfo_cover_paths
+        nfo_path, cover_path = resolve_nfo_cover_paths(
+            bare_path,
+            path_mappings=_WSL_UNC_MAPPINGS,
+        )
+
+        assert nfo_path == bare_path + ".nfo"
+        assert cover_path == bare_path + ".jpg"
+
+
+# ── TASK-91 Codex Finding 1: DB key 必須維持映射命名空間，不可用反解後本機路徑 ──
+# 反例：若 fs_path_for_db 被誤還原為 fs_path（反解後本機路徑），DB round-trip
+# （get_by_path / update_scrape_attempted_at / nfo_mtime WHERE path=?）永遠對不上
+# DB 既有 row（DB 存的是映射端 UNC URI）。Mutation-sensitive：revert 該行 → 下列全 RED。
+
+class TestEnrichSingleDbKeyMappingPreserved:
+    """站台1 DB key（enrich_single）：get_by_path / update_scrape_attempted_at 必須用
+    fs_path_for_db（裸 uri_to_fs_path，維持 DB 映射命名空間），不是反解後 fs_path。"""
+
+    def test_not_found_branch_marks_scrape_attempted_at_with_mapped_key(self, monkeypatch):
+        from core import path_utils
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.search_jav", return_value=None),
+        ):
+            mock_repo = MagicMock()
+            mock_repo_cls.return_value = mock_repo
+
+            from core.enricher import enrich_single
+            result = enrich_single(
+                file_path=_WSL_UNC_URI,
+                number="SONE-205",
+                mode="refresh_full",
+                path_mappings=_WSL_UNC_MAPPINGS,
+            )
+
+        assert result.success is False
+        mock_repo.update_scrape_attempted_at.assert_called_once()
+        call_args = mock_repo.update_scrape_attempted_at.call_args[0]
+        assert call_args[0] == _WSL_UNC_URI, (
+            f"DB key 必須維持映射命名空間（{_WSL_UNC_URI!r}），"
+            f"不可用反解後本機路徑組出的 URI，實際: {call_args[0]!r}"
+        )
+
+    def test_get_by_path_uses_mapped_db_key(self, monkeypatch):
+        from core import path_utils
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+
+        video = _make_video()
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.download_image", return_value=True),
+        ):
+            mock_repo = MagicMock()
+            mock_repo_cls.return_value = mock_repo
+            mock_repo.get_by_numbers.return_value = {"SONE-205": [video]}
+            mock_repo.get_by_path.return_value = None
+
+            from core.enricher import enrich_single
+            result = enrich_single(
+                file_path=_WSL_UNC_URI,
+                number="SONE-205",
+                mode="fill_missing",
+                path_mappings=_WSL_UNC_MAPPINGS,
+            )
+
+        assert result.success is True
+        # v0.11.9 起 get_by_path 在 enrich_single 內被呼叫兩次：一次讀 user_tags
+        # （既有行為），一次是 Codex P1 修正新增的「reason=hit 鏡射 /thumb gate」
+        # DB 最終狀態重讀（core/enricher.py 尾段）。兩次都必須用映射命名空間查 DB。
+        assert mock_repo.get_by_path.call_count == 2
+        for call in mock_repo.get_by_path.call_args_list:
+            called_uri = call[0][0]
+            assert called_uri == _WSL_UNC_URI, (
+                f"get_by_path 必須用映射命名空間查 DB（{_WSL_UNC_URI!r}），實際: {called_uri!r}"
+            )
+
+
+class TestDbUpsertCoverAndSampleUrisForwardMapped:
+    """TASK-91 Finding 1 extension：新產生的 cover / extrafanart 磁碟路徑寫回 DB 前，
+    必須 forward-map 回映射命名空間（cover/sample 是新產生的磁碟路徑，不是自描述輸入，
+    走 to_file_uri(local_path, path_mappings) 正向 pattern，非 uri-no-reverse pattern）。"""
+
+    def test_full_flow_cover_and_sample_uris_are_mapped(self, monkeypatch):
+        from core import path_utils
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+
+        scraper_data = _make_scraper_result()
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.search_jav", return_value=scraper_data),
+            patch("core.enricher.generate_nfo", return_value=True),
+            patch("core.enricher.download_image", return_value=True),
+            patch("os.makedirs"),
+        ):
+            mock_repo = MagicMock()
+            mock_repo_cls.return_value = mock_repo
+            mock_repo.get_by_numbers.return_value = {}
+            mock_repo.get_by_path.return_value = None
+            captured = []
+            mock_repo.upsert.side_effect = lambda v: captured.append(v)
+
+            from core.enricher import enrich_single
+            result = enrich_single(
+                file_path=_WSL_UNC_URI,
+                number="SONE-205",
+                mode="refresh_full",
+                write_extrafanart=True,
+                overwrite_existing=True,
+                path_mappings=_WSL_UNC_MAPPINGS,
+            )
+
+        assert result.success is True
+        assert len(captured) == 1
+        video = captured[0]
+        assert video.path == _WSL_UNC_URI, (
+            f"DB row path 必須是映射命名空間，實際: {video.path!r}"
+        )
+        assert video.cover_path.startswith("file://///NAS/share/dir/"), (
+            f"cover_path 應 forward-map 回映射命名空間，不應殘留反解後本機路徑，實際: {video.cover_path!r}"
+        )
+        assert video.sample_images, "extrafanart 應有實際寫入"
+        for uri in video.sample_images:
+            assert uri.startswith("file://///NAS/share/dir/extrafanart/"), (
+                f"sample_images 應 forward-map 回映射命名空間，實際: {uri!r}"
+            )
+
+    def test_fetch_samples_only_sample_uris_are_mapped(self, monkeypatch):
+        """站台2（fetch_samples_only）：_db_upsert_samples_only 用 fs_path_for_db 當 key，
+        _write_extrafanart 產生的 sample uri 亦需 forward-map。"""
+        from core import path_utils
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+
+        meta = {"sample_images": ["https://example.com/s1.jpg"], "source": "javbus"}
+
+        with (
+            patch("os.path.exists", return_value=True),
+            patch("core.enricher.VideoRepository") as mock_repo_cls,
+            patch("core.enricher.search_jav", return_value=meta),
+            patch("core.enricher.download_image", return_value=True),
+            patch("os.makedirs"),
+        ):
+            mock_repo = MagicMock()
+            mock_repo_cls.return_value = mock_repo
+
+            from core.enricher import fetch_samples_only
+            result = fetch_samples_only(
+                file_path=_WSL_UNC_URI,
+                number="SONE-205",
+                path_mappings=_WSL_UNC_MAPPINGS,
+            )
+
+        assert result.success is True
+        mock_repo.update_sample_images.assert_called_once()
+        call_args = mock_repo.update_sample_images.call_args[0]
+        assert call_args[0] == _WSL_UNC_URI, (
+            f"update_sample_images DB key 必須維持映射命名空間，實際: {call_args[0]!r}"
+        )
+        for uri in call_args[1]:
+            assert uri.startswith("file://///NAS/share/dir/extrafanart/"), (
+                f"sample uri 應 forward-map 回映射命名空間，實際: {uri!r}"
+            )

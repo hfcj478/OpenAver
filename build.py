@@ -748,26 +748,17 @@ def get_directory_size(path):
 
 
 def optimize_package():
-    """優化打包體積：刪除 .dist-info、清理 __pycache__"""
+    """優化打包體積：清理 __pycache__ / .egg-info
+
+    注意：**不刪 .dist-info** —— curl_cffi 等套件在 import 當下讀自身 metadata
+    （importlib.metadata），dist-info 缺失會拋 PackageNotFoundError 導致 released
+    版該功能靜默失效（spec-97 根因）。全保留代價壓縮後僅 ~0.5MB。"""
     print("\n[5.5/6] 優化打包體積...")
 
     app_dir = BUILD_DIR / "OpenAver"
     size_before = get_directory_size(app_dir)
 
-    # 1. 刪除 .dist-info 資料夾
-    dist_info_count = 0
-    dist_info_size = 0
-    for dist_info in app_dir.rglob("*.dist-info"):
-        if dist_info.is_dir():
-            size = sum(f.stat().st_size for f in dist_info.rglob('*') if f.is_file())
-            dist_info_size += size
-            shutil.rmtree(dist_info)
-            dist_info_count += 1
-
-    if dist_info_count > 0:
-        print(f"  刪除 {dist_info_count} 個 .dist-info 資料夾，節省 {dist_info_size / 1024 / 1024:.2f} MB")
-
-    # 2. 清理 __pycache__ 資料夾
+    # 1. 清理 __pycache__ 資料夾
     pycache_count = 0
     pycache_size = 0
     for pycache in app_dir.rglob("__pycache__"):
@@ -780,7 +771,7 @@ def optimize_package():
     if pycache_count > 0:
         print(f"  刪除 {pycache_count} 個 __pycache__ 資料夾，節省 {pycache_size / 1024 / 1024:.2f} MB")
 
-    # 3. 刪除 .egg-info 資料夾
+    # 2. 刪除 .egg-info 資料夾
     egg_info_count = 0
     egg_info_size = 0
     for egg_info in app_dir.rglob("*.egg-info"):

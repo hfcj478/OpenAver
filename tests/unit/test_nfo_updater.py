@@ -10,9 +10,11 @@ from pathlib import Path
 
 import pytest
 
+import core.path_utils as path_utils
 from core.nfo_updater import (
     add_actor,
     add_tags_and_genres,
+    get_nfo_path_from_video,
     needs_update,
     update_nfo_file,
     update_nfo_user_tags,
@@ -109,6 +111,33 @@ class TestNeedsUpdateNewFields:
         # 新欄位不應出現在 missing（全有值）
         for field in ('director', 'duration'):
             assert field not in missing
+
+
+class TestNeedsUpdateNeverNagsPlotRating:
+    """TASK-93-T8 / D11 #2 回歸鎖：評分/簡介只寫 NFO、絕不列入 scanner 缺料提醒。
+
+    T1–T7 讓各來源開始填 rating/plot 後，needs_update() 仍不得把 plot/rating
+    當缺料（否則掃描頁會對「本就沒評分/簡介」的片永久嘮叨）。plot/rating 是
+    NFO-only carrier、從不進 info dict，故結構上不可能被 nag——本測試把此契約
+    顯式鎖死，防未來有人於 needs_update() 誤加 plot/rating 檢查。"""
+
+    # 有其他缺料時，missing 仍不含 plot/rating
+    def test_plot_rating_absent_from_missing_when_other_fields_missing(self):
+        info = make_base_info(maker='')
+        need, missing = needs_update(info, has_nfo=True)
+        assert need is True
+        assert 'maker' in missing
+        assert 'plot' not in missing
+        assert 'rating' not in missing
+
+    # 全有值 → 完全不需更新，plot/rating 自然不在 missing
+    def test_plot_rating_absent_when_all_present(self):
+        info = make_base_info()
+        need, missing = needs_update(info, has_nfo=True)
+        assert need is False
+        assert missing == []
+        assert 'plot' not in missing
+        assert 'rating' not in missing
 
     # 補充：has_nfo=False → early return，不管欄位
     def test_no_nfo_returns_empty(self):
@@ -757,3 +786,81 @@ class TestUpdateNfoFileFillBranches:
         names = [e.text for e in root.findall('.//actor/name')]
         # Only the original actor should be present — the fill branch was skipped
         assert names == ["女優A"]
+
+
+# ============================================================
+# TASK-91-T4: get_nfo_path_from_video path_mappings 反解測試
+# ============================================================
+
+class TestGetNfoPathPathMappingReverse:
+    """get_nfo_path_from_video 改用 uri_to_local_fs_path 後的行為驗證。
+
+    場景 C：WSL + UNC path_mappings 下，NFO 存在性判斷需拿到真正可 exists() 的
+    本機路徑，而非裸 uri_to_fs_path 產生的非法 WSL 路徑（恆 False）。
+    """
+
+    def test_wsl_mapping_hit(self, tmp_path, monkeypatch):
+        """WSL + mapping 命中：video_path 經反解對應到真實存在的 NFO。"""
+        nas_dir = tmp_path / "nas"
+        nas_dir.mkdir()
+        nfo_file = nas_dir / "movie.nfo"
+        nfo_file.write_text("<movie></movie>", encoding="utf-8")
+
+        mappings = {str(nas_dir): "//NAS/share"}
+        video_path = "file://///NAS/share/movie.mp4"
+
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+
+        result = get_nfo_path_from_video(video_path, mappings)
+        assert result == str(nfo_file)
+
+        # 裸呼叫（無 mapping）在同一 WSL 環境下應回 None：
+        # 證明是 mapping 讓它解得到，而非其他因素（mutation-sensitive）
+        result_no_mapping = get_nfo_path_from_video(video_path)
+        assert result_no_mapping is None
+
+    def test_non_wsl_equivalent(self, tmp_path, monkeypatch):
+        """非 WSL 環境：mapping 存在也不生效，行為與改動前字面等價。"""
+        video_dir = tmp_path / "videos"
+        video_dir.mkdir()
+        video_path_str = str(video_dir / "movie.mp4")
+        nfo_file = video_dir / "movie.nfo"
+        nfo_file.write_text("<movie></movie>", encoding="utf-8")
+
+        mappings = {str(video_dir): "//NAS/share"}
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "linux")
+
+        result = get_nfo_path_from_video(video_path_str, mappings)
+        assert result == str(nfo_file)
+
+        # NFO 不存在 → None
+        missing_path = str(video_dir / "missing.mp4")
+        assert get_nfo_path_from_video(missing_path, mappings) is None
+
+    def test_no_mapping_equivalent(self, tmp_path):
+        """無 mapping（None）：行為與改動前字面等價。"""
+        video_dir = tmp_path / "videos2"
+        video_dir.mkdir()
+        video_path_str = str(video_dir / "movie.mp4")
+        nfo_file = video_dir / "movie.nfo"
+        nfo_file.write_text("<movie></movie>", encoding="utf-8")
+
+        result = get_nfo_path_from_video(video_path_str, None)
+        assert result == str(nfo_file)
+
+        missing_path = str(video_dir / "missing.mp4")
+        assert get_nfo_path_from_video(missing_path, None) is None
+
+    def test_default_none_caller_unchanged(self, tmp_path):
+        """既有呼叫端形狀（不傳 path_mappings）維持零回歸。"""
+        video_dir = tmp_path / "videos3"
+        video_dir.mkdir()
+        video_path_str = str(video_dir / "movie.mp4")
+        nfo_file = video_dir / "movie.nfo"
+        nfo_file.write_text("<movie></movie>", encoding="utf-8")
+
+        result = get_nfo_path_from_video(video_path_str)
+        assert result == str(nfo_file)
+
+        missing_path = str(video_dir / "missing.mp4")
+        assert get_nfo_path_from_video(missing_path) is None

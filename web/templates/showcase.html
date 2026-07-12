@@ -352,9 +352,10 @@
                             <!-- 74b US4: tap=enrichVideo（自動補缺）；長壓已移除（進階重刮收斂到燈箱齒輪 ⚙）。 -->
                             <button class="btn-glass-circle enrich-btn"
                                     x-show="!video.has_cover || !video.has_nfo"
-                                    :disabled="_enriching"
+                                    :disabled="!!video.is_readonly_source || _enriching"
+                                    :class="{ 'is-readonly-disabled': !!video.is_readonly_source }"
                                     @click.stop="enrichVideo(video)"
-                                    :title="t('showcase.action.enrich')">
+                                    :title="!!video.is_readonly_source ? t('showcase.enrich.readonly_tooltip') : t('showcase.action.enrich')">
                                 <i class="bi" :class="_enriching ? 'bi-arrow-clockwise spin' : 'bi-search'"></i>
                             </button>
                         </div>
@@ -724,10 +725,11 @@
                                 <!-- 74b US4: tap=enrichVideo（自動補缺）；長壓已移除（進階重刮走齒輪 ⚙）。 -->
                                 <button class="lb-action-btn"
                                         x-show="!currentLightboxVideo?.has_cover || !currentLightboxVideo?.has_nfo"
-                                        :disabled="_enriching"
+                                        :disabled="!!currentLightboxVideo?.is_readonly_source || _enriching"
+                                        :class="{ 'is-readonly-disabled': !!currentLightboxVideo?.is_readonly_source }"
                                         @click.stop="enrichVideo(currentLightboxVideo)"
-                                        data-tooltip="{{ t('showcase.action.enrich') }}"
-                                        :aria-label="t('showcase.action.enrich')">
+                                        :data-tooltip="!!currentLightboxVideo?.is_readonly_source ? t('showcase.enrich.readonly_tooltip') : t('showcase.action.enrich')"
+                                        :aria-label="!!currentLightboxVideo?.is_readonly_source ? t('showcase.enrich.readonly_tooltip') : t('showcase.action.enrich')">
                                     <i class="bi" :class="_enriching ? 'bi-arrow-clockwise spin' : 'bi-search'"></i>
                                 </button>
                             </div>
@@ -750,7 +752,10 @@
                                 <!-- §b3: 劇照補抓入口（無劇照時顯示） -->
                                 <button class="fetch-samples-btn"
                                         x-show="(currentLightboxVideo?.sample_images || []).length === 0 && !_fetchSamplesLoading"
-                                        :disabled="!!_fetchSamplesFailed[currentLightboxVideo?.path]"
+                                        :disabled="!!currentLightboxVideo?.is_readonly_source || !!_fetchSamplesFailed[currentLightboxVideo?.path]"
+                                        :class="{ 'is-readonly-disabled': !!currentLightboxVideo?.is_readonly_source }"
+                                        :title="!!currentLightboxVideo?.is_readonly_source ? t('showcase.enrich.readonly_tooltip') : ''"
+                                        :aria-label="!!currentLightboxVideo?.is_readonly_source ? t('showcase.enrich.readonly_tooltip') : ''"
                                         @click="fetchSamples(currentLightboxVideo)">
                                     <i class="bi bi-cloud-download" aria-hidden="true"></i>
                                     <span x-text="t('showcase.samples.fetch_btn')"></span>
@@ -776,9 +781,12 @@
                                 <!-- 62b-1: 進階重刮 ⚙ 入口（番號旁 inline 細鈕，常駐顯示）-->
                                 <button type="button"
                                         class="lb-rescrape-gear"
+                                        :disabled="!!currentLightboxVideo?.is_readonly_source"
+                                        :class="{ 'is-readonly-disabled': !!currentLightboxVideo?.is_readonly_source }"
+                                        :title="!!currentLightboxVideo?.is_readonly_source ? t('showcase.enrich.readonly_tooltip') : ''"
                                         @click.stop="openRescrape(currentLightboxVideo, 'lightbox')"
-                                        :data-tooltip="t('showcase.rescrape.entry_tooltip')"
-                                        :aria-label="t('showcase.rescrape.entry_tooltip')">
+                                        :data-tooltip="!!currentLightboxVideo?.is_readonly_source ? t('showcase.enrich.readonly_tooltip') : t('showcase.rescrape.entry_tooltip')"
+                                        :aria-label="!!currentLightboxVideo?.is_readonly_source ? t('showcase.enrich.readonly_tooltip') : t('showcase.rescrape.entry_tooltip')">
                                     <i class="bi bi-gear" aria-hidden="true"></i>
                                 </button>
                                 <span x-show="currentLightboxVideo?.maker">

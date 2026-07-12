@@ -256,6 +256,222 @@ class TestEnrichSingleEndpoint:
         assert data.get("source_used") == "javbus"
 
 
+# ── TASK-90c-T1: enrich-single 唯讀來源 guard ────────────────────────────────
+#
+# guard 抽成模組級 helper `_readonly_source_error(file_path)`，插在 enrich-single
+# 的 `config = load_config()` 後、refresh_full 預檢（resolve_nfo_cover_paths /
+# os.path.exists）之前。唯讀 → success:False + 唯讀 error，下游
+# resolve_nfo_cover_paths / enrich_single 皆 assert_not_called。
+# 鏡像 scrape_single guard 既有 case 1/3/4/7（load_config patch 呼叫處 binding，
+# iter_gallery_sources 用 real）。
+
+
+def _readonly_gallery_config(path, path_mappings=None, readonly=True):
+    return {
+        "gallery": {
+            "directories": [{"path": path, "readonly": readonly}],
+            "path_mappings": path_mappings or {},
+        },
+        "search": {},
+        "scraper": {},
+    }
+
+
+class TestEnrichSingleReadonlyGuard:
+    """唯讀來源片透過 enrich-single 無法觸發寫檔（correctness 地板）。"""
+
+    # case 1: 唯讀來源 → 擋（refresh_full 讓 resolve_nfo_cover_paths 有意義）
+    def test_readonly_blocks_enrich(self, client, mocker):
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=_readonly_gallery_config("/tmp/ro_src"),
+        )
+        mock_resolve = mocker.patch("web.routers.scraper.resolve_nfo_cover_paths")
+        mock_enrich = mocker.patch("web.routers.scraper.enrich_single")
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/tmp/ro_src/ABC-001.mp4",
+            "number": "ABC-001",
+            "mode": "refresh_full",
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "唯讀" in data["error"]
+        # guard 早於 refresh_full 預檢與 enrich_single
+        mock_resolve.assert_not_called()
+        mock_enrich.assert_not_called()
+
+    # case 3: UNC 唯讀來源 → guard 不拋 ValueError（Codex P2）
+    def test_readonly_unc_no_valueerror(self, client, mocker):
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=_readonly_gallery_config(r"\\server\share"),
+        )
+        mock_resolve = mocker.patch("web.routers.scraper.resolve_nfo_cover_paths")
+        mock_enrich = mocker.patch("web.routers.scraper.enrich_single")
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": r"\\server\share\ABC-001.mp4",
+            "number": "ABC-001",
+            "mode": "refresh_full",
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "唯讀" in data["error"]
+        mock_resolve.assert_not_called()
+        mock_enrich.assert_not_called()
+
+    # case 7: canonical file:/// URI 輸入（enrich 主要真實輸入形態）→ 仍命中
+    def test_readonly_file_uri_input_blocks(self, client, mocker):
+        from core.path_utils import to_file_uri
+        file_uri = to_file_uri("C:/ro_src/ABC-001.mp4", {})
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=_readonly_gallery_config("C:/ro_src"),
+        )
+        mock_resolve = mocker.patch("web.routers.scraper.resolve_nfo_cover_paths")
+        mock_enrich = mocker.patch("web.routers.scraper.enrich_single")
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": file_uri,
+            "number": "ABC-001",
+            "mode": "refresh_full",
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "唯讀" in data["error"]
+        mock_resolve.assert_not_called()
+        mock_enrich.assert_not_called()
+
+    # case 4: 非唯讀來源零回歸 → 走既有路徑，enrich_single 照常被呼叫
+    def test_non_readonly_passes_through(self, client, mocker):
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=_readonly_gallery_config("/tmp/rw_src", readonly=False),
+        )
+        mock_enrich = mocker.patch(
+            "web.routers.scraper.enrich_single", return_value=_ok_result()
+        )
+
+        response = client.post("/api/enrich-single", json={
+            "file_path": "/tmp/rw_src/ABC-001.mp4",
+            "number": "ABC-001",
+            "mode": "fill_missing",
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        mock_enrich.assert_called_once()
+
+
+# ── TASK-90c-T1: fetch-samples 唯讀來源 guard（此端點新增專屬測試組）─────────────
+#
+# guard 插在 fetch-samples 函式開頭（config = load_config() 後、DB/uri work 前）。
+# 唯讀 → success:False + 唯讀，fetch_samples_only assert_not_called。
+
+
+class TestFetchSamplesReadonlyGuard:
+    def _ok_samples(self, **kwargs):
+        from core.enricher import EnrichResult
+        defaults = dict(
+            success=True, nfo_written=False, cover_written=False,
+            extrafanart_written=3, fields_filled=[], source_used="javbus", error=None,
+        )
+        defaults.update(kwargs)
+        return EnrichResult(**defaults)
+
+    # 唯讀 → 擋，fetch_samples_only 未被呼叫
+    def test_readonly_blocks_fetch_samples(self, client, mocker):
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=_readonly_gallery_config("/tmp/ro_src"),
+        )
+        mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
+        mock_fetch = mocker.patch("web.routers.scraper.fetch_samples_only")
+
+        response = client.post("/api/scraper/fetch-samples", json={
+            "file_path": "/tmp/ro_src/ABC-001.mp4",
+            "number": "ABC-001",
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "唯讀" in data["error"]
+        mock_fetch.assert_not_called()
+        # guard 早於 DB 查詢
+        mock_repo.return_value.count_videos_in_folder.assert_not_called()
+
+    # UNC 唯讀 → guard 不拋 ValueError
+    def test_readonly_unc_no_valueerror(self, client, mocker):
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=_readonly_gallery_config(r"\\server\share"),
+        )
+        mocker.patch("web.routers.scraper.VideoRepository")
+        mock_fetch = mocker.patch("web.routers.scraper.fetch_samples_only")
+
+        response = client.post("/api/scraper/fetch-samples", json={
+            "file_path": r"\\server\share\ABC-001.mp4",
+            "number": "ABC-001",
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "唯讀" in data["error"]
+        mock_fetch.assert_not_called()
+
+    # canonical file:/// 輸入 → 仍命中
+    def test_readonly_file_uri_input_blocks(self, client, mocker):
+        from core.path_utils import to_file_uri
+        file_uri = to_file_uri("C:/ro_src/ABC-001.mp4", {})
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=_readonly_gallery_config("C:/ro_src"),
+        )
+        mocker.patch("web.routers.scraper.VideoRepository")
+        mock_fetch = mocker.patch("web.routers.scraper.fetch_samples_only")
+
+        response = client.post("/api/scraper/fetch-samples", json={
+            "file_path": file_uri,
+            "number": "ABC-001",
+        })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "唯讀" in data["error"]
+        mock_fetch.assert_not_called()
+
+    # 非唯讀零回歸 → 走既有路徑，fetch_samples_only 被呼叫
+    def test_non_readonly_passes_through(self, client, mocker):
+        mocker.patch(
+            "web.routers.scraper.load_config",
+            return_value=_readonly_gallery_config("/tmp/rw_src", readonly=False),
+        )
+        mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
+        mock_repo.return_value.count_videos_in_folder.return_value = 1
+        mock_fetch = mocker.patch(
+            "web.routers.scraper.fetch_samples_only", return_value=self._ok_samples()
+        )
+
+        response = client.post("/api/scraper/fetch-samples", json={
+            "file_path": "/tmp/rw_src/ABC-001.mp4",
+            "number": "ABC-001",
+        })
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        mock_fetch.assert_called_once()
+
+
 # ── F4: enrich endpoint 從 config["search"] 取 proxy_url ─────
 
 class TestEnrichEndpointReadsSearchConfig:
@@ -800,3 +1016,166 @@ class TestEnrichEndpointExternalManagerThreading:
         })
 
         assert captured_calls[0].get("external_manager") == "kodi"
+
+
+# ── TASK-91-T3 站台4：enrich_single_endpoint external_manager 分支 WSL+UNC path_mappings ──
+
+_WSL_UNC_MAPPINGS = {"/home/user/nas": "//NAS/share"}
+_WSL_UNC_URI = "file://///NAS/share/dir/movie.mp4"
+_WSL_UNC_REVERSED_DIR = "/home/user/nas/dir"
+
+
+class TestEnrichSingleExternalManagerPathMappingReverse:
+    """站台4（:322 stem = os.path.splitext(uri_to_fs_path(...))[0]）改用
+    uri_to_local_fs_path 後，poster/fanart_path 存在性檢查必須落在反解後的本機目錄
+    （mutation-sensitive）；並確認與站台3 cover_path 的 dirname 一致（邊界5）。"""
+
+    def _patch_common(self, mocker):
+        mocker.patch(
+            "web.routers.scraper.resolve_nfo_cover_paths",
+            return_value=(
+                f"{_WSL_UNC_REVERSED_DIR}/movie.nfo",
+                f"{_WSL_UNC_REVERSED_DIR}/movie.jpg",
+            ),
+        )
+        mocker.patch("web.routers.scraper.load_config", return_value={
+            "search": {},
+            "scraper": {"external_manager": "jellyfin"},
+            "gallery": {"path_mappings": _WSL_UNC_MAPPINGS},
+        })
+        mocker.patch("web.routers.scraper.enrich_single", return_value=_ok_result())
+
+    def test_wsl_unc_mapping_reverses_stem_for_poster_fanart(self, client, mocker, monkeypatch):
+        from core import path_utils
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+        self._patch_common(mocker)
+
+        captured_exists = []
+
+        def fake_exists(p):
+            captured_exists.append(p)
+            return True
+
+        mocker.patch("web.routers.scraper.os.path.exists", side_effect=fake_exists)
+
+        client.post("/api/enrich-single", json={
+            "file_path": _WSL_UNC_URI,
+            "number": "SONE-205",
+            "mode": "refresh_full",
+            "overwrite_existing": False,
+        })
+
+        poster_calls = [p for p in captured_exists if p.endswith("-poster.jpg")]
+        fanart_calls = [p for p in captured_exists if p.endswith("-fanart.jpg")]
+        assert poster_calls, "poster_path 存在性應被檢查"
+        assert fanart_calls, "fanart_path 存在性應被檢查"
+        assert poster_calls[0] == f"{_WSL_UNC_REVERSED_DIR}/movie-poster.jpg", (
+            f"poster_path 應反解為本機路徑，實際: {poster_calls[0]!r}"
+        )
+        assert fanart_calls[0] == f"{_WSL_UNC_REVERSED_DIR}/movie-fanart.jpg", (
+            f"fanart_path 應反解為本機路徑，實際: {fanart_calls[0]!r}"
+        )
+
+    def test_stem_dirname_matches_resolve_nfo_cover_paths_dirname(self, client, mocker, monkeypatch):
+        """邊界5：cover_path（站台3）與 poster/fanart_path（站台4）dirname 須一致，
+        否則 will_write_external 判斷會因命名空間不一致誤判。"""
+        import os as _os
+        from core import path_utils
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+        self._patch_common(mocker)
+
+        captured_exists = []
+
+        def fake_exists(p):
+            captured_exists.append(p)
+            return True
+
+        mocker.patch("web.routers.scraper.os.path.exists", side_effect=fake_exists)
+
+        client.post("/api/enrich-single", json={
+            "file_path": _WSL_UNC_URI,
+            "number": "SONE-205",
+            "mode": "refresh_full",
+            "overwrite_existing": False,
+        })
+
+        poster_calls = [p for p in captured_exists if p.endswith("-poster.jpg")]
+        assert poster_calls
+        cover_dirname = _os.path.dirname(f"{_WSL_UNC_REVERSED_DIR}/movie.jpg")
+        poster_dirname = _os.path.dirname(poster_calls[0])
+        assert cover_dirname == poster_dirname == _WSL_UNC_REVERSED_DIR
+
+
+# ── TASK-91-T3 站台5：fetch_samples_endpoint outer to_file_uri 補傳 path_mappings ──
+
+class TestFetchSamplesFolderPrefixPathMappingReverse:
+    """站台5（:409 folder_uri_prefix = to_file_uri(os.path.dirname(uri_to_fs_path(...))) + '/'）：
+    外層 to_file_uri 補傳 path_mappings 後，folder_uri_prefix 須落在映射命名空間，
+    DB LIKE 比對才能命中 scanner 以映射端 URI 寫入的 path（mutation-sensitive）。"""
+
+    def _ok_samples(self, **kwargs):
+        from core.enricher import EnrichResult
+        defaults = dict(
+            success=True, nfo_written=False, cover_written=False,
+            extrafanart_written=3, fields_filled=[], source_used="javbus", error=None,
+        )
+        defaults.update(kwargs)
+        return EnrichResult(**defaults)
+
+    def test_case2_native_input_prefix_mapped_to_unc_namespace(self, client, mocker, monkeypatch):
+        """Case 2（本機原生輸入）：加了 path_mappings 後 prefix 落在映射命名空間
+        （沒傳 path_mappings 現況 bug 會落在原生命名空間，永遠比對不到 DB）。"""
+        from core import path_utils
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+        mocker.patch("web.routers.scraper.load_config", return_value={
+            "search": {}, "scraper": {},
+            "gallery": {"path_mappings": _WSL_UNC_MAPPINGS},
+        })
+        mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
+        mock_repo.return_value.count_videos_in_folder.return_value = 1
+        mocker.patch(
+            "web.routers.scraper.fetch_samples_only", return_value=self._ok_samples()
+        )
+
+        response = client.post("/api/scraper/fetch-samples", json={
+            "file_path": "file:///home/user/nas/dir/movie.mp4",
+            "number": "SONE-205",
+        })
+
+        assert response.status_code == 200
+        mock_repo.return_value.count_videos_in_folder.assert_called_once()
+        prefix = mock_repo.return_value.count_videos_in_folder.call_args[0][0]
+        assert prefix == "file://///NAS/share/dir/", (
+            f"folder_uri_prefix 應落在映射命名空間，實際: {prefix!r}"
+        )
+
+    def test_case1_unc_input_prefix_unaffected_by_mappings(self, client, mocker, monkeypatch):
+        """Case 1（UNC 輸入）零回歸：加不加 path_mappings 對 folder_uri_prefix 結果相同
+        （UNC branch 在 to_file_uri 內提早 return，不受 path_mappings 影響）。"""
+        from core import path_utils
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+
+        captured_prefixes = {}
+        for label, pm in (("with_mapping", _WSL_UNC_MAPPINGS), ("without_mapping", {})):
+            mocker.patch("web.routers.scraper.load_config", return_value={
+                "search": {}, "scraper": {},
+                "gallery": {"path_mappings": pm},
+            })
+            mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
+            mock_repo.return_value.count_videos_in_folder.return_value = 1
+            mocker.patch(
+                "web.routers.scraper.fetch_samples_only", return_value=self._ok_samples()
+            )
+
+            client.post("/api/scraper/fetch-samples", json={
+                "file_path": _WSL_UNC_URI,
+                "number": "SONE-205",
+            })
+
+            call_args = mock_repo.return_value.count_videos_in_folder.call_args
+            captured_prefixes[label] = call_args[0][0]
+
+        assert captured_prefixes["with_mapping"] == captured_prefixes["without_mapping"], (
+            f"UNC 輸入下 path_mappings 不應影響結果: {captured_prefixes!r}"
+        )
+        assert captured_prefixes["with_mapping"] == "file://///NAS/share/dir/"

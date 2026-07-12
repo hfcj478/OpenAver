@@ -40,15 +40,42 @@ Ban-list tiers:
 Sync point with TASK-80-BUILD-T2:
     T2 adjusts which packages are runtime deps; if it removes uvloop from the
     Windows release, flip uvloop to HARD_FAIL here (same follow-up commit).
+
+dist-info existence check (spec-97 G-2, added in feature/97):
+    Two HARD-FAIL checks (both platforms, see _dist_info_check):
+      (a) curl_cffi package present ⟹ curl_cffi-*.dist-info/METADATA present.
+          The exact spec-97 root cause: build.py used to strip every .dist-info,
+          so curl_cffi raised PackageNotFoundError at import → javdb silently
+          disabled in every released build. dev-venv tests never caught it.
+      (b) At >= 20 top-level packages, dist-info dirs must be >= 50% of packages
+          (blanket-strip sanity net; loose ratio, gated so small ZIPs don't trip).
+    This static ZIP scan is the CHEAP first pass; it does NOT replace the real
+    runtime import sweep (scripts/verify_artifact_imports.py, run on the shipped
+    interpreter) — "files present" ≠ "imports clean".
+
+macOS ceiling (spec-97 CD-97-6):
+    macOS gets its FIRST audit in feature/97 with --max-mb 60 (not 48): the mac
+    ZIP baseline is ~49 MB (v0.10.11 release asset; uvloop is a valid macOS
+    runtime dep). 60 = baseline + dist-info (~50) with ~10 MB legit headroom,
+    still catching mypy-class (~62) and playwright-class regressions. Windows
+    stays at 48 (dist-info adds only ~0.5 MB compressed, ZIP ~35 MB).
 """
 
 from __future__ import annotations
 
 import argparse
 import glob
+import re
 import sys
 import zipfile
 from pathlib import Path
+
+# Matches site-packages/curl_cffi-<ver>.dist-info/METADATA anywhere in the ZIP.
+_CURL_CFFI_METADATA_RE = re.compile(r"site-packages/curl_cffi-[^/]+\.dist-info/METADATA$")
+
+# Top-level scale at/above which the dist-info ratio sanity net engages. Real
+# artifacts bundle ~50 packages; synthetic test ZIPs stay well below this.
+_DIST_INFO_SCALE_GATE = 20
 
 
 # ── Ban-list definition ──────────────────────────────────────────────────────
@@ -118,6 +145,49 @@ def _site_packages_top_dirs(zf: zipfile.ZipFile) -> set[str]:
     return top_dirs
 
 
+def _dist_info_check(zf: zipfile.ZipFile, top_dirs: set[str]) -> list[str]:
+    """Return HARD-FAIL messages for missing .dist-info metadata (spec-97 G-2).
+
+    Two platform-agnostic checks — both hard-fail (never warn-tier):
+
+    (a) curl_cffi named check (conditional on the package shipping): if the
+        curl_cffi PACKAGE dir is present but no curl_cffi-*.dist-info/METADATA
+        exists, that is the EXACT spec-97 regression — curl_cffi reads its own
+        metadata at import, so a stripped dist-info raises PackageNotFoundError,
+        silently disabling the javdb scraper in every release.
+
+    (b) Scale sanity net: at real-artifact scale (>= _DIST_INFO_SCALE_GATE
+        top-level package dirs), the dist-info dir count must be >= half the
+        package count. Catches a future blanket dist-info strip. A loose 50%
+        ratio avoids brittle coupling to exact transitive-dependency counts;
+        the gate keeps small synthetic ZIPs from tripping it.
+    """
+    messages: list[str] = []
+    dist_info_dirs = {n for n in top_dirs if n.endswith(".dist-info")}
+    packages = {n for n in top_dirs if not n.endswith((".dist-info", ".data"))}
+
+    # (a) curl_cffi — the named root cause.
+    if "curl_cffi" in packages:
+        has_metadata = any(_CURL_CFFI_METADATA_RE.search(n) for n in zf.namelist())
+        if not has_metadata:
+            messages.append(
+                "[FAIL] DIST-INFO: curl_cffi package present but its"
+                " *.dist-info/METADATA is missing — this is the exact spec-97"
+                " regression (curl_cffi raises PackageNotFoundError at import,"
+                " silently disabling javdb). The build must NOT strip .dist-info."
+            )
+
+    # (b) Blanket-strip sanity net (only at real-artifact scale).
+    if len(packages) >= _DIST_INFO_SCALE_GATE and len(dist_info_dirs) < len(packages) / 2:
+        messages.append(
+            f"[FAIL] DIST-INFO: only {len(dist_info_dirs)} .dist-info dirs for"
+            f" {len(packages)} top-level packages (< 50%) — looks like a blanket"
+            f" .dist-info strip regression (spec-97). Keep dist-info in the build."
+        )
+
+    return messages
+
+
 def audit(
     zip_path: str | Path,
     platform: str,
@@ -158,11 +228,17 @@ def audit(
 
     with zipfile.ZipFile(zip_path) as zf:
         top_dirs = _site_packages_top_dirs(zf)
+        dist_info_msgs = _dist_info_check(zf, top_dirs)
 
     messages.append(
         f"[INFO] Scanned {zip_path.name} — platform={platform},"
         f" strict={strict}, found {len(top_dirs)} top-level site-packages dirs"
     )
+
+    # ── dist-info existence (spec-97 G-2 static first pass; both platforms) ────
+    if dist_info_msgs:
+        messages.extend(dist_info_msgs)
+        failed = True
 
     # Hard-fail tier
     for pkg in sorted(HARD_FAIL_PKGS):

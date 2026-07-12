@@ -50,10 +50,16 @@ export function searchStateBatch() {
     },
 
     _dbSyncCoverSrc(file, fromEl) {
+        // 封面身份永遠綁被整理那片自己的 metadata（CD-92b-1）；
+        // 只有該片缺 cover 時才 fallback 到起點元素 src / 目前顯示片封面。
+        const ownCover = file?.searchResults?.[0]?.cover;
+        if (ownCover) {
+            return `/api/proxy-image?url=${encodeURIComponent(ownCover)}`;
+        }
         if (fromEl && fromEl.tagName === 'IMG' && fromEl.src) {
             return fromEl.src;
         }
-        const cover = file?.searchResults?.[0]?.cover || this.current()?.cover || '';
+        const cover = this.current()?.cover || '';
         return cover ? `/api/proxy-image?url=${encodeURIComponent(cover)}` : '';
     },
 
@@ -63,14 +69,19 @@ export function searchStateBatch() {
         return rect.width > 0 && rect.height > 0;
     },
 
-    _findDbSyncSourceEl(rowEl) {
-        const detailCover = this.$refs?.coverImg || document.getElementById('resultCover');
-        if (this._isVisibleDbSyncSource(detailCover)) return detailCover;
+    _findDbSyncSourceEl(rowEl, index) {
+        // 全域 detail/grid 封面僅在「目前顯示中的片正是被整理那片」時才可當起飛位置（CD-92b-1）；
+        // 否則直接退到 rowEl 範圍內元素，避免借用別片的封面位置。
+        const displaysScrapedFile = this.currentFileIndex === index;
+        if (displaysScrapedFile) {
+            const detailCover = this.$refs?.coverImg || document.getElementById('resultCover');
+            if (this._isVisibleDbSyncSource(detailCover)) return detailCover;
 
-        const gridImg = document.querySelector(
-            `.search-grid .av-card-preview[data-slot="${this.currentIndex}"] .av-card-preview-img img`
-        );
-        if (this._isVisibleDbSyncSource(gridImg)) return gridImg;
+            const gridImg = document.querySelector(
+                `.search-grid .av-card-preview[data-slot="${this.currentIndex}"] .av-card-preview-img img`
+            );
+            if (this._isVisibleDbSyncSource(gridImg)) return gridImg;
+        }
 
         const rowButton = rowEl
             ? [...rowEl.querySelectorAll('.btn-scrape-single')].find(b => b.offsetParent !== null)
@@ -90,19 +101,25 @@ export function searchStateBatch() {
         toEl.classList.add('pulse-once');
     },
 
-    _handleDbSyncFeedback(result, file, rowEl) {
+    _handleDbSyncFeedback(result, file, rowEl, index) {
         const syncStatus = result?.db_sync_status;
         if (syncStatus === 'synced') {
             const toEl = document.getElementById('sidebar-showcase-link');
-            const fromEl = this._findDbSyncSourceEl(rowEl);
+            const fromEl = this._findDbSyncSourceEl(rowEl, index);
             const coverSrc = this._dbSyncCoverSrc(file, fromEl);
-            if (fromEl && toEl &&
-                window.GhostFly &&
-                typeof window.GhostFly.playToIcon === 'function') {
-                window.GhostFly.playToIcon(fromEl, toEl, {
+            if (window.GhostFly &&
+                typeof window.GhostFly.playInboundFly === 'function') {
+                // playInboundFly 內部分支矩陣處理缺 fromEl/toEl（缺 toEl→fallback toast、
+                // 缺 fromEl→onLanding），故不再前置 fromEl && toEl guard。
+                window.GhostFly.playInboundFly({
+                    fromEl: fromEl,
                     coverSrc: coverSrc,
-                    duration: 0.65,
-                    onComplete: () => this._pulseShowcaseLink(toEl)
+                    toEl: toEl,
+                    onLanding: () => this._pulseShowcaseLink(toEl),
+                    fallback: {
+                        toastFn: (msg) => this.showToast(msg, 'success', 1500),
+                        message: window.t('search.toast.db_synced_mobile')
+                    }
                 });
             } else {
                 this._pulseShowcaseLink(toEl);
@@ -434,7 +451,7 @@ export function searchStateBatch() {
                         .find(b => b.offsetParent !== null);
                     if (file.scrapeStatus === 'done') {
                         window.SearchAnimations?.playOrganizeSuccess?.(btn, rowEl);
-                        this._handleDbSyncFeedback(dbSyncResult, file, rowEl);
+                        this._handleDbSyncFeedback(dbSyncResult, file, rowEl, index);
                     } else if (file.scrapeStatus === 'failed') {
                         window.SearchAnimations?.playOrganizeFail?.(btn);
                     }
@@ -502,7 +519,7 @@ export function searchStateBatch() {
                     const btn = [...rowEl.querySelectorAll('.btn-scrape-single')]
                         .find(b => b.offsetParent !== null);
                     window.SearchAnimations?.playOrganizeSuccess?.(btn, rowEl);
-                    this._handleDbSyncFeedback(result, file, rowEl);
+                    this._handleDbSyncFeedback(result, file, rowEl, index);
                 });
             } else {
                 console.error('[Scrape]', file.filename, result.error);

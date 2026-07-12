@@ -1145,7 +1145,7 @@ body {
     box-shadow: 0 4px 12px oklch(0% 0 0 / 0.3);
 }
 
-:is(#ds-gallery-components, .ds-gallery-composition) .btn-glass-circle:hover {
+:is(#ds-gallery-components, .ds-gallery-composition) .btn-glass-circle:not(:disabled):hover {
     background: rgba(255, 255, 255, 0.3);
     border-color: rgba(255, 255, 255, 0.6);
     transform: scale(1.08);
@@ -1973,33 +1973,9 @@ body {
 }
 
 
-/* 多層資料夾連動 */
-:is(#settings-components, #ds-settings-components) .folder-layers-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-:is(#settings-components, #ds-settings-components) .folder-layer-group {
-    display: flex;
-    align-items: center;
-    flex: 1;
-}
-
-:is(#settings-components, #ds-settings-components) .folder-layer-group.disabled {
-    opacity: 0.5;
-}
-
-:is(#settings-components, #ds-settings-components) .folder-layer-group.disabled input,
-:is(#settings-components, #ds-settings-components) .folder-layer-group.disabled button {
-    cursor: not-allowed;
-}
-
-:is(#settings-components, #ds-settings-components) .folder-separator {
-    font-size: 1rem;
-    color: var(--text-muted);
-    font-weight: 600;
-}
+/* 多層資料夾連動的舊「3 欄固定 + 逐層 enable」版面（.folder-layers-row / .folder-layer-group /
+ * .folder-separator）已隨 feature/95 命名區膠囊化改為動態層清單移除（settings.html 與
+ * /design-system demo 皆改用 .folder-layer-item + .chip-editor，見 settings.css）。 */
 
 :is(#settings-components, #ds-settings-components) .btn-variable-sm {
     display: flex;

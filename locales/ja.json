@@ -194,6 +194,7 @@
       "translate_failed": "翻訳に失敗しました。もう一度お試しください",
       "db_not_synced": "未同期 — 整理完了後も Showcase に表示されません",
       "db_sync_failed": "DB 同期失敗（ファイルは整理済みですが Showcase に表示されません）",
+      "db_synced_mobile": "保存しました",
       "skipped_nfo_multipart": "NFO をスキップ — このファイルは分割動画の 2 本目以降で、1 本目の NFO が管理します"
     },
     "duplicate": {
@@ -317,7 +318,6 @@
     "section": {
       "search": "検索・スクレイプ",
       "scraper_advanced": "高度なスクレイプ設定",
-      "gallery_advanced": "高度な表示設定",
       "system": "システム設定"
     },
     "search": {
@@ -356,9 +356,11 @@
       "suffix_keywords_hint": "ファイル名にこれらのキーワードが含まれる場合 {suffix} として保持されます（複数指定時はリスト順に連結）",
       "create_folder_label": "フォルダを作成",
       "folder_layers_label": "フォルダ階層",
-      "folder_layer_outer": "外層",
-      "folder_layer_middle": "中間層",
-      "folder_layer_inner": "内層",
+      "add_layer": "階層を追加",
+      "remove_layer": "この階層を削除",
+      "layer_placeholder": "変数またはテキストを入力",
+      "chip_delete": "削除",
+      "preview_empty_tag": "空値の例",
       "preview_prefix": "プレビュー",
       "filename_format_label": "ファイル命名形式",
       "max_title_length_label": "タイトル長さ制限",
@@ -378,7 +380,25 @@
       "external_manager_emby_hint": "`{品番}-poster.jpg`／`{品番}-fanart.jpg` を保存し NFO 識別フィールドを追加、分割（cd1／cd2／part1）も自動結合します。整理時にファイル名の VR 投影タグを保持します（DeoVR などのヘッドセットアプリ用）。注意：Emby はポスターと NFO を読みますが、`{品番}-fanart.jpg` という背景画像名は認識しません（fanart は Emby で表示されません。Jellyfin／Kodi は正常）。",
       "external_manager_kodi_hint": "`{品番}-poster.jpg`／`{品番}-fanart.jpg` を保存し（Kodi は各種フォルダ構成を認識）、NFO 識別フィールドを追加します。cd1／cd2／part1 の分割も自動結合します。",
       "download_sample_images_label": "サンプル画像をダウンロード（extrafanart）",
-      "download_sample_images_hint": "整理時にスクリーンショットを extrafanart/ にダウンロード（「フォルダー作成」が必要）"
+      "download_sample_images_hint": "整理時にスクリーンショットを extrafanart/ にダウンロード（「フォルダー作成」が必要）",
+      "strm_mapping": {
+        "title": "再生側パスの置換",
+        "intro": "Emby／Jellyfin／Kodi が別のマシンにあり、見えるソースパスがこのマシンと異なる場合、これらのルールで「このマシンのスキャン接頭辞」を「再生側の接頭辞」に置き換えます。ルールがない場合、strm にはこのマシンのパスがそのまま書き込まれます。",
+        "local_placeholder": "このマシンの接頭辞（例：Z:\\115）",
+        "remote_placeholder": "再生側の接頭辞（例：/volume1/movie）",
+        "add_rule": "ルールを追加",
+        "remove": "ルールを削除",
+        "template_hint": "以下は読み取り専用ソースの現在のスキャンパスのテンプレートです。実際にスキャンされたパスの接頭辞に合わせてください：",
+        "template_use": "左の欄に入力",
+        "rewrite_confirm": {
+          "title": "既存の .strm ファイルを書き換える",
+          "body": "パスルールが変更されました。新しいルールで既存の .strm ファイル {count} 件を書き換えます（動画ファイルは変更されません）。",
+          "cancel": "今は書き換えない",
+          "confirm": "今すぐ書き換える"
+        },
+        "rewrite_done": ".strm ファイル {count} 件を書き換えました",
+        "rewrite_failed": "既存の .strm の書き換えに失敗しました。パスルールは保存されましたが既存ファイルは未更新です。しばらくしてからもう一度保存して再試行してください。"
+      }
     },
     "gallery": {
       "output_dir_label": "出力ディレクトリ",
@@ -401,7 +421,12 @@
       "items_per_page_label": "1ページあたりの表示数",
       "all": "すべて",
       "min_size_label": "最小動画サイズ",
-      "min_size_hint": "0 = フィルタなし"
+      "min_size_hint": "0 = フィルタなし",
+      "tier_display": "リスト表示のデフォルト",
+      "also_showcase_note": "ブラウズ（Showcase）のデフォルトにもなります",
+      "export_section": "オフライン HTML エクスポート（Windows ローカル閲覧用）",
+      "export_notice": "このエクスポートファイルは Windows でのローカル閲覧（ダブルクリック）向けです。macOS / Linux ではアプリのブラウズページをご利用ください。（理由：カバーが <code>file://</code> で埋め込まれており、Mac のブラウザはローカルの別ディレクトリのファイルをブロックします）",
+      "mode_export_only_note": "このエクスポートファイルのみに影響します（アプリの Showcase には影響しません）"
     },
     "system": {
       "default_page_label": "起動時に開くページ",
@@ -489,6 +514,16 @@
       "body_off": "「スタンドアロン」モードに戻すと、LAN デバイスはすぐに接続できなくなります。切り替えますか？",
       "confirm": "切り替える",
       "confirm_on": "有効にする"
+    },
+    "switch_mode_confirm": {
+      "title": "メディアサーバーモードの切り替え",
+      "body": "「{mode}」に切り替えると、現在の読み取り専用ソース {count} 件とそれらが生成したメディアカードが削除されます（出力フォルダー内のファイルは削除されません）。切り替え後に再度追加すれば新しいモードで再構築できます。ほかに開いているタブは再読み込みしてから操作してください。",
+      "cancel": "キャンセル",
+      "confirm": "切り替えて削除",
+      "failed": "モードの切り替えに失敗しました。しばらくしてからもう一度お試しください。",
+      "generate_in_progress": "生成中です。生成が完了してからモードを切り替えてください。",
+      "mode_off": "デフォルトモード",
+      "mode_media": "Emby・Jellyfin・Kodi モード"
     }
   },
   "scanner": {
@@ -519,7 +554,12 @@
       "remove_title": "削除",
       "output_prefix": "出力:",
       "settings_link": "設定",
-      "copy_path": "パスをコピー"
+      "copy_path": "パスをコピー",
+      "readonly_label": "読み取り専用",
+      "output_path_label": "出力先",
+      "output_path_placeholder": "このマシンで書き込める出力フォルダー（Emby／Jellyfin／Kodi のスキャン用、NAS でも可）...",
+      "cross_machine_hint": "（上の「出力先」フォルダーとは無関係）strm ファイルには、このマシンから見た読み取り専用ソースの動画パスが書き込まれます。再生する Emby／Jellyfin／Kodi が別のマシンにあり、見えるパスが異なる場合は、設定ページでパス置換ルールを設定してください。",
+      "cross_machine_settings_link": "パス置換を設定"
     },
     "terminal": {
       "filter_all": "すべて",
@@ -542,10 +582,6 @@
       "jellyfin_prefix": "Jellyfin 専用カバー形式が不足:",
       "jellyfin_suffix": "本",
       "jellyfin_update_title": "Jellyfin poster + fanart を補完",
-      "jellyfin_check_btn": "Jellyfin 画像を確認",
-      "jellyfin_check_idle_label": "Jellyfin カバー未確認",
-      "jellyfin_checking": "確認中...",
-      "jellyfin_check_done_ok": "確認済み — 問題なし",
       "last_run_prefix": "最終実行: ",
       "last_added": "({count}本追加)",
       "generate_idle": "ページ生成",
@@ -558,6 +594,10 @@
       "jellyfin_help_line4": "「補完」をクリックすると既存のカバーから自動生成します。ネットワーク不要。",
       "jellyfin_idle": "画像補完",
       "jellyfin_loading": "補完中...",
+      "jellyfin_check_btn": "Jellyfin 画像を確認",
+      "jellyfin_check_idle_label": "Jellyfin カバー未確認",
+      "jellyfin_checking": "確認中...",
+      "jellyfin_check_done_ok": "確認済み — 問題なし",
       "btn_done": "完了",
       "missing_both_prefix": "NFO+カバー不足:",
       "missing_nfo_prefix": "NFO不足:",
@@ -567,6 +607,11 @@
       "missing_enrich_loading": "補完中...",
       "missing_enrich_preparing": "準備中...",
       "missing_enrich_done": "補完完了",
+      "missing_enrich_card_searching": "検索中…",
+      "missing_enrich_card_no_cover": "情報のみ（カバーなし）",
+      "missing_enrich_card_not_found": "見つかりません",
+      "missing_enrich_card_error": "失敗",
+      "missing_enrich_card_readonly": "スキップ（読み取り専用）",
       "missing_enrich_toast_success": "補完完了！{success} 本成功",
       "missing_enrich_toast_mixed": "補完完了！{success} 本成功、{failed} 本失敗",
       "missing_enrich_batch_fail": "バッチ補完失敗 ({status}): {error}",
@@ -661,6 +706,15 @@
       "image_check": "画像チェックが進行中です。移動すると中断されます！",
       "folder_dirty": "保存していないフォルダの変更があります",
       "confirm": "{message}移動してもよろしいですか？"
+    },
+    "readonly_confirm_modal": {
+      "title": "読み取り専用ソースに設定しますか？",
+      "cancel": "キャンセル",
+      "confirm": "読み取り専用に設定",
+      "intro": "読み取り専用ソースにすると、OpenAver はこのフォルダー内のファイルを一切変更しません（移動・リネーム・NFO や表紙の書き込みを行いません）。代わりに出力フォルダーへ別途ローカルメディアライブラリ（1作品につき1フォルダー：NFO＋表紙）を生成し、OpenAver 自身の閲覧・再生に使います。動画で埋まった書き込み不可の読み取り専用オンラインストレージ、NAS 共有、SMB マウントなどに向いています。ローカルの通常のコレクションで、フォルダーに普通に書き込める場合は、これをチェックする必要はありません。",
+      "output_hint_offline": "現在はデフォルトモードです。生成物は App 内蔵の固定ローカルフォルダーに自動で保存されるため、出力フォルダーを別途指定する必要はありません。",
+      "output_hint_media_server": "現在は Emby・Jellyfin・Kodi モードです。確認すると「出力先」欄が表示されます。このマシンで書き込めるフォルダー（ローカルでも、このマシンにマウントした NAS 共有でも可）を指定してください——読み取り専用ソースそのものではありません。",
+      "nas_hint": "NAS 上の Emby／Jellyfin／Kodi に取り込ませたいですか？デフォルトモードでは OpenAver 自身の閲覧用ローカルライブラリのみを生成し、.strm ショートカットファイルは作成しません。メディアサーバーにこれらの作品をスキャンさせたい場合は、まず「設定」でモードを Emby・Jellyfin・Kodi モードに切り替えてください。"
     }
   },
   "showcase": {
@@ -683,7 +737,12 @@
       "success": "上書きしました（カバー + NFO）",
       "fail": "再スクレイプに失敗しました。後でもう一度お試しください。",
       "jl_desktop_only": "デスクトップアプリ（standalone）のみ利用可能",
-      "jl_cf_solving": "Cloudflare 認証中……通過後、自動的に続きます"
+      "jl_cf_solving": "Cloudflare 認証中……通過後、自動的に続きます",
+      "versions_found": "同じ品番の作品が {count} 件見つかりました",
+      "version_prev_aria": "前のバージョン",
+      "version_next_aria": "次のバージョン",
+      "adopt_version": "このバージョンを採用",
+      "adopt_switch_source": "このバージョンに置き換え"
     },
     "placeholder": {
       "search": "番号・女優名・タイトルを検索..."
@@ -801,7 +860,8 @@
     },
     "enrich": {
       "success": "情報補完が完了しました",
-      "failed": "情報補完に失敗しました。後ほど再試行してください"
+      "failed": "情報補完に失敗しました。後ほど再試行してください",
+      "readonly_tooltip": "この作品は読み取り専用ソースから生成されています。更新するにはスキャンページで再生成してください"
     },
     "video": {
       "delete": "コレクションから削除",
@@ -1019,7 +1079,12 @@
       "h6_multiversion": "同一作品の複数版（流出 / 4K / 字幕）を Emby/Jellyfin で結合するには？",
       "multiversion_intro": "複数版の結合は Emby と Jellyfin がともにネイティブ対応する機能です（同じ「フォルダ名 - ラベル」規則）。各版を品番名のフォルダに入れ、ファイル名をフォルダ名で始め「 - ラベル」を付けます：",
       "multiversion_rule1": "各版のファイル名は<strong>フォルダ名で始める必要があります</strong> + 「 - ラベル」（半角スペース-ハイフン-半角スペース）",
-      "multiversion_rule2": "複数版と cd1/cd2 分割は<strong>同一作品で併用できません</strong>（メディアサーバーの公式制限）"
+      "multiversion_rule2": "複数版と cd1/cd2 分割は<strong>同一作品で併用できません</strong>（メディアサーバーの公式制限）",
+      "h6_strm_deploy": "読み取り専用ソース + Emby／Jellyfin／Kodi に作品をスキャンさせる（マシンをまたぐ配置）",
+      "strm_deploy_step1": "読み取り専用のオンラインストレージ／NAS 共有を OpenAver のマシンにマウントしたら、Scanner でそのフォルダーを「読み取り専用」にチェックします——OpenAver は中のファイルを一切変更しません（移動・リネーム・書き込みなし）。",
+      "strm_deploy_step2": "「出力先」に<strong>このマシンで書き込める</strong>フォルダー（このマシンにマウントした NAS の書き込み可能な共有でも可）を指定します——生成される <code>.strm</code>＋NFO＋表紙がここに置かれ、それを Emby／Jellyfin／Kodi に指定してライブラリを作らせます。この出力フォルダーは読み取り専用ソースそのものではありません。",
+      "strm_deploy_step3": "再生するマシンから見た読み取り専用ソースのパスが OpenAver から見たパスと異なる場合（例：OpenAver 上では <code>Z:\\115</code>、NAS 上では <code>/volume1/115</code>）、<strong>設定ページ</strong>の「再生側パスの置換」に対応するルールを1つ追加してください。そうしないと <code>.strm</code> が再生側で見つからないパスを指してしまいます。",
+      "strm_deploy_step4": "その後マッピングルールを変更すると、既存の <code>.strm</code> が一括で自動的に書き換えられ、ライブラリ全体を作り直す必要はありません。"
     },
     "showcase": {
       "title": "動画ブラウザ（Showcase）",
@@ -1222,7 +1287,8 @@
     "batch_enrich_failed": "一括補完中断",
     "jl_cf_timeout": "JavLibrary CF認証タイムアウト",
     "thumb_prewarm_start": "カバーサムネイルキャッシュの生成を開始しました",
-    "thumb_prewarm_done": "カバーサムネイルキャッシュが完了しました"
+    "thumb_prewarm_done": "カバーサムネイルキャッシュが完了しました",
+    "scanner_cancelled": "スキャンをキャンセルしました"
   },
   "similar_mode": {
     "button_aria_label": "類似動画を探索",

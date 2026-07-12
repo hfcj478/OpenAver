@@ -186,6 +186,96 @@ class TestSeriesEnOnly:
         assert video.series == "Test Series En"
 
 
+# ============================================================
+# TASK-93-T6: rating <=5 sanity guard + summary (Desc)
+# ============================================================
+
+def _rating_json(avg_rating):
+    """1pondo JSON with a given AvgRating value."""
+    return {
+        "Status": True,
+        "Title": "テストタイトル",
+        "ActressesJa": ["テスト女優"],
+        "ActressesEn": [],
+        "ActressesList": {},
+        "ThumbHigh": "https://www.1pondo.tv/assets/sample/120415_201/str.jpg",
+        "MovieThumb": "",
+        "UCNAME": [],
+        "UCNAMEEn": [],
+        "Release": "2023-04-15",
+        "AvgRating": avg_rating,
+    }
+
+
+class TestRatingSanityGuard:
+    """AvgRating > 5 → None（畸形值 guard）；<=5 維持既有值"""
+
+    def test_rating_above_5_number_dropped(self, scraper):
+        """AvgRating=6（數字，>5）→ rating is None（新 guard）"""
+        video = run_search(scraper, _rating_json(6))
+        assert video is not None
+        assert video.rating is None
+
+    def test_rating_above_5_string_dropped(self, scraper):
+        """AvgRating='6'（str，>5）→ rating is None（新 guard）"""
+        video = run_search(scraper, _rating_json("6"))
+        assert video is not None
+        assert video.rating is None
+
+    def test_rating_boundary_5_kept(self, scraper):
+        """AvgRating=5（邊界，<=5）→ rating == 5.0（保留）"""
+        video = run_search(scraper, _rating_json(5))
+        assert video is not None
+        assert video.rating == 5.0
+
+    def test_rating_below_5_kept(self, scraper):
+        """AvgRating=4（正常，<=5）→ rating == 4.0（既有行為保留）"""
+        video = run_search(scraper, _rating_json(4))
+        assert video is not None
+        assert video.rating == 4.0
+
+    def test_rating_string_below_5_kept(self, scraper):
+        """AvgRating='4.5'（str，<=5）→ rating == 4.5（既有行為保留）"""
+        video = run_search(scraper, _rating_json("4.5"))
+        assert video is not None
+        assert video.rating == 4.5
+
+    def test_rating_none_stays_none(self, scraper):
+        """AvgRating=None → rating is None（既有行為保留）"""
+        video = run_search(scraper, _rating_json(None))
+        assert video is not None
+        assert video.rating is None
+
+
+class TestSummary:
+    """Desc → Video.summary；缺 Desc → ''"""
+
+    def test_summary_from_desc(self, scraper):
+        json_data = _rating_json(4)
+        json_data["Desc"] = "テスト説明"
+        video = run_search(scraper, json_data)
+        assert video is not None
+        assert video.summary == "テスト説明"
+
+    def test_summary_empty_when_no_desc(self, scraper):
+        video = run_search(scraper, _rating_json(4))
+        assert video is not None
+        assert video.summary == ""
+
+    def test_summary_null_desc(self, scraper):
+        """Desc=null (JSON null, key present) → video returned with summary==''.
+
+        Regression (P2-2): `.get('Desc', '')` returns None on JSON null →
+        Video(summary=None) raises ValidationError → whole d2pass source dropped.
+        The `or ''` fix keeps the source alive.
+        """
+        json_data = _rating_json(4)
+        json_data["Desc"] = None
+        video = run_search(scraper, json_data)
+        assert video is not None
+        assert video.summary == ""
+
+
 # caribbeancom gallery HTML fixture
 CARIBBEANCOM_GALLERY_HTML = """\
 <html><body>
@@ -266,6 +356,19 @@ CARIBBEANCOM_FULL_HTML = """\
   <a href="/moviepages/070116-197/images/l/002.jpg"></a>
   <a href="/moviepages/070116-197/images/l/003.jpg"></a>
 </div>
+</body></html>
+"""
+
+
+# HTML fixture WITH itemprop=description + meta-rating stars (T10)
+CARIBBEANCOM_HTML_WITH_RATING = """\
+<html><body>
+<h1>カリビアン評価テストムービー</h1>
+<p itemprop="description">これはカリビアンのテスト説明文です。</p>
+<ul class="movie-info">
+  <li><span>再生時間</span> <span>00:45:00</span></li>
+  <li><span class="spec-title">ユーザー評価</span> <span class="spec-content rating meta-rating">★★★★</span></li>
+</ul>
 </body></html>
 """
 
@@ -355,6 +458,62 @@ class TestCaribbeancomHtmlFallback:
         scraper._session.get = MagicMock(side_effect=[json_404, html_resp, json_404, json_404])
         video = scraper.search("070116-197")
         assert video is None
+
+    def test_html_fallback_summary(self, scraper):
+        """itemprop=description → Video.summary（去標籤 + strip，非空）"""
+        json_404 = make_404_response()
+        html_resp = make_html_response(CARIBBEANCOM_HTML_WITH_RATING)
+
+        scraper._session.get = MagicMock(side_effect=[json_404, html_resp])
+        video = scraper.search("062726-001")
+
+        assert video is not None
+        assert video.summary == "これはカリビアンのテスト説明文です。"
+
+    def test_html_fallback_rating_stars(self, scraper):
+        """meta-rating ★★★★ → Video.rating == 4.0（數 ★ 顆數，非 0.4/40）"""
+        json_404 = make_404_response()
+        html_resp = make_html_response(CARIBBEANCOM_HTML_WITH_RATING)
+
+        scraper._session.get = MagicMock(side_effect=[json_404, html_resp])
+        video = scraper.search("062726-001")
+
+        assert video is not None
+        assert video.rating == 4.0
+
+    def test_html_fallback_rating_five_stars(self, scraper):
+        """meta-rating ★★★★★ → Video.rating == 5.0（上界）"""
+        html_five = CARIBBEANCOM_HTML_WITH_RATING.replace("★★★★", "★★★★★")
+        json_404 = make_404_response()
+        html_resp = make_html_response(html_five)
+
+        scraper._session.get = MagicMock(side_effect=[json_404, html_resp])
+        video = scraper.search("062626-001")
+
+        assert video is not None
+        assert video.rating == 5.0
+
+    def test_html_fallback_no_summary(self, scraper):
+        """無 itemprop=description → summary == ''（不 raise）"""
+        json_404 = make_404_response()
+        html_resp = make_html_response(CARIBBEANCOM_FULL_HTML)
+
+        scraper._session.get = MagicMock(side_effect=[json_404, html_resp])
+        video = scraper.search("070116-197")
+
+        assert video is not None
+        assert video.summary == ""
+
+    def test_html_fallback_no_rating(self, scraper):
+        """無 meta-rating span → rating is None（不 raise）"""
+        json_404 = make_404_response()
+        html_resp = make_html_response(CARIBBEANCOM_FULL_HTML)
+
+        scraper._session.get = MagicMock(side_effect=[json_404, html_resp])
+        video = scraper.search("070116-197")
+
+        assert video is not None
+        assert video.rating is None
 
 
 # ============================================================

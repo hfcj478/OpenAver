@@ -200,6 +200,7 @@
       "translate_failed": "翻譯失敗，請重試",
       "db_not_synced": "未連動 — 整理完成後不會出現在 Showcase",
       "db_sync_failed": "DB 同步失敗（檔案已整理但未出現在 Showcase）",
+      "db_synced_mobile": "已入庫",
       "skipped_nfo_multipart": "已跳過 NFO — 此檔為多段影片的第 2 段以後，由第 1 段的 NFO 管理"
     },
     "duplicate": {
@@ -322,10 +323,19 @@
       "confirm": "確認切換",
       "confirm_on": "仍要開啟"
     },
+    "switch_mode_confirm": {
+      "title": "切換媒體伺服器模式",
+      "body": "切換到「{mode}」會移除目前 {count} 個唯讀來源與它們產生的媒體卡（你輸出夾裡的檔案不會被刪），之後重新加入即可在新模式下重建。其他已開啟的分頁請重新整理後再操作。",
+      "cancel": "取消",
+      "confirm": "確認切換並移除",
+      "failed": "切換模式失敗，請稍後再試。",
+      "generate_in_progress": "產生進行中，請等產生完成後再切換模式。",
+      "mode_off": "預設模式",
+      "mode_media": "Emby·Jellyfin·Kodi 模式"
+    },
     "section": {
       "search": "搜尋與刮削",
       "scraper_advanced": "進階刮削設定",
-      "gallery_advanced": "進階顯示選項",
       "system": "系統設定"
     },
     "favorite_folder": {
@@ -370,9 +380,11 @@
       "suffix_keywords_hint": "檔名含這些關鍵字時保留為 {suffix}，多個按列表順序拼接",
       "create_folder_label": "建立資料夾",
       "folder_layers_label": "資料夾層級",
-      "folder_layer_outer": "外層",
-      "folder_layer_middle": "中層",
-      "folder_layer_inner": "內層",
+      "add_layer": "新增一層",
+      "remove_layer": "移除此層",
+      "layer_placeholder": "輸入變數或字面文字",
+      "chip_delete": "刪除",
+      "preview_empty_tag": "空值範例",
       "preview_prefix": "預覽",
       "filename_format_label": "檔案命名格式",
       "max_title_length_label": "標題長度限制",
@@ -392,7 +404,25 @@
       "external_manager_emby_hint": "另存 `{番號}-poster.jpg`／`{番號}-fanart.jpg` 並補上 NFO 辨識欄位；多段（cd1／cd2／part1）自動合併；整理後保留檔名 VR 投影標記（供 DeoVR 等頭顯 App 辨識）。注意：Emby 讀海報與 NFO，但不認 `{番號}-fanart.jpg` 背景圖命名（fanart 在 Emby 不顯示，Jellyfin／Kodi 正常）。",
       "external_manager_kodi_hint": "另存 `{番號}-poster.jpg`／`{番號}-fanart.jpg`（Kodi 各種資料夾結構都辨識），並補上 NFO 辨識欄位；cd1／cd2／part1 多段自動合併。",
       "download_sample_images_label": "下載劇照",
-      "download_sample_images_hint": "整理時自動下載劇照至 extrafanart/ 子目錄（需啟用「建立資料夾」）"
+      "download_sample_images_hint": "整理時自動下載劇照至 extrafanart/ 子目錄（需啟用「建立資料夾」）",
+      "strm_mapping": {
+        "title": "播放端路徑替換",
+        "intro": "當 Emby／Jellyfin／Kodi 在另一台機器、看到的來源路徑與本機不同時，用這些規則把「本機掃描前綴」替換成「播放端前綴」。沒有規則時 strm 直接寫本機路徑。",
+        "local_placeholder": "本機前綴（例：Z:\\115）",
+        "remote_placeholder": "播放端前綴（例：/volume1/movie）",
+        "add_rule": "新增規則",
+        "remove": "刪除規則",
+        "template_hint": "以下為唯讀來源目前的本機掃描路徑範本，請對齊你實際掃到的路徑前綴：",
+        "template_use": "填入左欄",
+        "rewrite_confirm": {
+          "title": "改寫既有 .strm 檔",
+          "body": "路徑規則已變更，將依新規則改寫 {count} 個既有 .strm 檔（你的影片檔案不會被動到）。",
+          "cancel": "先不改寫",
+          "confirm": "立即改寫"
+        },
+        "rewrite_done": "已改寫 {count} 個 .strm 檔",
+        "rewrite_failed": "改寫既有 .strm 失敗，路徑規則已儲存但既有檔尚未更新；請稍後再儲存一次重試。"
+      }
     },
     "gallery": {
       "output_dir_label": "輸出目錄",
@@ -415,7 +445,12 @@
       "items_per_page_label": "每頁顯示數量",
       "all": "全部",
       "min_size_label": "最小影片尺寸",
-      "min_size_hint": "0 = 不過濾"
+      "min_size_hint": "掃描 / 入庫閾值 — 0 = 不過濾；小於此不入庫（決定你看得到哪些片）",
+      "tier_display": "列表顯示預設",
+      "also_showcase_note": "也是你瀏覽頁（Showcase）的預設",
+      "export_section": "離線 HTML 匯出（Windows 本機檢視用）",
+      "export_notice": "此匯出檔為 Windows 本機雙擊檢視設計；macOS / Linux 請改用 app 瀏覽頁。（成因：封面以 <code>file://</code> 嵌入，Mac 瀏覽器會封鎖本機跨目錄檔）",
+      "mode_export_only_note": "僅影響此匯出檔（不影響 app Showcase）"
     },
     "system": {
       "default_page_label": "啟動時開啟頁面",
@@ -517,9 +552,14 @@
       "empty_line1": "尚未加入任何資料夾",
       "empty_line2": "點擊上方按鈕或拖曳資料夾至此",
       "remove_title": "移除",
+      "readonly_label": "唯讀",
+      "output_path_label": "輸出到",
+      "output_path_placeholder": "這台能寫入的輸出夾（給 Emby／Jellyfin／Kodi 掃描，可放 NAS）...",
       "output_prefix": "輸出:",
       "settings_link": "設定",
-      "copy_path": "複製路徑"
+      "copy_path": "複製路徑",
+      "cross_machine_hint": "（與上面「輸出到」資料夾無關）strm 檔裡寫的是這台看到的唯讀來源影片路徑。若播放的 Emby／Jellyfin／Kodi 在別台機器、看到的路徑不同，請到設定頁設路徑替換規則。",
+      "cross_machine_settings_link": "設定路徑替換"
     },
     "terminal": {
       "filter_all": "全部",
@@ -559,14 +599,19 @@
       "jellyfin_checking": "檢查中...",
       "jellyfin_check_done_ok": "已檢查，全部正常",
       "btn_done": "已完成",
-      "missing_both_prefix": "缺 NFO+封面:",
-      "missing_nfo_prefix": "缺 NFO:",
-      "missing_cover_prefix": "缺封面:",
+      "missing_both_prefix": "缺 NFO+封面檔案:",
+      "missing_nfo_prefix": "缺 NFO 檔案:",
+      "missing_cover_prefix": "缺封面檔案:",
       "missing_suffix": "片",
       "missing_enrich_idle": "一鍵補完",
       "missing_enrich_loading": "補完中...",
       "missing_enrich_preparing": "準備中...",
       "missing_enrich_done": "補完完成",
+      "missing_enrich_card_searching": "搜尋中…",
+      "missing_enrich_card_no_cover": "補到資料（無封面）",
+      "missing_enrich_card_not_found": "查無",
+      "missing_enrich_card_error": "失敗",
+      "missing_enrich_card_readonly": "跳過（唯讀）",
       "missing_enrich_toast_success": "補完完成！{success} 部成功",
       "missing_enrich_toast_mixed": "補完完成！{success} 部成功，{failed} 部失敗",
       "missing_enrich_batch_fail": "批次補完失敗 ({status}): {error}",
@@ -649,6 +694,15 @@
       "discard": "放棄變更",
       "save": "儲存並離開"
     },
+    "readonly_confirm_modal": {
+      "title": "設為唯讀來源？",
+      "cancel": "取消",
+      "confirm": "確認設為唯讀",
+      "intro": "唯讀來源代表 OpenAver 不會改動這個資料夾裡的任何檔案（不搬移、不改名、不寫入 NFO 或封面），改為在輸出夾另外生成一份本地媒體庫（每片一資料夾：NFO＋封面）供 OpenAver 自己瀏覽與播放。適合塞滿影片的唯讀網盤、NAS 分享、SMB 掛載等不可寫入的位置。若你只是本機一般收藏、資料夾可正常寫入，就不需要勾這個。",
+      "output_hint_offline": "目前為預設模式，產物會自動落在 App 內建的固定本地夾，不需要另外指定輸出夾。",
+      "output_hint_media_server": "目前為 Emby·Jellyfin·Kodi 模式，確認後會展開「輸出到」欄位。請指定一個這台機器能寫入的資料夾（可以是本機，也可以是掛載到這台的 NAS 共享）——不是唯讀來源本身。",
+      "nas_hint": "想餵給 NAS 上的 Emby／Jellyfin／Kodi？預設模式只生成 OpenAver 自己瀏覽用的本地庫、不會產生 .strm 捷徑檔。若你要讓媒體伺服器掃這批片，請先到「設定」把模式切到 Emby·Jellyfin·Kodi 模式。"
+    },
     "clear_cache_modal": {
       "title": "清除影片快取",
       "body_prefix": "此操作將刪除所有已快取的影片元數據（共",
@@ -674,6 +728,7 @@
     "scanner_done": "掃描完成",
     "scanner_done_with_errors": "掃描完成（部分失敗）",
     "scanner_failed": "掃描中斷",
+    "scanner_cancelled": "掃描已取消",
     "batch_enrich_started": "批次補完開始",
     "batch_enrich_done": "批次補完完成",
     "batch_enrich_done_with_errors": "批次補完（部分失敗）",
@@ -834,7 +889,8 @@
     },
     "enrich": {
       "success": "補資料完成",
-      "failed": "補資料失敗，請稍後再試"
+      "failed": "補資料失敗，請稍後再試",
+      "readonly_tooltip": "此片由唯讀來源產生，更新請至掃描頁重新產生"
     },
     "video": {
       "delete": "從收藏移除",
@@ -1045,6 +1101,11 @@
       "subtitle_nfo": "偵測到字幕時，NFO 會自動加上「中文字幕」標記",
       "jellyfin_enable": "在<strong>設定頁</strong>的「外部媒體管理器模式」選 Jellyfin、Emby 或 Kodi 後，刮削時自動產生 <code>{番號}-poster.jpg</code> + <code>{番號}-fanart.jpg</code>；選「預設（關閉）」則只產生同名封面。",
       "jellyfin_showcase": "掃描完成後可至 <code>/showcase</code> 頁面瀏覽生成結果",
+      "h6_strm_deploy": "唯讀來源 + 讓 Emby／Jellyfin／Kodi 掃到片（跨機器部署）",
+      "strm_deploy_step1": "把唯讀網盤／NAS 分享掛到 OpenAver 這台後，在 Scanner 把該資料夾勾成「唯讀」——OpenAver 不會動裡面任何檔案（不搬移、不改名、不寫入）。",
+      "strm_deploy_step2": "在「輸出到」指定一個<strong>這台能寫入</strong>的資料夾（可以是掛載到這台的 NAS 可寫共享）——生成的 <code>.strm</code>＋NFO＋封面會放這裡，再讓 Emby／Jellyfin／Kodi 指向它建媒體庫。這個輸出夾不是唯讀來源本身。",
+      "strm_deploy_step3": "若播放的那台機器看到的唯讀來源路徑跟 OpenAver 看到的不一樣（例如 OpenAver 上是 <code>Z:\\115</code>、NAS 上是 <code>/volume1/115</code>），到<strong>設定頁</strong>的「播放端路徑替換」加一條對應規則，否則 <code>.strm</code> 會指向播放端找不到的路徑。",
+      "strm_deploy_step4": "之後改了映射規則，既有的 <code>.strm</code> 會自動一次改寫，不用重建整個媒體庫。",
       "h6_multiversion": "同片多版本（流出 / 4K / 中文字幕）怎麼在 Emby/Jellyfin 合併？",
       "multiversion_intro": "多版本合併是 Emby 與 Jellyfin 共同支援的原生功能（同一套「資料夾名 - 標籤」規則），不是哪一家獨有。把同一片各版本放進以番號命名的資料夾，檔名都以資料夾名開頭加「 - 標籤」：",
       "multiversion_rule1": "每個版本檔名<strong>必須以資料夾名開頭</strong> + 「 - 標籤」（空格-連字號-空格）",

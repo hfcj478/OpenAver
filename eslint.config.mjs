@@ -72,6 +72,139 @@ const SEL_NO_UNLOAD_LISTENER = {
     "addEventListener('unload', …) 已禁用（67-B2/CD-67-7）：新版 Chrome 以 Permissions-Policy 封鎖 'unload'，listener 靜默不註冊 + console 報錯。改用 bfcache-safe 的 'pagehide'（page-lifecycle.js 的 _doCleanup 有 _cleanedUp one-shot guard，pagehide + leavePage 雙觸發安全）。",
 };
 
+// ── 92a-T2 (CD-92a-3) hasContent 手動賦值 ban（限 search/state/**）────
+// hasContent 已改 computed getter（base.js）；禁止 this.hasContent = ... 手動賦值復活，
+// 否則會重現「loading 態殘留 stale true → 取消鈕＋清除鈕並排（兩組 X）」。
+// 只加進 Group 1（search/state/**）陣列，不新開 block（flat config 同 scope 整段 replace，
+// 新 block 會覆蓋 Group 1 既有 selector）。getter 定義是 kind:'get' Property，非 AssignmentExpression，不誤傷。
+const SEL_HASCONTENT_ASSIGN = {
+  selector:
+    "AssignmentExpression[left.type='MemberExpression'][left.property.name='hasContent']",
+  message:
+    "hasContent 已改 computed getter（CD-92a-3，base.js）：禁止手動賦值 this.hasContent = ...；值由 getter 自動推導（pageState !== 'loading' && (searchResults.length>0 || fileList.length>0)）。手動賦值會重現 loading 態殘留 stale true 的「兩組 X」bug。",
+};
+
+// ── 92b-T3 (CD-92b-3) playToIcon 移除防復活 ban ────
+// playToIcon 已由 GhostFly.playInboundFly 取代並移除（懸停+落地反饋+fallback 三分支）。
+// Group 6 抓 definition site（ghost-fly.js），Group 1 抓 caller site（batch.js，Group 6
+// ignores state/**）；flat config 同 rule 後者整段 replace，故兩 group 陣列各自帶此 selector。
+const SEL_NO_PLAYTOICON = {
+  selector: [
+    "MemberExpression[property.name='playToIcon']",
+    "Property[key.name='playToIcon']",
+  ].join(', '),
+  message:
+    "playToIcon 已於 92b 由 GhostFly.playInboundFly 取代並移除（CD-92b-3）。禁止重新引入（定義或呼叫）；改用 playInboundFly（懸停 0.5s + 落地 scale/glow + 手機 fallback 三分支）。",
+};
+
+// ── 96b-T4 (Opus-resolved decisions)：SEL_NO_ERR_IN_ALERT / SEL_NULLISH_PERPAGE / SEL_GRID_ROTATION ──
+// 來源 pytest：TestSearchErrorMessageGuard（D1）/ TestGridPerPageGuard（F2 Guard5 禁半邊）/
+// TestGridSettlePulse（C6 禁半邊，只加進管轄 pages/search/animations.js 的 Group 6，非 universal）。
+// SEL_NO_DIRECT_GSAP 依 Opus-resolved 決策 1 全部改走 static_guard_lint.mjs（純文字 regex
+// 掃描，非 AST 語意），eslint 本檔不新增 gsap 相關 selector。
+// 注意：MemberExpression 的 object.name 限定 /^(?:err|error)$/（比對原 pytest regex 的字面
+// err.message／error.message，非任意變數的 .message，例如 data.message 合法、不應誤殺——
+// 96b-T4 實測踩過這個坑：對現行 repo 跑一次 npm run lint:js 抓到 search-flow.js 433 行
+// `this.errorText = data.message || ...` 被誤判，故收斂為精確物件名比對）。
+const SEL_NO_ERR_IN_ALERT = {
+  selector: [
+    "CallExpression[callee.name='alert'] MemberExpression[object.name=/^(?:err|error)$/][property.name='message']",
+    "CallExpression[callee.object.name='window'][callee.property.name='alert'] MemberExpression[object.name=/^(?:err|error)$/][property.name='message']",
+    "AssignmentExpression[left.type='MemberExpression'][left.object.type='ThisExpression'][left.property.name='errorText'] MemberExpression[object.name=/^(?:err|error)$/][property.name='message']",
+    "CallExpression[callee.name='alert'] MemberExpression[object.name='result'][property.name='error']",
+    "CallExpression[callee.object.name='window'][callee.property.name='alert'] MemberExpression[object.name='result'][property.name='error']",
+  ].join(', '),
+  message:
+    "D1 守衛（TestSearchErrorMessageGuard，96b-T4）：alert() / window.alert() / this.errorText 賦值禁止暴露 err.message／error.message／result.error 技術細節。技術細節請降級到 console.error，使用者只看到友善中文提示。",
+};
+
+const SEL_NULLISH_PERPAGE = {
+  selector: "LogicalExpression[operator='||'] MemberExpression[property.name='items_per_page']",
+  message:
+    "F2 Guard5（TestGridPerPageGuard，96b-T4）：items_per_page 用 || 會把合法的 0（設定頁「全部」選項）吞成 fallback，必須改用 ??（nullish coalescing）只對 null/undefined 走預設值。",
+};
+
+const SEL_GRID_ROTATION = {
+  selector: "Property[key.name='playGridSettle'] Property[key.name='rotation']",
+  message:
+    "C6 約束（TestGridSettlePulse，96b-T4）：playGridSettle 動畫方法體內禁止出現 rotation 屬性（grid settle 落地效果不應帶旋轉）。",
+};
+
+// ── 96b-T5 (Opus-resolved decision 1)：SEL_TRACKED_EVENTSOURCE（只加 Group 1，非 universal）──
+// 來源：TestEventSourceTracking::test_no_bare_new_event_source_in_search_state
+// （tests/unit/test_frontend_lint.py:6009-6021）。只掃 pages/search/state/*.js（非遞迴），
+// 裸 new EventSource(...)（同一行未經 _trackConnection 包裝）禁止。
+// 🔴 只加進 Group 1：scanner/state-scan.js（3 處）與 showcase/state-lightbox.js（1 處）目前有
+// 現行合法但未被此 pytest 覆蓋的裸 new EventSource(...)，兩者落在 Group 6 catch-all，若加進
+// Group 3/Group 6/universal 會讓這兩檔立刻變 RED（真實迴歸，非假設）。Group 1 本身即精確邊界
+// （與 pytest 掃描目錄完全對齊），不需要任何白名單機制。
+const SEL_TRACKED_EVENTSOURCE = {
+  selector:
+    "NewExpression[callee.name='EventSource']:not(CallExpression[callee.property.name='_trackConnection'] > NewExpression[callee.name='EventSource'])",
+  message:
+    "T4.1 守衛（TestEventSourceTracking，96b-T5）：new EventSource(...) 必須包在 this._trackConnection(...) 內（search/state/** 專屬，連線追蹤 registry 依賴此包裝）。",
+};
+
+// ── 96b-T5 (Opus-resolved decision 3)：SEL_LONGPRESS_IDENT（universal，全部 10 個 group）──
+// 來源意圖：TestLongPressTouchSuppression docstring 描述的已退役 long-press.js helper 機制
+// （shared/long-press.js 整檔已於 74c-T3 刪除）。全 repo 現況零殘留（grep -rn longPress web/ 零命中）。
+// 前瞻防禦網（同 SEL_NO_PLAYTOICON／SEL_STARSETTLE_LITERAL 先例）：對已退役 identifier 建
+// universal ban，非現存斷言的忠實複製。單一 Identifier selector 同時涵蓋函式宣告/member access/
+// object property key 三種語法形式（ESTree 統一表示為 Identifier 節點，非-computed 情境下）。
+const SEL_LONGPRESS_IDENT = {
+  selector:
+    "Identifier[name=/^(?:longPressStart|longPressEnd|longPressCancel|longPressClickGuard)$/]",
+  message:
+    "long-press.js helper 機制（74c-T3 已退役）的 longPressStart/longPressEnd/longPressCancel/longPressClickGuard identifier 禁止重新引入（96b-T5 前瞻防禦網）。",
+};
+
+// ── 96d-T1（TestSimilarStageGuard::test_no_clip_selector_in_js）：SEL_CLIP_BAN selector A
+// —— .clip- selector 字面字串搭配 closest/matches/querySelector(All) 全 repo 禁令，
+// universal（9/10 group，跳過 Group 5 = pages/motion-lab/constellation-host.js 單一檔案白名單，
+// 非整個 pages/motion-lab/ 目錄——該目錄目前唯一檔案就是 constellation-host.js，故現況等效，
+// 但若日後在 pages/motion-lab/ 底下新增其他 JS 檔，該新檔會落入 Group 6 catch-all 而被此規則
+// 攔截（fail-closed，過嚴），屆時須把 SEL_CLIP_BAN 排除範圍手動擴充到新檔，comment/code 才會
+// 重新對齊原 pytest 的整目錄 rglob 排除語意。Codex 96d P3 fix：comment/message 修正為誠實描述
+// 單一檔案例外，不動 files/ignores/selector 本身（避免 flat-config replace-trap + 誤用
+// constellation-host 專屬 selector 到假設中的其他檔案）──
+const SEL_CLIP_BAN = {
+  selector: [
+    // test_no_clip_selector_in_js（TestSimilarStageGuard）：closest/matches/querySelector(All) 搭配
+    // .clip- selector 字面字串，全 repo（除 Group 5 單一檔案 constellation-host.js 白名單）
+    "CallExpression[callee.property.name=/^(?:closest|matches|querySelector|querySelectorAll)$/][arguments.0.value=/\\.clip-/]",
+  ].join(', '),
+  message:
+    "TestSimilarStageGuard（96d-T1）：.clip- selector 已於 57c-T4/T5 rename 為 .similar-stage，禁止在 closest/matches/querySelector(All) 使用（pages/motion-lab/constellation-host.js 單一檔案的 .clip-lab-* sandbox 白名單除外，該檔不吃此規則；同目錄下其他檔案仍受此規則約束）。",
+};
+
+// ── 96d-T1（TestSimilarStageGuard::test_no_clip_alpine_methods_in_showcase_and_similar）：
+// SEL_CLIP_METHOD_IDENT —— 已退役 *Clip* Alpine method 識別字禁令。
+// ⚠ 只加進 Group 5b（state-similar.js），不可 universal——pages/motion-lab.js /
+// pages/motion-lab-state.js 的合法 playClipPathReveal 會被誤傷（96d-T1 實測發現，見 task card）。
+const SEL_CLIP_METHOD_IDENT = {
+  selector: "Identifier[name=/^(?:on|play|build|calc|destroy|init|open|close)Clip[A-Z]/]",
+  message:
+    "TestSimilarStageGuard（96d-T1）：已退役 *Clip* Alpine method 識別字（57c-T4/T5 rename 為 *Similar*），state-similar.js 禁止重新引入。",
+};
+
+// ── 96e-T3（TestVideoPlaybackGuard〔a〕，CD-96-15 鎖定）：SEL_NO_WINDOW_OPEN_PATH
+// （universal，全部 10 個 group）── 來源 pytest regex `window\.open\s*\(\s*path\s*,`：
+// window.open( 呼叫、第一參數是裸 identifier `path`、且後面接逗號（第二參數存在）。
+// esquery `arguments.length>1` 語法已 scratch 實證支援（見 TASK-96e-T3.md 記錄）：
+//   - window.open(path, '_blank') → fire（RED，符合 pytest 原意）
+//   - window.open(path)（單參數、無逗號）→ 不 fire（GREEN，與 pytest 一致，非省略版本）
+//   - window.open(url, '_blank')（非 path 變數名）→ 不 fire（GREEN，不誤殺 result-card.js/
+//     state-videos.js 既有合法 window.open(url,...) / window.open('/api/gallery/player?...', ...)）
+// pytest 掃描範圍原是 pages/ + components/（不含 shared/），比照既有 universal selector
+// （SEL_WINDOW_CONFIRM/SEL_NO_UNLOAD_LISTENER）加進全部 10 群：Group 4/5/7（shared/ 三檔）
+// 技術上超出原範圍，但同 CD-96e-6「寧嚴不寬」，live grep 確認這 3 檔零 window.open( 用法，零風險。
+const SEL_NO_WINDOW_OPEN_PATH = {
+  selector:
+    "CallExpression[callee.object.name='window'][callee.property.name='open'][arguments.0.name='path'][arguments.length>1]",
+  message:
+    "TestVideoPlaybackGuard（96e-T3，CD-96-15〔a〕）：window.open(path, ...) 直接開路徑會被瀏覽器阻擋 file:/// URI。改走 /api/gallery/player?path= 代理播放。",
+};
+
 export default [
   // ── 全域基礎設定 ──────────────────────────────────────────────
   {
@@ -133,6 +266,8 @@ export default [
 
   // Group 1: search/state/** — createElement + showModal + window.confirm + BreathingManager（最嚴）
   // + starSettle Literal ban（Codex r1 P3）
+  // + SEL_TRACKED_EVENTSOURCE（96b-T5 Opus-resolved 決策 1）：只加此 group，見常數定義處註解
+  // + SEL_LONGPRESS_IDENT（96b-T5 Opus-resolved 決策 3，universal）
   {
     files: ["web/static/js/pages/search/state/**/*.js"],
     rules: {
@@ -144,6 +279,14 @@ export default [
         SEL_NO_UNLOAD_LISTENER,
         SEL_BREATHING_MANAGER_NEW,
         SEL_STARSETTLE_LITERAL,
+        SEL_HASCONTENT_ASSIGN,
+        SEL_NO_PLAYTOICON,
+        SEL_NO_ERR_IN_ALERT,
+        SEL_NULLISH_PERPAGE,
+        SEL_TRACKED_EVENTSOURCE,
+        SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },
@@ -170,6 +313,12 @@ export default [
           message:
             "closeSimilarMode 只能在 state-similar.js 定義（CD-56C-4 單一定義原則）。其他檔案可呼叫 this.closeSimilarMode()，但不可定義同名 method。",
         },
+        SEL_SHOW_MODAL,
+        SEL_NO_ERR_IN_ALERT,
+        SEL_NULLISH_PERPAGE,
+        SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },
@@ -183,7 +332,17 @@ export default [
     files: ["web/static/js/**/*.js"],
     ignores: ["web/static/js/pages/**/state/**/*.js"],
     rules: {
-      "no-restricted-syntax": ["error", SEL_WINDOW_CONFIRM, SEL_NO_UNLOAD_LISTENER],
+      "no-restricted-syntax": [
+        "error",
+        SEL_WINDOW_CONFIRM,
+        SEL_NO_UNLOAD_LISTENER,
+        SEL_SHOW_MODAL,
+        SEL_NO_ERR_IN_ALERT,
+        SEL_NULLISH_PERPAGE,
+        SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
+        SEL_NO_WINDOW_OPEN_PATH,
+      ],
     },
   },
 
@@ -225,6 +384,12 @@ export default [
           message:
             "SVG rail y2 屬性只能在 rails.js（setRailCoords）或 breathing.js（ticker follow）內設定，不在 animations.js 直接 setAttribute。",
         },
+        SEL_SHOW_MODAL,
+        SEL_NO_ERR_IN_ALERT,
+        SEL_NULLISH_PERPAGE,
+        SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },
@@ -306,6 +471,11 @@ export default [
           message:
             "T6 決策（CD-T6-3 / spec §4.2）：hover guide 改用 strokeOpacity 0→0.10 tween（極淡引導線），禁止在 onHoverEnter 呼叫 railFocusPulse()——後者把 strokeOpacity 拉到 0.85（粗線 + bright），不符 T6「rail 永遠不是主角」語義（spec §2.4）。",
         },
+        SEL_SHOW_MODAL,
+        SEL_NO_ERR_IN_ALERT,
+        SEL_NULLISH_PERPAGE,
+        SEL_LONGPRESS_IDENT,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },
@@ -331,6 +501,13 @@ export default [
           message:
             "Set.prototype.intersection 為 ES2025 API，尚未進入 OpenAver baseline。請改用 [...setA].filter(x => setB.has(x))。",
         },
+        SEL_SHOW_MODAL,
+        SEL_NO_ERR_IN_ALERT,
+        SEL_NULLISH_PERPAGE,
+        SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
+        SEL_CLIP_METHOD_IDENT,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },
@@ -357,6 +534,7 @@ export default [
         SEL_NO_UNLOAD_LISTENER,
         SEL_BREATHING_MANAGER_NEW,
         SEL_STARSETTLE_LITERAL,
+        SEL_NO_PLAYTOICON,
         {
           // CD-T2FIX-3：Set.prototype.intersection 為 ES2025 API，尚未進入 OpenAver baseline
           // Codex r2 F1：改用 MemberExpression[property.name='intersection'] 以同時捕捉
@@ -398,6 +576,90 @@ export default [
           selector: "TemplateElement[value.cooked=/variant_id=/]",
           message: "variant_id= fetch param 的 route 端已在 spec-85 T2 移除，前端不應再送此參數。",
         },
+        SEL_SHOW_MODAL,
+        SEL_NO_ERR_IN_ALERT,
+        SEL_NULLISH_PERPAGE,
+        // 96b-T4：pages/search/animations.js 的 playGridSettle 方法落在此 catch-all group 管轄
+        // （Group 6 ignores 只列 shared/constellation/animations.js，非 pages/search/animations.js，
+        // 兩者是不同檔）。SEL_GRID_ROTATION 靠 Property[key.name='playGridSettle'] descendant
+        // 自我限定範圍，file-scoped 語意等同既有 setAttribute 類禁令，非 universal。
+        SEL_GRID_ROTATION,
+        SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
+        SEL_NO_WINDOW_OPEN_PATH,
+      ],
+    },
+  },
+
+  // Group 7b (feature/95 T7 · CD-95a-10〔2〕): settings JS — 禁硬編變數陣列復活
+  //   （命名區變數集收斂為 SSOT `/api/config/format-variables`，前端不得再 fork
+  //   `[{ name:'{num}', ... }, ...]` 硬編清單）。
+  // ⚠ flat config 同 rule 後者整段 replace：此 group 的 no-restricted-syntax 會**取代**
+  //   上方廣域 `web/static/js/**/*.js` group（含 window.confirm / unload / BreathingManager /
+  //   starSettle / playToIcon / Set.intersection / closeSimilarMode / 5× variant bans）對
+  //   settings JS 的規則。故必須**完整重述**該清單 + 疊加新 selector，否則 settings JS 繞過全部。
+  //   （與 Group 8 對 Group 1 的重述同一 flat-config 陷阱；mutation 自驗見 test_frontend_lint。）
+  {
+    files: ["web/static/js/pages/settings/**/*.js"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        // ── 重述廣域 group（web/static/js/**/*.js）全部 selector（不可省）──
+        SEL_WINDOW_CONFIRM,
+        SEL_NO_UNLOAD_LISTENER,
+        SEL_BREATHING_MANAGER_NEW,
+        SEL_STARSETTLE_LITERAL,
+        SEL_NO_PLAYTOICON,
+        {
+          selector: "MemberExpression[property.name='intersection']",
+          message:
+            "Set.prototype.intersection 為 ES2025 API，尚未進入 OpenAver baseline。請改用 [...setA].filter(x => setB.has(x))。",
+        },
+        {
+          selector: [
+            "Property[key.name='closeSimilarMode']",
+            "MethodDefinition[key.name='closeSimilarMode']",
+          ].join(', '),
+          message:
+            "closeSimilarMode 只能在 state-similar.js 定義（CD-56C-4 單一定義原則）。其他檔案可呼叫 this.closeSimilarMode()，但不可定義同名 method。",
+        },
+        {
+          selector: "Identifier[name='variantIdx']",
+          message: "variantIdx（javbus variant 維度）已隨 spec-85 全棧移除。switch-source 只在 source 維度輪替，禁止重新引入 variant 維度。",
+        },
+        {
+          selector: "MemberExpression[property.name='_all_variant_ids']",
+          message: "_all_variant_ids 後端已不再填（spec-85 T1a），前端讀取是死碼，禁止重新引入。",
+        },
+        {
+          selector: "Literal[value='_all_variant_ids']",
+          message: "_all_variant_ids 後端已不再填（spec-85 T1a），前端讀取是死碼，禁止重新引入（bracket/字面量形式）。",
+        },
+        {
+          selector: "MemberExpression[property.name='_variant_id']",
+          message: "_variant_id（javbus variant 欄位）已隨 spec-85 移除，禁止重新引入。",
+        },
+        {
+          selector: "Literal[value='_variant_id']",
+          message: "_variant_id（javbus variant 欄位）已隨 spec-85 移除，禁止重新引入（bracket/字面量形式）。",
+        },
+        {
+          selector: "TemplateElement[value.cooked=/variant_id=/]",
+          message: "variant_id= fetch param 的 route 端已在 spec-85 T2 移除，前端不應再送此參數。",
+        },
+        // ── 疊加 T7 新 selector：禁硬編 `{ name:'{token}' }` 變數物件陣列（CD-95a-10〔2〕）──
+        // 只匹配 name 值為 `{字母}` 形（不誤傷 placeholder 樣板字串 / 一般 name 屬性）。
+        {
+          selector: "Property[key.name='name'][value.value=/^\\{[a-zA-Z]+\\}$/]",
+          message:
+            "命名區變數集已收斂為 SSOT `/api/config/format-variables`（CD-95a-8/10）。禁止在 settings JS 硬編 `[{ name:'{num}', ... }]` 變數清單復活；label 走 i18n _labelFor、whitelist 走 _whitelistFor。",
+        },
+        SEL_SHOW_MODAL,
+        SEL_NO_ERR_IN_ALERT,
+        SEL_NULLISH_PERPAGE,
+        SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },
@@ -423,6 +685,15 @@ export default [
             "TASK-80：persistence.js restore 禁呼叫 playGridSettle（返回既有 grid 即時呈現、不重播 scale stagger）。" +
             "fresh-search 入口在 search-flow.js。",
         },
+        SEL_NO_ERR_IN_ALERT,
+        SEL_NULLISH_PERPAGE,
+        // 96b-T5 Codex P2 修正：SEL_TRACKED_EVENTSOURCE 呼應 Group 1 的 EventSource 禁令
+        // （persistence.js 落在 search/state/ 管轄範圍，被此 Group 8 override 取代，flat config
+        // 同 rule 後者整段 replace，須重述才不會漏掉）。
+        SEL_TRACKED_EVENTSOURCE,
+        SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },
@@ -506,6 +777,12 @@ export default [
           message:
             "CD-86-14: search 採用分支禁止 inline 賦值 this.searchResults（會遺漏 pageState/listMode/checkLocalStatus/actressProfile 等）。改呼叫 this._commitSearchResults(...)。",
         },
+        SEL_SHOW_MODAL,
+        SEL_NO_ERR_IN_ALERT,
+        SEL_NULLISH_PERPAGE,
+        SEL_LONGPRESS_IDENT,
+        SEL_CLIP_BAN,
+        SEL_NO_WINDOW_OPEN_PATH,
       ],
     },
   },

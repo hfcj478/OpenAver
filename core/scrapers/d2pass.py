@@ -1,4 +1,5 @@
 """D2Pass 聯合爬蟲（1Pondo / Caribbeancom / 10musume）"""
+import html
 import re
 import requests
 from typing import Optional
@@ -149,9 +150,15 @@ class D2PassScraper(BaseScraper):
         # 詳情頁 URL
         detail_url = self.SITE_DETAIL_URL[site].format(id=movie_id)
 
-        # AvgRating（Video 選用欄位）
+        # AvgRating（Video 選用欄位）— <=5 sanity guard，畸形值 (>5) 丟棄
         avg_rating = data.get('AvgRating')
-        rating = float(avg_rating) if avg_rating is not None else None
+        rating = None
+        if avg_rating is not None:
+            avg_f = float(avg_rating)
+            rating = avg_f if avg_f <= 5 else None
+
+        # 簡介（日文 Desc）
+        summary = data.get('Desc') or ''
 
         # Series
         series = data.get('Series') or data.get('SeriesJa') or data.get('SeriesEn') or ''
@@ -182,6 +189,7 @@ class D2PassScraper(BaseScraper):
             series=series,
             duration=duration,
             sample_images=sample_images,
+            summary=summary,
         )
 
     def _fetch_gallery_from_html(self, site: str, movie_id: str) -> list[str]:
@@ -275,6 +283,21 @@ class D2PassScraper(BaseScraper):
                     seen.add(n)
                     sample_images.append(f'{base}/{n}.jpg')
 
+            # Summary — <p itemprop="description"> 內文（去內層標籤 + unescape）
+            summary = ''
+            m = re.search(r'<p[^>]*itemprop="description"[^>]*>(.*?)</p>', html_text, re.DOTALL)
+            if m:
+                summary = re.sub(r'<[^>]+>', '', m.group(1))
+                summary = html.unescape(summary).strip()
+
+            # Rating — meta-rating span 內 filled ★ rune-count（0–5）
+            rating: Optional[float] = None
+            m = re.search(r'meta-rating[^>]*>([^<]*)</span>', html_text)
+            if m:
+                stars = m.group(1).count('★')
+                if 0 < stars <= 5:
+                    rating = float(stars)
+
             # Cover
             cover_url = f'https://www.caribbeancom.com/moviepages/{movie_id}/images/l_l.jpg'
 
@@ -291,10 +314,11 @@ class D2PassScraper(BaseScraper):
                 tags=tags,
                 source=self.source_name,
                 detail_url=detail_url,
-                rating=None,
+                rating=rating,
                 series=series,
                 duration=duration,
                 sample_images=sample_images,
+                summary=summary,
             )
         except Exception as e:
             logger.debug(f"D2Pass caribbeancom HTML fallback failed: {e}")

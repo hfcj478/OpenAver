@@ -97,7 +97,7 @@
                 <!-- Row 4: Details (merged) -->
                 <!-- 分隔符 " · " 內嵌於各 span 開頭，隨 x-show 一起顯示/隱藏，避免孤立 · -->
                 <div class="lb-details">
-                    <span x-text="currentLightboxVideo()?.number || '-'"></span>
+                    <span class="lb-detail-num" x-text="currentLightboxVideo()?.number || '-'"></span>
                     <span x-show="currentLightboxVideo()?.maker">
                         &nbsp;·&nbsp;<span x-text="currentLightboxVideo()?.maker"></span>
                     </span>
@@ -335,7 +335,16 @@
             <small class="state-page-hint">{{ t('search.empty.drag_hint') }}</small>
             <div class="empty-explainer">
                 <p class="empty-explainer-line">{{ t('search.empty.explainer_lookup') }}</p>
-                <p class="empty-explainer-line">{{ t('search.empty.explainer_organize') }}</p>
+                {# 92a-T4: explainer_organize 兩整理標籤旁內嵌對應 icon（單片 file-earmark-plus / 批次 folder-plus，success 綠）。
+                   用 scrape_nfo/scrape_all 當 replace needle → 語言無關、四語系文字全保留、不新增 i18n key。內容全來自受控 i18n（|safe 安全，比照 :957）。 #}
+                {% set _single_label = t('search.filelist.scrape_nfo') %}
+                {% set _batch_label = t('search.filelist.scrape_all') %}
+                <p class="empty-explainer-line">{{
+                    t('search.empty.explainer_organize')
+                    | replace(_single_label, _single_label ~ ' <i class="bi bi-file-earmark-plus explainer-icon" aria-hidden="true"></i>')
+                    | replace(_batch_label, _batch_label ~ ' <i class="bi bi-folder-plus explainer-icon" aria-hidden="true"></i>')
+                    | safe
+                }}</p>
             </div>
         </div>
 
@@ -783,6 +792,7 @@
 
             <!-- 檔案列表（卡片外，下方獨立） -->
             <div class="file-list-section" id="fileListSection"
+                 :class="{ 'organize-tray': listMode === 'file' && fileList.length > 0 }"
                  x-show="(listMode === 'file' && fileList.length > 0) || (listMode === 'search' && searchResults.length > 0)">
                 <div class="file-list-header">
                     <span class="file-count" id="fileCountText" x-text="fileCountText()">0 個檔案</span>
@@ -867,7 +877,8 @@
                                     @click.stop="scrapeSingle(i)"
                                     class="btn btn-sm btn-outline btn-success btn-scrape-single"
                                     title="{{ t('search.filelist.scrape_nfo') }}">
-                                <i class="bi bi-folder-plus"></i>
+                                <!-- 92a-T4: 單片＝bi-file-earmark-plus（一個檔案，與 row 檔案圖示 bi-file-earmark-play 同家族）；批次維持 bi-folder-plus（一整夾） -->
+                                <i class="bi bi-file-earmark-plus"></i>
                             </button>
 
                             <!-- Scraping spinner -->

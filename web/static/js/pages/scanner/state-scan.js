@@ -1,5 +1,8 @@
+import { dirPath } from '@/shared/dir-path.js';
+
 export function stateScan() {
     return {
+        dirPath,
         // ===== Data State =====
         directories: [],
         config: {},
@@ -17,6 +20,10 @@ export function stateScan() {
         folderSnapshot: null,
         pendingNavigationUrl: '',
         dirtyCheckModalOpen: false,
+
+        // ===== TASK-90b-T1: Readonly Confirm Modal =====
+        readonlyConfirmModalOpen: false,
+        readonlyConfirmTargetIdx: null,
 
         // ===== Drag-drop State =====
         dragCounter: 0,
@@ -149,30 +156,10 @@ export function stateScan() {
             // 暴露 PyWebView 回調
             window.addScannerFolder = (path) => self.addFolderPath(path);
 
-            // 初始載入
-            await this.loadConfig();
-            this.loadStats();
-
-            // T7b: 恢復日誌（確保 DOM 已渲染）
-            await this.$nextTick();
-            this.restoreLogs();
-
-            // T10: 觸發 missing check（loadStats 後）
-            this.checkMissing();
-
-            // T10: restore pending enrich
-            const pending = localStorage.getItem('avlist_enrich_pending');
-            if (pending) {
-                try {
-                    const items = JSON.parse(pending);
-                    if (Array.isArray(items) && items.length > 0) {
-                        this.missingItems = items;
-                        this.resumePillVisible = true;
-                    }
-                } catch { localStorage.removeItem('avlist_enrich_pending'); }
-            }
-
             // T5.1: 接入統一 page lifecycle
+            // 提前到所有 await 之前註冊：closure 讀的都是 this.* runtime state，
+            // 提前註冊不改變行為；但避免 loadConfig fetch 卡住時離頁 dirty-guard /
+            // beforeunload / cleanup hook 永遠不註冊（SCAN HIGH #1）。
             if (window.__registerPage) {
                 window.__registerPage({
                     beforeLeave: (href) => {
@@ -221,8 +208,37 @@ export function stateScan() {
                             this._enrichAbortController.abort();
                             this._enrichAbortController = null;
                         }
+                        // TASK-94 Codex P1：離頁時清最後一片 flush dwell timer，避免 timer 事後
+                        // 觸發 finalize（checkMissing fetch / state 變更）clobber 已離頁狀態。
+                        if (this._flushTimer) {
+                            clearTimeout(this._flushTimer);
+                            this._flushTimer = null;
+                        }
                     }
                 });
+            }
+
+            // 初始載入
+            await this.loadConfig();
+            this.loadStats();
+
+            // T7b: 恢復日誌（logOutput 為 scanner.html 靜態 x-ref 元素，
+            // init 時早已 mount，直接同步還原、無需等 $nextTick）
+            this.restoreLogs();
+
+            // T10: 觸發 missing check（loadStats 後）
+            this.checkMissing();
+
+            // T10: restore pending enrich
+            const pending = localStorage.getItem('avlist_enrich_pending');
+            if (pending) {
+                try {
+                    const items = JSON.parse(pending);
+                    if (Array.isArray(items) && items.length > 0) {
+                        this.missingItems = items;
+                        this.resumePillVisible = true;
+                    }
+                } catch { localStorage.removeItem('avlist_enrich_pending'); }
             }
         },
 
@@ -435,8 +451,8 @@ export function stateScan() {
         },
 
         addFolderPath(folderPath) {
-            if (!this.directories.includes(folderPath)) {
-                this.directories.push(folderPath);
+            if (!this.directories.some(d => dirPath(d) === folderPath)) {
+                this.directories.push({ path: folderPath, readonly: false, output_path: '' });
                 this.configDirty = true;
             } else {
                 this.showToast(window.t('scanner.toast.folder_already_added'), 'warning');
@@ -456,12 +472,12 @@ export function stateScan() {
             const path = this.manualPath.trim();
             if (!path) return;
 
-            if (this.directories.includes(path)) {
+            if (this.directories.some(d => dirPath(d) === path)) {
                 this.showToast(window.t('scanner.toast.folder_already_added'), 'warning');
                 return;
             }
 
-            this.directories.push(path);
+            this.directories.push({ path: path, readonly: false, output_path: '' });
             this.configDirty = true;
             this.manualPath = '';
         },
@@ -492,6 +508,37 @@ export function stateScan() {
             e.preventDefault();
             this.dragCounter = 0;
             this.showDragOverlay = false;
+        },
+
+        // ===== TASK-90b-T1: Readonly Confirm Modal Actions =====
+        onReadonlyToggleClick(idx) {
+            const dir = this.directories[idx];
+            if (!dir) return;
+            if (dir.readonly) {
+                // 勾→未勾：不攔截，直接生效（Non-Goal 明定不加確認）
+                dir.readonly = false;
+                this.configDirty = true;
+            } else {
+                // 未勾→勾：不立即改 dir.readonly，開 modal
+                this.readonlyConfirmTargetIdx = idx;
+                this.readonlyConfirmModalOpen = true;
+            }
+        },
+
+        readonlyConfirmAccept() {
+            if (this.readonlyConfirmTargetIdx == null || !this.directories[this.readonlyConfirmTargetIdx]) {
+                this.readonlyConfirmModalOpen = false;
+                return;
+            }
+            this.directories[this.readonlyConfirmTargetIdx].readonly = true;
+            this.configDirty = true;
+            this.readonlyConfirmModalOpen = false;
+            this.readonlyConfirmTargetIdx = null;
+        },
+
+        readonlyConfirmCancel() {
+            this.readonlyConfirmModalOpen = false;
+            this.readonlyConfirmTargetIdx = null;
         },
 
         // ===== Dirty Check Modal Actions =====
@@ -718,7 +765,10 @@ export function stateScan() {
             }
 
             // 自動儲存設定
-            if (this.configDirty) {
+            // configDirty：設定表單改動；isFolderDirty：資料夾清單改動（含 readonly 切換、
+            // output_path 編輯）。後者不會設 configDirty，若不納入 gate，readonly/輸出路徑的
+            // 編輯不會存檔，generate 會用舊的持久化設定 → readonly 路徑永遠不執行（PR#91 ①）。
+            if (this.configDirty || this.isFolderDirty) {
                 await this.saveConfig();
             }
 
@@ -770,7 +820,33 @@ export function stateScan() {
                             this.nfoUpdateVisible = false;
                         }
 
-                        this.showToast(`成功產生 ${data.video_count} 部影片列表`, 'success');
+                        // 88c-P2: 唯讀來源整源失敗（source_errors）或個別影片失敗（failed）時
+                        // 完成 toast 走 warn，不可純 success（後端完成通知已同步納入兩者）。
+                        // no_scrape 是「線上查無 metadata」的正常情況，不計為失敗（PR#91 ②）。
+                        // 89b-T6（Codex P1）：後端完成通知 warn-gate 已納入 no_output（未設輸出夾）/
+                        // unreachable（來源無法連線）/ partial（partial-scan 略過刪除偵測）三種情境
+                        // （web/routers/scanner.py），但 scanner 頁自己的完成 toast 沒同步 consult，
+                        // 三者原本仍顯示 success，違反 spec §89b.3.3「警告並略過，不誤報成功」。
+                        // pruned 是正常成功結果（非警告），不納入此判斷。
+                        const srcErrors = (data.readonly_stats && data.readonly_stats.source_errors) || 0;
+                        const failedCount = (data.readonly_stats && data.readonly_stats.failed) || 0;
+                        const noOutput = (data.readonly_stats && data.readonly_stats.no_output) || 0;
+                        const unreachable = (data.readonly_stats && data.readonly_stats.unreachable) || 0;
+                        const partial = (data.readonly_stats && data.readonly_stats.partial) || 0;
+                        if (srcErrors > 0 || failedCount > 0 || noOutput > 0 || unreachable > 0 || partial > 0) {
+                            const parts = [];
+                            if (srcErrors > 0) parts.push(`${srcErrors} 個唯讀來源失敗`);
+                            if (failedCount > 0) parts.push(`${failedCount} 部失敗`);
+                            if (unreachable > 0) parts.push(`${unreachable} 個來源無法連線`);
+                            if (partial > 0) parts.push(`${partial} 個來源部分讀取失敗`);
+                            if (noOutput > 0) parts.push(`${noOutput} 個未設輸出夾`);
+                            this.showToast(
+                                `完成 ${data.video_count} 部，但 ${parts.join('、')}，詳細見日誌`,
+                                'warn'
+                            );
+                        } else {
+                            this.showToast(`成功產生 ${data.video_count} 部影片列表`, 'success');
+                        }
 
                         // a5: Windows 長路徑警告
                         if (data.long_paths && data.long_paths.length > 0) {

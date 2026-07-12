@@ -26,7 +26,7 @@ def db_with_actresses(tmp_path: Path):
 @pytest.fixture
 def client_with_db(monkeypatch, db_with_actresses):
     """TestClient with monkeypatched DB path，actress router 用"""
-    monkeypatch.setattr("core.database.get_db_path", lambda: db_with_actresses)
+    monkeypatch.setattr("core.database.connection.get_db_path", lambda: db_with_actresses)
     monkeypatch.setattr("web.routers.actress.init_db", lambda: None)
     # patch get_local_photo_path to return None (no photo files in test)
     monkeypatch.setattr("web.routers.actress.get_local_photo_path", lambda name: None)

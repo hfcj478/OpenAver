@@ -829,14 +829,30 @@
     margin: 0 0.35em;
 }
 
-/* Details: merged meta row (number · maker · director · duration · series · label · date · size) */
+/* Details: merged meta row (number · maker · director · duration · series · label · date · size)
+   93-T9：字級層次 + 髮絲線 + 間距（不加色塊/玻璃/accent 底，封面仍主角，ui-conventions §0/§3）。
+   中繼區以髮絲線與上方 actor 區克制分隔。 */
 .lightbox-metadata .lb-details {
     font-size: 0.75rem;
     color: var(--text-muted);
     margin-bottom: 0.5rem;
+    padding-top: 0.4rem;
+    border-top: 1px solid var(--stroke-subtle);   /* 髮絲線區隔，非色塊 */
     display: flex;
     flex-wrap: wrap;
     align-items: center;          /* 讓行末 muted icon 鈕（垃圾桶）與 metadata 文字垂直置中 */
+}
+
+/* 番號：比 muted 高一階、輕微加粗，一眼可辨（不放大過頭、不用 accent、不加底色）*/
+.lightbox-metadata .lb-details .lb-detail-num {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+/* 欄位標籤（導演：/系列：/發行商：）：與其值輕微層次，值維持 muted */
+.lightbox-metadata .lb-details b {
+    font-weight: 600;
+    color: var(--text-secondary);
 }
 
 /* 分隔符由 HTML 中各 span 內部開頭的 " · " 控制，隨 x-show 一起顯示/隱藏 */
@@ -899,7 +915,7 @@
                 box-shadow var(--duration-fast) var(--ease-out);
 }
 
-.lb-action-btn:hover {
+.lb-action-btn:not(:disabled):hover {
     background: rgba(255,255,255,0.3);
     border-color: rgba(255,255,255,0.6);
     transform: scale(1.08);
@@ -1371,7 +1387,7 @@ body.similar-mobile-active [data-picker-ghost] {
                 border-color var(--fluent-duration-fast) var(--fluent-ease-standard);
 }
 
-.lightbox-metadata .lb-rescrape-gear:hover {
+.lightbox-metadata .lb-rescrape-gear:not(:disabled):hover {
     color: var(--accent);
     background: var(--surface-1);
     border-color: var(--stroke-subtle);
@@ -2367,6 +2383,13 @@ body.sidebar-collapsed .showcase-footer {
 
 .fetch-samples-btn:disabled {
     filter: grayscale(1);
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* TASK-90c-T3: 唯讀來源片寫入鈕停用態（四鈕共用）— 淺色 + not-allowed，無刪除線。
+   hover 無反饋改由各鈕 base :hover 規則的 :not(:disabled) gating 達成（readonly=disabled 不 match）。 */
+.is-readonly-disabled {
     opacity: 0.45;
     cursor: not-allowed;
 }

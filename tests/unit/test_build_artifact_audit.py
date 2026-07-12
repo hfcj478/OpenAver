@@ -244,6 +244,87 @@ def test_pytest_base_url_not_flagged(tmp_path):
     )
 
 
+# ── dist-info existence checks (spec-97 G-2 static first pass) ─────────────────
+
+
+def _dist_info(pkg_ver: str) -> str:
+    """Return a canonical site-packages .dist-info/METADATA path.
+
+    pkg_ver e.g. 'curl_cffi-0.15.0' → .../site-packages/curl_cffi-0.15.0.dist-info/METADATA
+    """
+    return f"OpenAver/python/Lib/site-packages/{pkg_ver}.dist-info/METADATA"
+
+
+def test_curl_cffi_pkg_without_dist_info_fails(tmp_path):
+    """curl_cffi package present but its .dist-info stripped → HARD-FAIL.
+
+    This is the EXACT spec-97 regression: dist-info gone → PackageNotFoundError
+    at import → javdb silently disabled in every release. The audit must catch it.
+    """
+    zp = _make_zip(tmp_path, {_site("curl_cffi", "__init__.py"): b"x"})
+    code, msgs = audit(zp, "win", 55.0, False)
+    assert code == 1, f"curl_cffi without dist-info must hard-fail, got {code}\n" + "\n".join(msgs)
+    assert any("curl_cffi" in m and "FAIL" in m for m in msgs)
+
+
+def test_curl_cffi_pkg_with_dist_info_passes(tmp_path):
+    """curl_cffi package WITH its .dist-info/METADATA → pass."""
+    zp = _make_zip(
+        tmp_path,
+        {
+            _site("curl_cffi", "__init__.py"): b"x",
+            _dist_info("curl_cffi-0.15.0"): b"Name: curl_cffi\n",
+        },
+    )
+    code, msgs = audit(zp, "win", 55.0, False)
+    assert code == 0, f"curl_cffi with dist-info must pass, got {code}\n" + "\n".join(msgs)
+
+
+def test_curl_cffi_absent_without_dist_info_ok(tmp_path):
+    """The curl_cffi check is CONDITIONAL: a ZIP that doesn't ship curl_cffi at
+    all must not be forced to carry curl_cffi dist-info (guards existing tests)."""
+    zp = _make_zip(tmp_path, {_site("fastapi", "__init__.py"): b"x"})
+    code, msgs = audit(zp, "win", 55.0, False)
+    assert code == 0, f"no-curl_cffi ZIP must pass, got {code}\n" + "\n".join(msgs)
+
+
+def test_large_pkgset_zero_dist_info_fails(tmp_path):
+    """At real-artifact scale (>=20 top-level packages) a blanket dist-info
+    strip (0 dist-info dirs) must hard-fail via the ratio sanity net."""
+    entries = {_site(f"pkg{i:02d}", "__init__.py"): b"x" for i in range(22)}
+    zp = _make_zip(tmp_path, entries)
+    code, msgs = audit(zp, "win", 55.0, False)
+    assert code == 1, f"22 pkgs / 0 dist-info must hard-fail, got {code}\n" + "\n".join(msgs)
+    assert any("dist-info" in m.lower() and "FAIL" in m for m in msgs)
+
+
+def test_large_pkgset_with_dist_info_passes(tmp_path):
+    """22 packages each with a matching .dist-info → ratio satisfied → pass."""
+    entries = {}
+    for i in range(22):
+        entries[_site(f"pkg{i:02d}", "__init__.py")] = b"x"
+        entries[_dist_info(f"pkg{i:02d}-1.0.0")] = b"Name: pkg\n"
+    zp = _make_zip(tmp_path, entries)
+    code, msgs = audit(zp, "win", 55.0, False)
+    assert code == 0, f"22 pkgs / 22 dist-info must pass, got {code}\n" + "\n".join(msgs)
+
+
+def test_small_pkgset_zero_dist_info_ok(tmp_path):
+    """Below the scale gate (<20 packages) the ratio net does NOT engage —
+    small synthetic ZIPs without dist-info stay green (existing behavior)."""
+    entries = {_site(f"pkg{i}", "__init__.py"): b"x" for i in range(8)}
+    zp = _make_zip(tmp_path, entries)
+    code, msgs = audit(zp, "win", 55.0, False)
+    assert code == 0, f"8 pkgs / 0 dist-info must stay green, got {code}\n" + "\n".join(msgs)
+
+
+def test_dist_info_check_runs_on_mac(tmp_path):
+    """dist-info checks are platform-agnostic — curl_cffi strip fails on mac too."""
+    zp = _make_zip(tmp_path, {_site("curl_cffi", "__init__.py"): b"x"})
+    code, msgs = audit(zp, "mac", 60.0, False)
+    assert code == 1, f"curl_cffi strip must hard-fail on mac too, got {code}\n" + "\n".join(msgs)
+
+
 # ── Glob resolution errors ────────────────────────────────────────────────────
 
 

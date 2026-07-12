@@ -112,7 +112,7 @@ function extractChineseTitle(filename, number, actors = []) {
         const escapedNum = number.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
         name = name.replace(new RegExp(`\\[?${escapedNum}\\]?\\s*`, 'gi'), '');
     }
-    name = name.replace(/\[?[A-Za-z]{2,6}-?\d{3,5}\]?\s*/g, '');
+    name = name.replace(/\[?[A-Za-z]{2,7}-?\d{3,5}\]?\s*/g, '');
 
     name = cleanSourceSuffix(name);
     name = name.replace(/\s+/g, ' ').trim();
@@ -146,8 +146,8 @@ function extractNumber(filename) {
     const patterns = [
         /\b(FC2-PPV)-(\d{5,7})\b/i,          // FC2-PPV-1234567（優先）
         /\b([A-Z]+\d+-\d+)\b/i,              // T28-103 混合格式（字母+數字-數字）
-        /\b([A-Z]{1,5})-(\d{3,5})\b/i,       // SONE-205（支援單字母）
-        /\b([A-Z]{2,5})(\d{3,5})\b/i,        // IPTD927（無連字號需 2+ 字母避免誤判）
+        /\b([A-Z]{1,7})-(\d{3,5})\b/i,       // SONE-205（支援單字母）
+        /\b([A-Z]{2,7})(\d{3,5})\b/i,        // IPTD927（無連字號需 2+ 字母避免誤判）
     ];
 
     for (const pattern of patterns) {
@@ -200,7 +200,7 @@ async function parseFilenames(filenames) {
  */
 function formatNumber(input) {
     if (!input) return null;
-    const match = input.match(/([A-Z]{1,5})-?(\d{3,7})/i);
+    const match = input.match(/([A-Z]{1,7})-?(\d{3,7})/i);
     if (match) {
         return `${match[1].toUpperCase()}-${match[2]}`;
     }

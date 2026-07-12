@@ -129,6 +129,7 @@ class JAV321Scraper(BaseScraper):
             maker = ''
             duration: Optional[int] = None
             series = ''
+            rating: Optional[float] = None
 
             col9 = soup.select_one('.col-md-9')
             if col9:
@@ -147,6 +148,26 @@ class JAV321Scraper(BaseScraper):
                     elif label == 'シリーズ':
                         a_tag = _find_next_a_before_next_b(b)
                         series = a_tag.get_text(strip=True) if a_tag else ''
+                    elif label == '平均評価':
+                        # D5：live 是文字「平均評価: N.N」(0–5)，直接讀、勿 ÷10
+                        sibling = b.next_sibling
+                        if sibling:
+                            m = re.search(r'([0-9.]+)', str(sibling))
+                            if m:
+                                rating = float(m.group(1))
+
+            # 簡介：主 panel-body 內第一個「非空」的 .row .col-md-12。
+            # jav321 詳情頁在真正描述之前常有一個空的 .col-md-12 佔位（見 fixtures
+            # jav321_MIDV-018/SONE-103），select_one 會停在空佔位 → summary 恆空；
+            # 故 scope 到主 panel-body（避開後續 thumbnail panel）取第一個非空文字。
+            summary = ''
+            main_panel = soup.select_one('.panel-body')
+            if main_panel:
+                for cand in main_panel.select('.row .col-md-12'):
+                    text = cand.get_text(strip=True)
+                    if text:
+                        summary = text
+                        break
 
             # sample_images：跳過封面（href 結尾 /0）
             sample_images = []
@@ -178,6 +199,8 @@ class JAV321Scraper(BaseScraper):
                 duration=duration,
                 series=series,
                 sample_images=sample_images,
+                rating=rating,
+                summary=summary,
             )
 
             rate_limit(self.config.delay)

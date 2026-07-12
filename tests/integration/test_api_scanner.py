@@ -1,5 +1,6 @@
 import pytest
 import os
+import threading
 from pathlib import Path
 from urllib.parse import quote
 from core.path_utils import to_file_uri
@@ -126,6 +127,36 @@ class TestScannerAPI:
             response = client.get(f'/api/gallery/video?path={quote(path_arg)}')
 
         assert response.status_code == 403
+
+    def test_get_video_output_path_not_allowed(self, client, tmp_path, monkeypatch):
+        """TASK-88c-T1 回歸鎖：唯讀來源 output_path 底下的影片 → /api/gallery/video 仍 403
+
+        證明 get_video call site 未被 88c-T1 波及（get_image 開放 output_path、
+        get_video 刻意不對稱，spec P1a 明令）。
+        """
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        video_file = out_dir / "test.mp4"
+        video_file.write_bytes(b'fake_video_content')
+
+        test_config = {
+            "gallery": {
+                "directories": [
+                    {"path": str(src_dir), "readonly": True, "output_path": str(out_dir)},
+                ],
+                "path_mappings": {},
+            },
+            "scraper": {"video_extensions": [".mp4"]},
+        }
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: test_config)
+
+        path_arg = to_file_uri(str(video_file))
+        response = client.get(f"/api/gallery/video?path={quote(path_arg)}")
+
+        assert response.status_code == 403
+        assert "不在允許的資料夾範圍內" in response.text
 
     def test_get_player_success(self, client):
         """測試 /api/gallery/player 回傳正確的 HTML"""
@@ -411,6 +442,44 @@ class TestJellyfinCheck:
         assert 'error' in data
         assert data['error'] == '檢查圖片狀態失敗'
 
+    def test_jellyfin_check_reverse_maps_wsl_unc_path_mappings(self, tmp_path, monkeypatch):
+        """TASK-91-T2b #13：check_jellyfin_images_needed(repo, path_mappings) 在 WSL+UNC
+        mapping 環境下，os.path.exists 檢查的 cover_fs 必須是反解後的本機路徑（可真的
+        open()），而非裸 uri_to_fs_path() 產生的映射端 UNC 字串（該路徑在磁碟上不存在，
+        會讓合法影片被誤判成 need_update）。
+        """
+        import core.path_utils as path_utils
+        from core.database import init_db, VideoRepository, Video
+        from web.routers.scanner import check_jellyfin_images_needed
+
+        monkeypatch.setattr(path_utils, "CURRENT_ENV", "wsl")
+
+        nas_dir = tmp_path / "nas"
+        nas_dir.mkdir()
+        cover = nas_dir / "cover.jpg"
+        cover.write_bytes(b'\xff\xd8\xff' + b'\x00' * 50)
+        # poster/fanart 也建好，讓這部片不需要補圖（純測反解，不測補圖判定）
+        (nas_dir / "cover-poster.jpg").write_bytes(b'\x00')
+        (nas_dir / "cover-fanart.jpg").write_bytes(b'\x00')
+
+        mappings = {str(nas_dir): "//NAS/share"}
+
+        db_path = tmp_path / "t.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+        repo.upsert_batch([
+            Video(path="file:///movies/v1.mp4", mtime=1.0,
+                  cover_path="file://///NAS/share/cover.jpg"),
+        ])
+
+        result = check_jellyfin_images_needed(repo, mappings)
+
+        assert result['need_update'] == 0, (
+            f"cover/poster/fanart 皆存在（反解後本機路徑）應判定不需補圖，"
+            f"實際: {result}"
+        )
+        assert result['items'] == []
+
     def test_jellyfin_check_uses_to_thread(self):
         """靜態掃描確認 scanner.py 使用 asyncio.to_thread 包裝 _check_jellyfin_needed helper，
         且 helper 內含 db_path.exists、VideoRepository、check_jellyfin_images_needed"""
@@ -422,7 +491,7 @@ class TestJellyfinCheck:
         assert 'def _check_jellyfin_needed(' in scanner_src
         assert 'db_path.exists()' in scanner_src
         assert 'VideoRepository(db_path)' in scanner_src
-        assert 'check_jellyfin_images_needed(repo)' in scanner_src
+        assert 'check_jellyfin_images_needed(repo, path_mappings)' in scanner_src
 
     # ---- T3(40c): TTL 快取相關測試 ----
 
@@ -785,6 +854,82 @@ class TestMissingCheckAPI:
         assert isinstance(data['data']['items'], list)
         assert len(data['data']['items']) == 5000
 
+    def test_producer_row_excluded_from_buckets(self, client, tmp_path, monkeypatch):
+        """producer 產出的 row（output_dir!=''，nfo_mtime 恆 0）不進任何桶、不計入 total_missing（TASK-89b-T4）"""
+        from unittest.mock import patch
+        from core.database import Video
+        from core.path_utils import to_file_uri
+        videos = [
+            Video(path=to_file_uri(str(tmp_path / "a.mp4")), number="AAA-001",
+                  cover_path="", nfo_mtime=0.0,
+                  output_dir=to_file_uri(str(tmp_path / "out"))),
+        ]
+        db_path = self._make_db(tmp_path, videos)
+        with patch('web.routers.scanner.get_db_path', return_value=db_path):
+            resp = client.get('/api/gallery/missing-check')
+        data = resp.json()
+        assert data['success'] is True
+        assert data['data']['missing_both'] == 0
+        assert data['data']['missing_nfo'] == 0
+        assert data['data']['missing_cover'] == 0
+        assert data['data']['total_missing'] == 0
+        assert data['data']['items'] == []
+
+    def test_tried_non_producer_row_excluded_from_buckets(self, client, tmp_path, monkeypatch):
+        """scrape_attempted_at>0 但非 producer（output_dir==''）同樣被排除（一般 NOT-FOUND 記憶場景，TASK-89b-T4）"""
+        from unittest.mock import patch
+        from core.database import Video
+        from core.path_utils import to_file_uri
+        videos = [
+            Video(path=to_file_uri(str(tmp_path / "a.mp4")), number="AAA-001",
+                  cover_path="", nfo_mtime=0.0,
+                  scrape_attempted_at=1234567890.0),
+        ]
+        db_path = self._make_db(tmp_path, videos)
+        with patch('web.routers.scanner.get_db_path', return_value=db_path):
+            resp = client.get('/api/gallery/missing-check')
+        data = resp.json()
+        assert data['success'] is True
+        assert data['data']['missing_both'] == 0
+        assert data['data']['total_missing'] == 0
+        assert data['data']['items'] == []
+
+    def test_produced_tried_quadrants_only_untried_unproduced_bucketed(self, client, tmp_path, monkeypatch):
+        """produced x tried 2x2 矩陣：僅 (False,False) 進桶，其餘三象限早退（TASK-89b-T4）"""
+        from unittest.mock import patch
+        from core.database import Video
+        from core.path_utils import to_file_uri
+        out_dir = to_file_uri(str(tmp_path / "out"))
+        videos = [
+            # (produced=True, tried=True) -> excluded
+            Video(path=to_file_uri(str(tmp_path / "a.mp4")), number="AAA-001",
+                  cover_path="", nfo_mtime=0.0,
+                  output_dir=out_dir, scrape_attempted_at=111.0),
+            # (produced=True, tried=False) -> excluded
+            Video(path=to_file_uri(str(tmp_path / "b.mp4")), number="BBB-002",
+                  cover_path="", nfo_mtime=0.0,
+                  output_dir=out_dir, scrape_attempted_at=0.0),
+            # (produced=False, tried=True) -> excluded
+            Video(path=to_file_uri(str(tmp_path / "c.mp4")), number="CCC-003",
+                  cover_path="", nfo_mtime=0.0,
+                  output_dir="", scrape_attempted_at=222.0),
+            # (produced=False, tried=False) -> bucketed (missing_nfo, has cover)
+            Video(path=to_file_uri(str(tmp_path / "d.mp4")), number="DDD-004",
+                  cover_path="/covers/d.jpg", nfo_mtime=0.0,
+                  output_dir="", scrape_attempted_at=0.0),
+        ]
+        db_path = self._make_db(tmp_path, videos)
+        with patch('web.routers.scanner.get_db_path', return_value=db_path):
+            resp = client.get('/api/gallery/missing-check')
+        data = resp.json()
+        assert data['success'] is True
+        assert data['data']['missing_nfo'] == 1
+        assert data['data']['missing_both'] == 0
+        assert data['data']['missing_cover'] == 0
+        assert data['data']['total_missing'] == 1
+        assert len(data['data']['items']) == 1
+        assert data['data']['items'][0]['number'] == 'DDD-004'
+
 
 class TestScannerGenerateLongPathsField:
     """spec-48a §a5 契約 3 — /api/gallery/generate SSE done event 必須含 long_paths key"""
@@ -1126,3 +1271,946 @@ class TestScanPruneThumbnailInvalidation:
         assert deleted_uri in called_args
         # 原樣 URI：未被再次包一層 to_file_uri（否則會變 file:////... 之類）
         assert to_file_uri(deleted_uri) not in called_args or to_file_uri(deleted_uri) == deleted_uri
+
+
+class TestGenerateReadonlyBridge:
+    """TASK-88c-T2 — generate_avlist readonly 分流 + SSE thread/queue 橋接 + 四數摘要。
+
+    mock patch target = web.routers.scanner.produce_source（T-2 import 落點）。
+    """
+
+    def _readonly_config(self, tmp_path, sources, proxy_url="http://proxy:8080"):
+        """組一份 config：sources 為 [(readonly, output_path 或 None), ...]。"""
+        output_dir = tmp_path / "html_out"
+        output_dir.mkdir(exist_ok=True)
+        directories = []
+        for i, (readonly, out) in enumerate(sources):
+            src_dir = tmp_path / f"src{i}"
+            src_dir.mkdir(exist_ok=True)
+            directories.append({
+                "path": str(src_dir),
+                "readonly": readonly,
+                "output_path": out if out is not None else "",
+            })
+        return {
+            "gallery": {
+                "directories": directories,
+                "output_dir": str(output_dir),
+                "path_mappings": {},
+                "min_size_mb": 0,
+            },
+            "search": {"proxy_url": proxy_url},
+            "general": {"theme": "light"},
+            "scraper": {"video_extensions": [".mp4"]},
+        }
+
+    def _result(self, tmp_path, **kw):
+        from core.readonly_producer import ProduceResult
+        out = str(tmp_path / "out")
+        return ProduceResult(source_path=str(tmp_path / "src0"), output_path=out, **kw)
+
+    # 1. 分流互斥（正向）：readonly → produce_source 呼叫一次，args + proxy_url kwarg 正確
+    def test_readonly_source_calls_produce_source_once(self, client, tmp_path, monkeypatch, mocker):
+        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mock_ps = mocker.patch("web.routers.scanner.produce_source",
+                               return_value=self._result(tmp_path))
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        assert mock_ps.call_count == 1
+        call = mock_ps.call_args
+        src_arg = call.args[0]
+        assert src_arg.readonly is True
+        assert src_arg.path == str(tmp_path / "src0")
+        # config + repo 位置參數
+        assert call.args[1] is cfg
+        from core.database import VideoRepository
+        assert isinstance(call.args[2], VideoRepository)
+        # proxy_url kwarg 正確傳入
+        assert call.kwargs["proxy_url"] == "http://proxy:8080"
+        # TASK-90b-T3: production 路徑（真的 client.get 打 /api/gallery/generate handler）
+        # 現在會傳入 handler 建立的 cancel_event.is_set（bound method），不再是寫死的 None——
+        # 斷言它是 callable 且確實是 threading.Event 的 is_set bound method，而非零參數
+        # 直呼 generate_avlist() 時才會拿到的 None 預設值。
+        should_abort = call.kwargs["should_abort"]
+        assert callable(should_abort)
+        assert should_abort.__func__ is threading.Event.is_set
+        assert should_abort() is False
+
+    # 1b. TASK-90b-T3 wiring：should_abort 從 generate_avlist 直呼一路轉發到 produce_source，
+    # 中間不包 lambda，用 `is` 斷言身分一致（非包裝出的新 callable）。
+    def test_should_abort_forwarded_by_identity_to_produce_source(self, tmp_path, monkeypatch, mocker):
+        from web.routers.scanner import generate_avlist
+
+        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mock_ps = mocker.patch("web.routers.scanner.produce_source",
+                               return_value=self._result(tmp_path))
+
+        fake_should_abort = lambda: False  # noqa: E731 - 身分識別用，非真正 abort 邏輯
+        list(generate_avlist(should_abort=fake_should_abort))
+
+        assert mock_ps.call_count == 1
+        received = mock_ps.call_args.kwargs["should_abort"]
+        assert received is fake_should_abort
+
+    # 2. 分流互斥（反向）：非 readonly → produce_source 未被呼叫
+    def test_non_readonly_does_not_call_produce_source(self, client, tmp_path, monkeypatch, mocker):
+        cfg = self._readonly_config(tmp_path, [(False, "")])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mock_ps = mocker.patch("web.routers.scanner.produce_source")
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        mock_ps.assert_not_called()
+
+    # 3. SSE 逐片橋接：on_progress 連發 3 outcome → SSE 出 3 條對應 log；sentinel 後續下一來源
+    def test_sse_per_outcome_streaming(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
+        from core.readonly_producer import ProduceOutcome
+        cfg = self._readonly_config(tmp_path, [
+            (True, str(tmp_path / "out0")),
+            (True, str(tmp_path / "out1")),
+        ])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+
+        def side_effect(source, config, repo, *, proxy_url="", on_progress=None, should_abort=None, force=False, reachable=True, strm_mappings_getter=None):
+            from core.readonly_producer import ProduceResult
+            if source.path == str(tmp_path / "src0"):
+                on_progress(ProduceOutcome(source_uri="uri1", status="created", number="ABC-001"))
+                on_progress(ProduceOutcome(source_uri="uri2", status="skipped", number="ABC-002"))
+                on_progress(ProduceOutcome(source_uri="uri3", status="failed", number="ABC-003", error="生成失敗"))
+                return ProduceResult(source_path=source.path, output_path=source.output_path,
+                                     created=1, skipped=1, failed=1)
+            return ProduceResult(source_path=source.path, output_path=source.output_path)
+
+        mock_ps = mocker.patch("web.routers.scanner.produce_source", side_effect=side_effect)
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        events = parse_sse_events(resp.text)
+        msgs = [e.get("message", "") for e in events if e.get("type") == "log"]
+        assert any("✓ 生成" in m and "ABC-001" in m for m in msgs)
+        assert any("略過" in m and "ABC-002" in m for m in msgs)
+        assert any("✗ 失敗" in m and "ABC-003" in m for m in msgs)
+        # 第 2 來源也被處理（sentinel 後迴圈續跑）
+        assert mock_ps.call_count == 2
+
+    # 4. 四數摘要累計
+    def test_four_number_summary(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
+        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.produce_source",
+                     return_value=self._result(tmp_path, created=2, skipped=1, no_scrape=1, failed=1))
+        resp = client.get("/api/gallery/generate")
+        events = parse_sse_events(resp.text)
+        done = [e for e in events if e.get("type") == "done"][-1]
+        rs = done["readonly_stats"]
+        assert rs["created"] == 2 and rs["skipped"] == 1
+        assert rs["no_scrape"] == 1 and rs["failed"] == 1
+        assert rs["sources"] == 1
+        # 該來源小結四數皆出現
+        msgs = [e.get("message", "") for e in events if e.get("type") == "log"]
+        assert any("新增 2" in m and "略過 1" in m and "刮不到 1" in m and "失敗 1" in m for m in msgs)
+
+    # 5. no_output_path 提示
+    def test_no_output_path_prompt(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
+        cfg = self._readonly_config(tmp_path, [(True, "")])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.produce_source",
+                     return_value=self._result(tmp_path, aborted_reason="no_output_path"))
+        resp = client.get("/api/gallery/generate")
+        events = parse_sse_events(resp.text)
+        msgs = [e.get("message", "") for e in events if e.get("type") == "log"]
+        assert any("請先設定輸出夾" in m for m in msgs)
+        done = [e for e in events if e.get("type") == "done"][-1]
+        rs = done["readonly_stats"]
+        assert rs["no_output"] == 1
+        assert rs["created"] == 0 and rs["skipped"] == 0
+        assert rs["no_scrape"] == 0 and rs["failed"] == 0
+        assert rs["sources"] == 0
+
+    # 6. CRITICAL：source-level 例外傳遞 + 續跑
+    def test_source_level_exception_continues(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
+        from core.readonly_producer import ProduceResult
+        cfg = self._readonly_config(tmp_path, [
+            (True, str(tmp_path / "out0")),
+            (True, str(tmp_path / "out1")),
+        ])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+
+        def side_effect(source, config, repo, *, proxy_url="", on_progress=None, should_abort=None, force=False, reachable=True, strm_mappings_getter=None):
+            if source.path == str(tmp_path / "src0"):
+                raise ValueError("boom (迴圈前 normalize/列檔/DB 逃出)")
+            return ProduceResult(source_path=source.path, output_path=source.output_path, created=3)
+
+        mock_ps = mocker.patch("web.routers.scanner.produce_source", side_effect=side_effect)
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        events = parse_sse_events(resp.text)
+        # error 事件（type=log, level=error）
+        errs = [e for e in events if e.get("type") == "log" and e.get("level") == "error"]
+        assert any("生成失敗" in e.get("message", "") for e in errs)
+        # source_errors 計數
+        done = [e for e in events if e.get("type") == "done"][-1]
+        assert done["readonly_stats"]["source_errors"] == 1
+        # 迴圈續跑：第二來源仍被呼叫 + 產出摘要
+        assert mock_ps.call_count == 2
+        assert done["readonly_stats"]["created"] == 3
+        assert done["readonly_stats"]["sources"] == 1
+
+    # 7. 跨 thread DB 寫入（回歸鎖，無 ProgrammingError）
+    def test_cross_thread_db_write(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
+        from core.database import init_db, VideoRepository, Video
+        from core.readonly_producer import ProduceResult
+        db_path = tmp_path / "test.db"
+        init_db(db_path)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=db_path)
+        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+
+        written_uri = to_file_uri(str(tmp_path / "src0" / "worker_written.mp4"))
+
+        def side_effect(source, config, repo, *, proxy_url="", on_progress=None, should_abort=None, force=False, reachable=True, strm_mappings_getter=None):
+            # 在 worker frame 用傳入的 repo 寫一筆（per-call 連線）
+            repo.upsert(Video(path=written_uri, number="WK-001", title="worker",
+                              mtime=1.0, nfo_mtime=0.0))
+            return ProduceResult(source_path=source.path, output_path=source.output_path, created=1)
+
+        mocker.patch("web.routers.scanner.produce_source", side_effect=side_effect)
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        events = parse_sse_events(resp.text)
+        assert [e for e in events if e.get("type") == "done"], "未收到 done event"
+        # 無 ProgrammingError → 寫入成功
+        check = VideoRepository(db_path)
+        assert written_uri in check.get_mtime_index()
+
+    # 8. deletion 安全（readonly continue 早於 deletion → 影片未被誤刪）
+    def test_readonly_video_not_deleted(self, client, tmp_path, monkeypatch, mocker, parse_sse_events):
+        from core.database import init_db, VideoRepository, Video
+        from core.readonly_producer import ProduceResult
+        db_path = tmp_path / "test.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+        src_dir = tmp_path / "src0"
+        src_dir.mkdir()
+        out_dir = tmp_path / "out0"
+        out_dir.mkdir()
+        # RED-able mutation guard：磁碟上放一個「真實但不匹配」的影片檔，讓 normal-scan
+        # 路徑（若 readonly 分流被移除）的 all_files 非空、繞過 :369 空目錄短路 → deletion
+        # 區塊會真的跑。current_paths 只含 other.mp4，DB 預置的 movie.mp4（在同夾下、
+        # 但不在磁碟）就會被 delete_by_paths prune → 移除分流時本測試 RED。
+        (src_dir / "other.mp4").write_bytes(b"x" * 4096)  # 真實檔，掃得到、非 DB 預置那筆
+        # readonly-source 影片：path=來源 URI（movie.mp4，磁碟上不存在），cover 在 output_path 下
+        vid_uri = to_file_uri(str(src_dir / "movie.mp4"))
+        cover_uri = to_file_uri(str(out_dir / "movie" / "movie.jpg"))
+        repo.upsert(Video(path=vid_uri, number="RO-001", title="唯讀影片",
+                          cover_path=cover_uri, mtime=1.0, nfo_mtime=0.0))
+        assert vid_uri in repo.get_mtime_index()
+
+        cfg = {
+            "gallery": {
+                "directories": [{"path": str(src_dir), "readonly": True, "output_path": str(out_dir)}],
+                "output_dir": str(tmp_path / "html_out"),
+                "path_mappings": {},
+                "min_size_mb": 0,
+            },
+            "search": {"proxy_url": ""},
+            "general": {"theme": "light"},
+            "scraper": {"video_extensions": [".mp4"]},
+        }
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.get_db_path", return_value=db_path)
+        # produce_source 空 result，不動 DB
+        mocker.patch("web.routers.scanner.produce_source",
+                     return_value=ProduceResult(source_path=str(src_dir), output_path=str(out_dir)))
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        events = parse_sse_events(resp.text)
+        assert [e for e in events if e.get("type") == "done"], "未收到 done event"
+        # 未被誤刪
+        assert vid_uri in repo.get_mtime_index(), "readonly 來源影片被誤刪（deletion 未被 continue 繞過）"
+
+    # 9. UNC readonly 來源 → 分流早於 normalize，produce_source 被呼叫
+    def test_unc_readonly_source_reaches_producer(self, client, tmp_path, monkeypatch, mocker):
+        from core.readonly_producer import ProduceResult
+        unc = r"\\server\share"
+        cfg = {
+            "gallery": {
+                "directories": [{"path": unc, "readonly": True, "output_path": str(tmp_path / "out0")}],
+                "output_dir": str(tmp_path / "html_out"),
+                "path_mappings": {},
+                "min_size_mb": 0,
+            },
+            "search": {"proxy_url": ""},
+            "general": {"theme": "light"},
+            "scraper": {"video_extensions": [".mp4"]},
+        }
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mock_ps = mocker.patch("web.routers.scanner.produce_source",
+                               return_value=ProduceResult(source_path=unc, output_path=str(tmp_path / "out0")))
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        assert mock_ps.call_count == 1
+        assert mock_ps.call_args.args[0].path == unc
+
+    # 10. 88c-P2：來源級失敗 → 完成通知走 warn（非純 success）
+    def test_source_level_failure_completion_notif_is_warn(
+        self, client, tmp_path, monkeypatch, mocker, parse_sse_events
+    ):
+        """readonly 來源整源拋錯（source_errors>0）→ 最終完成通知必須是 warn/
+        scanner_done_with_errors，不可 success/scanner_done（Codex P2）。"""
+        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch("web.routers.scanner.produce_source",
+                     side_effect=ValueError("boom（迴圈前逃出）"))
+        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
+
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        # drain SSE 讓 generator 跑完（完成通知在 done 之前 emit）
+        parse_sse_events(resp.text)
+
+        # 完成通知（scanner_generate task_type，排除 scanner_started）
+        completion_calls = [
+            c for c in mock_notif.call_args_list
+            if c.kwargs.get("task_type") == "scanner_generate"
+            and c.args and c.args[1] != "notif.scanner_started"
+        ]
+        assert completion_calls, "未發出完成通知"
+        final = completion_calls[-1]
+        assert final.args[0] == "warn", f"完成通知應為 warn，實得 {final.args[0]}"
+        assert final.args[1] == "notif.scanner_done_with_errors"
+        assert "來源失敗" in final.kwargs.get("message", "")
+
+    # 11. PR#91 ②：個別影片失敗（readonly failed>0, source_errors=0）→ 完成通知走 warn
+    def test_per_video_failure_completion_notif_is_warn(
+        self, client, tmp_path, monkeypatch, mocker, parse_sse_events
+    ):
+        """produce_source 未拋錯（source_errors=0）但回傳 failed>0（例如 NFO 寫入失敗）
+        → 完成通知仍須 warn/scanner_done_with_errors，不可純 success（PR#91 ②）。
+        no fix → failed-only 的完成通知會報 success，本測試 RED。"""
+        from core.readonly_producer import ProduceResult
+        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch(
+            "web.routers.scanner.produce_source",
+            return_value=ProduceResult(
+                source_path=str(tmp_path / "src0"),
+                output_path=str(tmp_path / "out0"),
+                created=1, failed=2,
+            ),
+        )
+        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
+
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        events = parse_sse_events(resp.text)
+
+        # readonly_stats 帶 failed=2、source_errors=0
+        done = [e for e in events if e.get("type") == "done"][-1]
+        assert done["readonly_stats"]["failed"] == 2
+        assert done["readonly_stats"]["source_errors"] == 0
+
+        completion_calls = [
+            c for c in mock_notif.call_args_list
+            if c.kwargs.get("task_type") == "scanner_generate"
+            and c.args and c.args[1] != "notif.scanner_started"
+        ]
+        assert completion_calls, "未發出完成通知"
+        final = completion_calls[-1]
+        assert final.args[0] == "warn", f"完成通知應為 warn，實得 {final.args[0]}"
+        assert final.args[1] == "notif.scanner_done_with_errors"
+        assert "2 部失敗" in final.kwargs.get("message", "")
+
+    # -----------------------------------------------------------------
+    # TASK-89b-T6: DB-row-only prune + Finding-2 不誤報成功回歸鎖
+    # -----------------------------------------------------------------
+
+    def _completion_calls(self, mock_notif):
+        return [
+            c for c in mock_notif.call_args_list
+            if c.kwargs.get("task_type") == "scanner_generate"
+            and c.args and c.args[1] != "notif.scanner_started"
+        ]
+
+    # 12. pruned 計數進 done SSE readonly_stats（mock-based，不觸發真實 prune 邏輯，
+    #     只驗證 ProduceResult.pruned 有被 scanner.py 正確累計/傳遞）
+    def test_pruned_count_reaches_done_sse_readonly_stats(
+        self, client, tmp_path, monkeypatch, mocker, parse_sse_events
+    ):
+        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch(
+            "web.routers.scanner.produce_source",
+            return_value=self._result(tmp_path, created=1, pruned=3),
+        )
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        events = parse_sse_events(resp.text)
+        done = [e for e in events if e.get("type") == "done"][-1]
+        assert done["readonly_stats"]["pruned"] == 3
+
+    # 13. Finding-2 情境一：來源不可達 → per-source warn SSE + unreachable 計數 +
+    #     完成通知 warn（非 success）
+    def test_unreachable_source_warns_and_completion_is_warn(
+        self, client, tmp_path, monkeypatch, mocker, parse_sse_events
+    ):
+        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch(
+            "web.routers.scanner.produce_source",
+            return_value=self._result(tmp_path, aborted_reason="unreachable"),
+        )
+        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
+
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        events = parse_sse_events(resp.text)
+
+        warn_logs = [
+            e for e in events
+            if e.get("type") == "log" and e.get("level") == "warn"
+            and "來源無法連線" in e.get("message", "")
+        ]
+        assert warn_logs, "unreachable 來源應有一則含「來源無法連線」的 warn SSE"
+
+        done = [e for e in events if e.get("type") == "done"][-1]
+        assert done["readonly_stats"]["unreachable"] == 1
+
+        final = self._completion_calls(mock_notif)[-1]
+        assert final.args[0] == "warn", f"完成通知應為 warn，實得 {final.args[0]}"
+        assert "無法連線" in final.kwargs.get("message", "")
+
+    # 14. Finding-2 情境二：partial-scan（skipped_paths 非空）→ 追加 warn SSE +
+    #     partial 計數 + 完成通知 warn
+    def test_partial_scan_warns_and_completion_is_warn(
+        self, client, tmp_path, monkeypatch, mocker, parse_sse_events
+    ):
+        cfg = self._readonly_config(tmp_path, [(True, str(tmp_path / "out0"))])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch(
+            "web.routers.scanner.produce_source",
+            return_value=self._result(
+                tmp_path, created=1, skipped_paths=["/src0/broken_dir"],
+            ),
+        )
+        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
+
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        events = parse_sse_events(resp.text)
+
+        # 正常小結仍要 yield（info），另外追加一則「已略過刪除偵測」warn
+        warn_logs = [
+            e for e in events
+            if e.get("type") == "log" and e.get("level") == "warn"
+            and "已略過刪除偵測" in e.get("message", "")
+        ]
+        assert warn_logs, "partial-scan 應追加一則含「已略過刪除偵測」的 warn SSE"
+
+        done = [e for e in events if e.get("type") == "done"][-1]
+        assert done["readonly_stats"]["partial"] == 1
+
+        final = self._completion_calls(mock_notif)[-1]
+        assert final.args[0] == "warn", f"完成通知應為 warn，實得 {final.args[0]}"
+        assert "部分讀取失敗" in final.kwargs.get("message", "")
+
+    # 15. Finding-2 情境三：no_output>0（原本已計數但完成通知未讀）→ 完成通知 warn
+    def test_no_output_completion_is_warn_not_success(
+        self, client, tmp_path, monkeypatch, mocker, parse_sse_events
+    ):
+        cfg = self._readonly_config(tmp_path, [(True, "")])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        mocker.patch(
+            "web.routers.scanner.produce_source",
+            return_value=self._result(tmp_path, aborted_reason="no_output_path"),
+        )
+        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
+
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        parse_sse_events(resp.text)
+
+        final = self._completion_calls(mock_notif)[-1]
+        assert final.args[0] == "warn", f"完成通知應為 warn，實得 {final.args[0]}"
+        assert final.args[1] == "notif.scanner_done_with_errors"
+        assert "未設輸出夾" in final.kwargs.get("message", "")
+
+    # 16. Real produce_source (unmocked): 跨來源隔離 + partial suppression + DB-row-only
+    #     （不動輸出夾檔案）。以下測試不 mock produce_source，讓真實 prune 邏輯跑，
+    #     只 stub fast_scan_directory/extract_number 避免真實掃描/網路呼叫。
+    def _run_real_readonly_prune(self, client, tmp_path, monkeypatch, sources_scan_map,
+                                  extra_config=None):
+        """sources_scan_map: {src_dir_name: [{"path": fs_path, "size": n, "mtime": t}, ...]}"""
+
+        def stub_fast_scan(directory, extensions, min_size_bytes, on_skip=None):
+            key = Path(directory).name
+            return sources_scan_map.get(key, [])
+
+        monkeypatch.setattr("core.readonly_producer.fast_scan_directory", stub_fast_scan)
+        # extract_number → None：所有片走 no_scrape 早退，不觸發 search_jav（避免網路呼叫）
+        monkeypatch.setattr("core.readonly_producer.extract_number", lambda basename: None)
+
+        return client.get("/api/gallery/generate")
+
+    def test_cross_source_isolation_real_prune(self, client, tmp_path, monkeypatch, parse_sse_events):
+        import time
+        from core.database import init_db, VideoRepository, Video
+        from core.path_utils import to_file_uri
+
+        src_a = tmp_path / "srcA"
+        src_a.mkdir()
+        src_b = tmp_path / "srcB"
+        src_b.mkdir()
+        output_dir = tmp_path / "html_out"
+        output_dir.mkdir()
+
+        db_path = tmp_path / "test.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        # A 的既存片「消失」（本次掃描不含它，但本次列表非空——另有 kept_a.mp4，
+        # 使 gate 通過；若本次列表整個是空的則屬「不刪」的另一分支，非本測試要驗的情境）
+        gone_a_uri = to_file_uri(str(src_a / "gone_a.mp4"))
+        repo.upsert(Video(path=gone_a_uri, number="GONE-A", title="A 已消失", mtime=1.0, nfo_mtime=0.0))
+        repo.update_scrape_attempted_at(gone_a_uri, time.time())
+        kept_a_fs = str(src_a / "kept_a.mp4")
+
+        # B 的既存片「仍在」本次掃描列表 → 不應被刪（也不應被 A 的 prune 誤刪）
+        kept_b_fs = str(src_b / "kept_b.mp4")
+        kept_b_uri = to_file_uri(kept_b_fs)
+        repo.upsert(Video(path=kept_b_uri, number="KEPT-B", title="B 仍在", mtime=1.0, nfo_mtime=0.0))
+        repo.update_scrape_attempted_at(kept_b_uri, time.time())
+
+        cfg = {
+            "gallery": {
+                "directories": [
+                    {"path": str(src_a), "readonly": True, "output_path": str(tmp_path / "outA")},
+                    {"path": str(src_b), "readonly": True, "output_path": str(tmp_path / "outB")},
+                ],
+                "output_dir": str(output_dir),
+                "path_mappings": {},
+                "min_size_mb": 0,
+            },
+            "search": {"proxy_url": ""},
+            "general": {"theme": "light"},
+            "scraper": {"video_extensions": [".mp4"]},
+        }
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
+
+        resp = self._run_real_readonly_prune(
+            client, tmp_path, monkeypatch,
+            sources_scan_map={
+                # gone_a.mp4 不再出現，但列表非空（有 kept_a.mp4）→ gate 通過
+                "srcA": [{"path": kept_a_fs, "size": 1024, "mtime": 2.0}],
+                "srcB": [{"path": kept_b_fs, "size": 1024, "mtime": 2.0}],
+            },
+        )
+        assert resp.status_code == 200
+        parse_sse_events(resp.text)
+
+        remaining = repo.get_mtime_index()
+        assert gone_a_uri not in remaining, "A 的消失片應被本次 prune 刪除"
+        assert kept_b_uri in remaining, "B 的仍在片不應被刪（跨來源隔離）"
+
+    def test_partial_scan_suppresses_prune_even_when_files_look_gone(
+        self, client, tmp_path, monkeypatch, parse_sse_events
+    ):
+        import time
+        from core.database import init_db, VideoRepository, Video
+        from core.path_utils import to_file_uri
+
+        src_a = tmp_path / "srcA"
+        src_a.mkdir()
+        output_dir = tmp_path / "html_out"
+        output_dir.mkdir()
+
+        db_path = tmp_path / "test.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        gone_looking_uri = to_file_uri(str(src_a / "looks_gone.mp4"))
+        repo.upsert(Video(path=gone_looking_uri, number="X-001", title="看似消失", mtime=1.0, nfo_mtime=0.0))
+        repo.update_scrape_attempted_at(gone_looking_uri, time.time())
+
+        cfg = {
+            "gallery": {
+                "directories": [
+                    {"path": str(src_a), "readonly": True, "output_path": str(tmp_path / "outA")},
+                ],
+                "output_dir": str(output_dir),
+                "path_mappings": {},
+                "min_size_mb": 0,
+            },
+            "search": {"proxy_url": ""},
+            "general": {"theme": "light"},
+            "scraper": {"video_extensions": [".mp4"]},
+        }
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
+
+        def stub_fast_scan(directory, extensions, min_size_bytes, on_skip=None):
+            # 回報一筆讀取失敗路徑 + 回傳空列表 → skipped_paths 非空
+            if on_skip is not None:
+                on_skip(str(src_a / "unreadable_dir"), OSError("denied"))
+            return []
+
+        monkeypatch.setattr("core.readonly_producer.fast_scan_directory", stub_fast_scan)
+        monkeypatch.setattr("core.readonly_producer.extract_number", lambda basename: None)
+
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        parse_sse_events(resp.text)
+
+        remaining = repo.get_mtime_index()
+        assert gone_looking_uri in remaining, (
+            "partial scan（skipped_paths 非空）必須抑制 prune，即使該片看似從本次列表消失"
+        )
+
+    def test_delete_by_paths_only_removes_db_row_not_output_files(
+        self, client, tmp_path, monkeypatch, parse_sse_events
+    ):
+        """輸出夾檔案（nfo/封面/資料夾）在 prune 前後必須 exists() 不變——DB-row-only。"""
+        from core.database import init_db, VideoRepository, Video
+        from core.path_utils import to_file_uri
+
+        src_a = tmp_path / "srcA"
+        src_a.mkdir()
+        output_dir = tmp_path / "html_out"
+        output_dir.mkdir()
+        out_a = tmp_path / "outA"
+
+        # 模擬既有輸出夾產物：資料夾 + nfo + 封面
+        produced_dir = out_a / "GONE-001"
+        produced_dir.mkdir(parents=True)
+        nfo_file = produced_dir / "GONE-001.nfo"
+        nfo_file.write_text("<movie></movie>", encoding="utf-8")
+        cover_file = produced_dir / "poster.jpg"
+        cover_file.write_bytes(b"\xff\xd8\xff")
+
+        db_path = tmp_path / "test.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        gone_uri = to_file_uri(str(src_a / "gone.mp4"))
+        repo.upsert(Video(
+            path=gone_uri, number="GONE-001", title="已消失但輸出夾仍在",
+            mtime=1.0, nfo_mtime=0.0, output_dir=str(produced_dir),
+        ))
+        kept_fs = str(src_a / "kept.mp4")
+
+        cfg = {
+            "gallery": {
+                "directories": [
+                    {"path": str(src_a), "readonly": True, "output_path": str(out_a)},
+                ],
+                "output_dir": str(output_dir),
+                "path_mappings": {},
+                "min_size_mb": 0,
+            },
+            "search": {"proxy_url": ""},
+            "general": {"theme": "light"},
+            "scraper": {"video_extensions": [".mp4"]},
+        }
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
+
+        def stub_fast_scan(directory, extensions, min_size_bytes, on_skip=None):
+            # gone.mp4 不再出現，但列表非空（有 kept.mp4）→ gate 通過，觸發 prune
+            return [{"path": kept_fs, "size": 1024, "mtime": 2.0}]
+
+        monkeypatch.setattr("core.readonly_producer.fast_scan_directory", stub_fast_scan)
+        monkeypatch.setattr("core.readonly_producer.extract_number", lambda basename: None)
+
+        resp = client.get("/api/gallery/generate")
+        assert resp.status_code == 200
+        parse_sse_events(resp.text)
+
+        # DB row 已刪
+        assert gone_uri not in repo.get_mtime_index()
+        # 輸出夾檔案完全不動
+        assert produced_dir.exists()
+        assert nfo_file.exists()
+        assert cover_file.exists()
+
+
+class TestGenerateAvlistShouldAbortTopLevel:
+    """TASK-90b-T4 — 一般掃描分支（非 readonly）逐來源 / 逐檔迴圈頂端中止檢查
+    + 迴圈結束後一次性 `_aborted` 判斷，決定尾段留/跳（見 TASK-90b-T4.md
+    「尾段逐步留/跳決策表」）。直呼 generate_avlist(should_abort=fake)，比照
+    T3 `test_should_abort_forwarded_by_identity_to_produce_source` 手法
+    （:1304 附近），不透過 client（cancel_event 由 handler 建立，非本 task 範圍）。
+    """
+
+    def _config(self, tmp_path, dirs):
+        """組一份非 readonly config：dirs 為多個資料夾 path 字串 list。"""
+        output_dir = tmp_path / "html_out"
+        output_dir.mkdir(exist_ok=True)
+        return {
+            "gallery": {
+                "directories": [str(d) for d in dirs],
+                "output_dir": str(output_dir),
+                "path_mappings": {},
+                "min_size_mb": 0,
+            },
+            "search": {"proxy_url": ""},
+            "general": {"theme": "light"},
+            "scraper": {"video_extensions": [".mp4"]},
+        }
+
+    def _make_dir_with_files(self, tmp_path, name, count):
+        d = tmp_path / name
+        d.mkdir()
+        paths = []
+        for i in range(count):
+            f = d / f"video_{i}.mp4"
+            f.write_bytes(b"x" * 2048)
+            paths.append(str(f))
+        return d, paths
+
+    def _counting_should_abort(self, trigger_after):
+        """回傳一個 callable：前 `trigger_after` 次呼叫回 False，之後回 True。"""
+        state = {"n": 0}
+
+        def fake():
+            state["n"] += 1
+            return state["n"] > trigger_after
+
+        fake.call_count_ref = state
+        return fake
+
+    def _patch_scan_file(self, mocker):
+        """mock VideoScanner.scan_file，回傳最小可用 VideoInfo，避免真的觸發
+        NFO/外部刮削；用 call 次數與傳入路徑斷言迴圈提前結束。"""
+        from core.gallery_scanner import VideoInfo
+        calls = []
+
+        def fake_scan_file(self, video_path, base_path=None):
+            calls.append(video_path)
+            return VideoInfo(path=to_file_uri(video_path), title="t", num="ABC-001")
+
+        mocker.patch("web.routers.scanner.VideoScanner.scan_file", fake_scan_file)
+        return calls
+
+    def _assert_cancelled_terminal(self, mock_notif):
+        """abort 尾段的通知契約（PR#90b Codex P1+P2）：不發 success/warn 完成通知，
+        改發恰好一筆中性 info `notif.scanner_cancelled`，與 scanner_started 配對。"""
+        gen_calls = [
+            c for c in mock_notif.call_args_list
+            if c.kwargs.get("task_type") == "scanner_generate" and c.args
+        ]
+        titles = [c.args[1] for c in gen_calls]
+        assert "notif.scanner_done" not in titles, f"abort 不應誤報完成，實得 {titles}"
+        assert "notif.scanner_done_with_errors" not in titles, f"abort 不應誤報完成，實得 {titles}"
+        assert titles.count("notif.scanner_cancelled") == 1, \
+            f"abort 應發恰好一筆取消通知配對 started，實得 {titles}"
+        cancel_call = next(c for c in gen_calls if c.args[1] == "notif.scanner_cancelled")
+        assert cancel_call.args[0] == "info", "取消通知須為中性 info，不可誤報 success"
+
+    def _parse_events(self, sse_strings):
+        """把 generate_avlist() yield 出的原始 SSE 字串（"data: {...}\\n\\n"）
+        解析為 dict list，比照 conftest.parse_sse_events 邏輯（但輸入是
+        generator 直呼的原始字串 list，非 TestClient response.text）。"""
+        import json as _json
+        events = []
+        for chunk in sse_strings:
+            for line in chunk.strip().split('\n'):
+                if line.startswith('data: '):
+                    try:
+                        events.append(_json.loads(line[6:]))
+                    except _json.JSONDecodeError:
+                        pass
+        return events
+
+    # ---- (1) 逐來源迴圈中途 abort：第二個來源完全未被迭代 ----
+
+    def test_outer_loop_break_leaves_second_source_unprocessed(self, tmp_path, monkeypatch, mocker):
+        from web.routers.scanner import generate_avlist
+
+        dir0, _ = self._make_dir_with_files(tmp_path, "src0", 1)
+        dir1, _ = self._make_dir_with_files(tmp_path, "src1", 1)
+        cfg = self._config(tmp_path, [dir0, dir1])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
+
+        scan_calls = self._patch_scan_file(mocker)
+        mock_html = mocker.patch("web.routers.scanner.HTMLGenerator")
+        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
+
+        # calls 序列：outer(dir0) outer 檢查=#1, inner(file0@dir0)=#2, outer(dir1)=#3
+        # trigger_after=2 → 前兩次 False，第 3 次（outer dir1 之前）True → dir1 整個不處理
+        fake_should_abort = self._counting_should_abort(trigger_after=2)
+
+        # 先塞非預設哨兵值，讓 (d) 的「cache 被重設」斷言能真正觀察到 None/0 的
+        # 狀態轉移——否則 module 層預設就是 None/0，即使 abort 誤跳過重設也會假綠。
+        import web.routers.scanner as scanner_mod
+        scanner_mod._jellyfin_cache_result = {"need_update": 1}
+        scanner_mod._jellyfin_cache_time = 12345.0
+
+        events = list(generate_avlist(should_abort=fake_should_abort))
+
+        # (a) 只有 dir0 的檔案被掃到，dir1 完全未被迭代
+        assert len(scan_calls) == 1
+        assert str(dir0) in scan_calls[0]
+        assert not any(str(dir1) in c for c in scan_calls)
+
+        # (b) HTML 未被產生
+        mock_html.return_value.generate.assert_not_called()
+
+        # (c) 不發 success/warn 完成通知，改發恰好一筆中性 info「取消」通知，與
+        # 函式開頭無條件 emit 的 scanner_started 配對（PR#90b Codex P2：只發 started
+        # 不發 terminal 會在 append-only 通知抽屜永久殘留一筆看似未完成的「掃描開
+        # 始」，使用者每中止一次累積一筆錯狀態）。
+        self._assert_cancelled_terminal(mock_notif)
+
+        # (d) jellyfin cache 仍被重設（必要資源收尾）——哨兵值已被覆寫回 None/0
+        assert scanner_mod._jellyfin_cache_result is None
+        assert scanner_mod._jellyfin_cache_time == 0
+
+        # (e) done event 未被 yield
+        parsed = self._parse_events(events)
+        assert not [e for e in parsed if e.get("type") == "done"]
+
+    # ---- (2) 逐檔內層迴圈中途 abort：同一資料夾內後續檔案未被迭代 ----
+
+    def test_inner_loop_break_leaves_remaining_files_unprocessed(self, tmp_path, monkeypatch, mocker):
+        from web.routers.scanner import generate_avlist
+
+        dir0, files = self._make_dir_with_files(tmp_path, "src0", 3)
+        cfg = self._config(tmp_path, [dir0])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
+
+        scan_calls = self._patch_scan_file(mocker)
+        mock_html = mocker.patch("web.routers.scanner.HTMLGenerator")
+        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
+
+        # calls 序列：outer(dir0)=#1, inner(file0)=#2, inner(file1)=#3
+        # trigger_after=2 → 第 3 次（inner file1 之前）True → file1/file2 不掃
+        fake_should_abort = self._counting_should_abort(trigger_after=2)
+
+        # 先塞非預設哨兵值（同 outer 測試，避免 (d) 假綠）。
+        import web.routers.scanner as scanner_mod
+        scanner_mod._jellyfin_cache_result = {"need_update": 1}
+        scanner_mod._jellyfin_cache_time = 12345.0
+
+        events = list(generate_avlist(should_abort=fake_should_abort))
+
+        # (a) 只有 1 個檔案被掃到（同資料夾內後續檔案未被迭代）
+        assert len(scan_calls) == 1
+
+        # (b) HTML 未被產生
+        mock_html.return_value.generate.assert_not_called()
+
+        # (c) 不發 success/warn 完成通知，改發恰好一筆中性 info「取消」通知
+        self._assert_cancelled_terminal(mock_notif)
+
+        # (d) jellyfin cache 仍被重設（哨兵值已被覆寫回 None/0）
+        assert scanner_mod._jellyfin_cache_result is None
+        assert scanner_mod._jellyfin_cache_time == 0
+
+        # (e) done event 未被 yield
+        parsed = self._parse_events(events)
+        assert not [e for e in parsed if e.get("type") == "done"]
+
+    # ---- (2b) tail-race：迴圈已跑完、尾段進行中才斷線（PR#90b Codex P1）----
+
+    def test_tail_race_disconnect_after_loop_reports_cancelled_not_success(
+        self, tmp_path, monkeypatch, mocker
+    ):
+        """Codex P1 回歸：single-snapshot 只在迴圈結束時查一次 should_abort()，會漏
+        掉「迴圈已跑完、HTML 產生等尾段進行中才斷線」的 race → 誤發 success。此測
+        讓 should_abort 在迴圈與 orphan/HTML 兩個 gate 都回 False，只在最後的
+        terminal fresh 檢查回 True，驗證：HTML 有被產生（gate 通過），但完成通知
+        仍走「取消」而非 success，且不 yield done event。"""
+        from web.routers.scanner import generate_avlist
+
+        dir0, _ = self._make_dir_with_files(tmp_path, "src0", 1)
+        cfg = self._config(tmp_path, [dir0])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
+
+        self._patch_scan_file(mocker)
+        mock_html = mocker.patch("web.routers.scanner.HTMLGenerator")
+        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
+
+        # 呼叫序列（1 dir / 1 file）：outer #1、inner #2、orphan gate #3、
+        # HTML gate #4、terminal #5。trigger_after=4 → 前 4 次 False（迴圈跑完、
+        # orphan/HTML gate 都通過），第 5 次（terminal fresh 檢查）才 True。
+        # single-snapshot 版本此情境會誤發 success；fresh 版本應改發 cancelled。
+        fake_should_abort = self._counting_should_abort(trigger_after=4)
+
+        events = list(generate_avlist(should_abort=fake_should_abort))
+
+        # HTML 確實被產生（證明 orphan/HTML gate 當時未 abort，race 發生在其後）
+        mock_html.return_value.generate.assert_called_once()
+
+        # 尾段 fresh 檢查捕捉到斷線 → 走「取消」通知契約，不誤報 success
+        self._assert_cancelled_terminal(mock_notif)
+
+        # done event 不 yield（terminal 分支已改走 cancelled）
+        parsed = self._parse_events(events)
+        assert not [e for e in parsed if e.get("type") == "done"], \
+            "tail-race abort 不應 yield done event"
+
+    # ---- (3) 零回歸：should_abort=None → 尾段全部照舊執行 ----
+
+    def test_should_abort_none_no_regression(self, tmp_path, monkeypatch, mocker):
+        from web.routers.scanner import generate_avlist
+
+        dir0, _ = self._make_dir_with_files(tmp_path, "src0", 1)
+        cfg = self._config(tmp_path, [dir0])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
+
+        self._patch_scan_file(mocker)
+        mock_html = mocker.patch("web.routers.scanner.HTMLGenerator")
+        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
+
+        events = list(generate_avlist(should_abort=None))
+
+        mock_html.return_value.generate.assert_called_once()
+
+        completion_calls = [
+            c for c in mock_notif.call_args_list
+            if c.kwargs.get("task_type") == "scanner_generate"
+            and c.args and c.args[1] != "notif.scanner_started"
+        ]
+        assert completion_calls, "should_abort=None 時仍應照舊發出完成通知"
+        assert completion_calls[-1].args[0] == "success"
+
+        parsed = self._parse_events(events)
+        assert [e for e in parsed if e.get("type") == "done"], \
+            "should_abort=None 時仍應照舊發出 done event"
+
+    # ---- (4) 零回歸：should_abort 設置但從未觸發（正常跑完）----
+
+    def test_should_abort_set_but_never_true_no_regression(self, tmp_path, monkeypatch, mocker):
+        from web.routers.scanner import generate_avlist
+
+        dir0, _ = self._make_dir_with_files(tmp_path, "src0", 1)
+        cfg = self._config(tmp_path, [dir0])
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: cfg)
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: tmp_path / "test.db")
+
+        self._patch_scan_file(mocker)
+        mock_html = mocker.patch("web.routers.scanner.HTMLGenerator")
+        mock_notif = mocker.patch("web.routers.scanner._emit_notif")
+
+        never_abort = lambda: False  # noqa: E731 - 測試用 fake，非真正邏輯
+
+        events = list(generate_avlist(should_abort=never_abort))
+
+        mock_html.return_value.generate.assert_called_once()
+
+        completion_calls = [
+            c for c in mock_notif.call_args_list
+            if c.kwargs.get("task_type") == "scanner_generate"
+            and c.args and c.args[1] != "notif.scanner_started"
+        ]
+        assert completion_calls, "should_abort 設置但從未觸發時仍應照舊發出完成通知"
+        assert completion_calls[-1].args[0] == "success"
+
+        parsed = self._parse_events(events)
+        assert [e for e in parsed if e.get("type") == "done"], \
+            "should_abort 從未觸發時仍應照舊發出 done event"

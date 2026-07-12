@@ -63,8 +63,8 @@ def tmp_db(tmp_path):
 def client(tmp_db, monkeypatch):
     """TestClient，monkeypatch get_db_path 指向 tmp DB，mock 外部依賴"""
     # actress router 從 core.database 匯入 ActressRepository / init_db，
-    # 兩者都透過 core.database.get_db_path() 取得路徑，因此 patch core 層
-    monkeypatch.setattr("core.database.get_db_path", lambda: tmp_db)
+    # 兩者都透過 core.database.connection.get_db_path() 取得路徑，因此 patch core 層
+    monkeypatch.setattr("core.database.connection.get_db_path", lambda: tmp_db)
 
     from web.app import app
     return TestClient(app)

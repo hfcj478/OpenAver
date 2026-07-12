@@ -6,7 +6,6 @@ test_api_showcase.py — Showcase API 整合測試
 """
 
 import pytest
-from pathlib import Path
 from urllib.parse import quote
 from core.database import init_db, VideoRepository, Video
 from core.path_utils import to_file_uri, uri_to_fs_path
@@ -356,6 +355,120 @@ class TestShowcaseVideoSingle:
             assert list_video[field] == single_video[field], (
                 f"serializer 不一致欄位 {field}: list={list_video[field]!r} single={single_video[field]!r}"
             )
+
+
+# ============ is_readonly_source Tests (90c-T2) ============
+
+class TestShowcaseIsReadonlySource:
+    """測試 GET /api/showcase/videos / video payload 帶 is_readonly_source（後端算，前端不判路徑）。"""
+
+    def _make_config(self, directories):
+        return {
+            "gallery": {
+                "directories": directories,
+                "path_mappings": {},
+                "min_size_mb": 0,
+                "thumbnail_width": 400,
+            },
+            "scraper": {"video_extensions": [".mp4"], "image_extensions": [".jpg"]},
+            "database": {"path": ":memory:"},
+            "translate": {"provider": "ollama", "ollama_model": "llama3"},
+        }
+
+    @pytest.fixture
+    def ro_setup(self, tmp_path):
+        """單一唯讀來源夾，含 2 片。"""
+        ro_dir = tmp_path / "ro_videos"
+        ro_dir.mkdir()
+        v1 = to_file_uri(str(ro_dir / "v1.mp4"), {})
+        v2 = to_file_uri(str(ro_dir / "v2.mp4"), {})
+
+        db_path = tmp_path / "ro_test.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+        repo.upsert_batch([
+            Video(path=v1, number="RO-001", title="Readonly 1"),
+            Video(path=v2, number="RO-002", title="Readonly 2"),
+        ])
+
+        config = self._make_config([{"path": str(ro_dir), "readonly": True}])
+        return {"db_path": db_path, "v1": v1, "v2": v2, "config": config}
+
+    @pytest.fixture
+    def mixed_setup(self, tmp_path):
+        """一唯讀夾 + 一可寫夾，各含一片。"""
+        ro_dir = tmp_path / "ro_videos"
+        ro_dir.mkdir()
+        rw_dir = tmp_path / "rw_videos"
+        rw_dir.mkdir()
+        v_ro = to_file_uri(str(ro_dir / "ro.mp4"), {})
+        v_rw = to_file_uri(str(rw_dir / "rw.mp4"), {})
+
+        db_path = tmp_path / "mixed_test.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+        repo.upsert_batch([
+            Video(path=v_ro, number="RO-001", title="Readonly片"),
+            Video(path=v_rw, number="RW-001", title="Writable片"),
+        ])
+
+        config = self._make_config([
+            {"path": str(ro_dir), "readonly": True},
+            {"path": str(rw_dir), "readonly": False},
+        ])
+        return {"db_path": db_path, "v_ro": v_ro, "v_rw": v_rw,
+                "ro_dir": ro_dir, "config": config}
+
+    def test_field_present_and_bool(self, client, ro_setup, mocker):
+        """每片 payload 都帶 is_readonly_source 布林欄位（非 undefined）。"""
+        mocker.patch("web.routers.showcase.get_db_path", return_value=ro_setup["db_path"])
+        mocker.patch("web.routers.showcase.load_config", return_value=ro_setup["config"])
+
+        data = client.get("/api/showcase/videos").json()
+        assert len(data["videos"]) == 2
+        for video in data["videos"]:
+            assert "is_readonly_source" in video
+            assert isinstance(video["is_readonly_source"], bool)
+
+    def test_readonly_source_videos_true(self, client, ro_setup, mocker):
+        """唯讀來源片 → is_readonly_source is True（嚴格）。"""
+        mocker.patch("web.routers.showcase.get_db_path", return_value=ro_setup["db_path"])
+        mocker.patch("web.routers.showcase.load_config", return_value=ro_setup["config"])
+
+        data = client.get("/api/showcase/videos").json()
+        for video in data["videos"]:
+            assert video["is_readonly_source"] is True
+
+    def test_writable_source_videos_false(self, client, showcase_setup, mocker):
+        """既有 showcase_setup（裸 str 來源 → readonly=False）→ 每片 is_readonly_source is False。"""
+        mocker.patch("web.routers.showcase.get_db_path", return_value=showcase_setup["db_path"])
+        mocker.patch("web.routers.showcase.load_config", return_value=showcase_setup["config"])
+
+        data = client.get("/api/showcase/videos").json()
+        assert len(data["videos"]) == 2
+        for video in data["videos"]:
+            assert video["is_readonly_source"] is False
+
+    def test_mixed_per_video_correct(self, client, mixed_setup, mocker):
+        """混合來源：唯讀夾片 True、可寫夾片 False（逐片按所屬來源判）。"""
+        mocker.patch("web.routers.showcase.get_db_path", return_value=mixed_setup["db_path"])
+        mocker.patch("web.routers.showcase.load_config", return_value=mixed_setup["config"])
+
+        videos = {v["path"]: v for v in client.get("/api/showcase/videos").json()["videos"]}
+        assert videos[mixed_setup["v_ro"]]["is_readonly_source"] is True
+        assert videos[mixed_setup["v_rw"]]["is_readonly_source"] is False
+
+    def test_single_endpoint_consistent_with_list(self, client, ro_setup, mocker):
+        """單筆端點 payload is_readonly_source 值與列表端點一致。"""
+        mocker.patch("web.routers.showcase.get_db_path", return_value=ro_setup["db_path"])
+        mocker.patch("web.routers.showcase.load_config", return_value=ro_setup["config"])
+
+        list_video = next(
+            v for v in client.get("/api/showcase/videos").json()["videos"]
+            if v["path"] == ro_setup["v1"]
+        )
+        single_video = client.get(f"/api/showcase/video?path={ro_setup['v1']}").json()["video"]
+        assert list_video["is_readonly_source"] == single_video["is_readonly_source"] is True
 
 
 # ============ Thumbnail cache cover_url switch Tests (T4) ============

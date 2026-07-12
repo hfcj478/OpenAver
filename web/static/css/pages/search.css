@@ -19,9 +19,19 @@
     z-index: 100;
 }
 
-/* 74a-T2: search 右側 worst case 4 元素（toggle + clear + auto pill + submit，compose 態）；8.5rem 會撐出 ~8px 蓋住輸入文字，加寬到 10.5rem 容納（含 EN "Auto" 最寬語系 pill） */
+/* 92a-T3: search 右側 slot 寬 = CDP 實測值。真 worst-case 是 3 元素（清除 + 自動 pill + 送出，
+   compose/canReopen 態；grid 與 pill 因 currentMode 互斥永不同框，見 T3 卡）。zh_TW「自動」pill
+   實測 77.58px（舊值以 EN「Auto」估寬選 10.5rem=160px → zh_TW 溢出 5.58px 壓縮 pill 變形）。
+   worst-case 165.58px；11.5rem=176px slot content 留 10.4px headroom。padding-right 共用同 token 自動同步。 */
 .search-bar .spotlight-search {
-    --spotlight-right-slot: 10.5rem;
+    --spotlight-right-slot: 11.5rem;
+}
+
+/* 92a-T3: 「自動」來源 pill 不壓縮、不折行（配合放寬的 slot；pill 是 slot 內唯一變動寬元素，
+   icon 鈕已 flex-shrink:0）。消除 spec §1.1 症狀 1「pill 被 flex-shrink 壓縮變形」。 */
+.search-auto-pill {
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 /* T5: compose 態 icon 互斥 — btn-icon 不縮（三個 icon 共存時不擠壓彼此） */
@@ -251,11 +261,19 @@
         var(--fluent-shadow-4);
 }
 
+/* 92a-T5: 批次整理鈕常駐 — header sticky-top，長清單於 200px 捲動區內捲動時保持可見。
+   遮蔽背景走 solid token（非 backdrop-filter，守 CD-92a-4b 禁 blur-on-blur 巢狀契約）；
+   負 margin 覆蓋 .file-list-section 水平 padding，padding-bottom 取代原 margin-bottom。 */
 .file-list-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 8px;
+    margin: 0 -1rem;
+    padding: 0 1rem 8px;
+    background: var(--color-base-200);
 }
 
 .file-list-header .file-count {
@@ -381,6 +399,12 @@
 
 .empty-explainer-line + .empty-explainer-line {
     margin-top: 0.3em;
+}
+
+/* 92a-T4: explainer 內嵌整理 icon — success 綠對齊實際整理鈕（U-B2）。token 不硬編。 */
+.empty-explainer-line .explainer-icon {
+    color: var(--color-success);
+    margin-left: 0.2em;
 }
 
 @media (max-width: 480px) {
@@ -609,6 +633,49 @@
     /* US1-75b：≤1024px 全寬單欄時，雙欄 metadata 回單欄（spec §US1 L97/L113 驗收強制，CD-75b-2） */
     .search-container .av-card-full-body .info-grid-pair {
         grid-template-columns: 1fr;
+    }
+
+    /* 92a-T5: ≤1024px 整頁捲動下大卡撐開自然高、把批次整理鈕（file mode）推到 fold 下（真缺口）。
+       把同一顆 #btnScrapeAll 的宿主 .file-list-section 於 file mode 錨定 viewport 底（position:fixed 底部 tray）。
+       CDP 核實：position:sticky 無法把 below-fold 元素拉上 viewport（sticky 只在捲過時 pin，不上拉），
+       故用 fixed 才真滿足 G-B1「不需捲過大卡即可見」（plan CD-92a-4 已授權 position:fixed/貼底）。
+       .organize-tray 只在 listMode==='file' 掛（批次鈕僅此模式顯示）→ search mode 行動版位不受影響（不 over-reach）。
+       零新 DOM；z-40 低於 mobile navbar（fixed top-0 z-50）不衝突；section 既有 Rule 22 backdrop-filter
+       作浮動 tray shell（blur-on-content 非 blur-on-blur，合規）。 */
+    .file-list-section.organize-tray {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 40;
+        margin: 0;
+        border-radius: var(--fluent-radius-lg) var(--fluent-radius-lg) 0 0;
+    }
+
+    /* fixed tray 佔 viewport 底 → 僅 file mode（:has organize-tray）給 #resultCard 補底 padding，
+       讓大卡尾段能捲出 tray 遮擋；search mode 不加（section 仍在常規流、無 tray）。 */
+    #resultCard:has(.file-list-section.organize-tray) {
+        padding-bottom: 220px;
+    }
+}
+
+/* 92a-T5 fix (Codex P2): 992–1024px sidebar 仍可見（base.html @min-width:992px .sidebar display:flex，
+   main-content margin-left:var(--sidebar-width)），而 tray fixed left:0 會被 fixed sidebar（200px/collapsed 60px,
+   z-1000）蓋住左緣、與 main-content 不對齊（窄桌面視窗版位回歸）。此區間把 tray 左緣對齊 main-content（sidebar 寬）；
+   ≤991.98px sidebar 隱藏、此 min-width:992px 區間不 match → 回上方 base 的 left:0 全寬（source order 後者勝，
+   collapsed 規則 specificity 更高恆勝）。 */
+@media (min-width: 992px) and (max-width: 1024px) {
+    .file-list-section.organize-tray {
+        left: var(--sidebar-width);
+        /* 解除 over-constraint（Codex PR P2）：base .file-list-section width:100% + tray
+           right:0 + 此處 left 三者皆非 auto → CSS 2.1 §10.3.7 忽略 right、寬撐 100vw 從
+           sidebar 起算溢出右緣。width:auto 讓 right:0 生效 → 寬=viewport-left，對齊
+           main-content。低 specificity 亦覆 collapsed 變體（其僅覆寫 left）。 */
+        width: auto;
+    }
+
+    body.sidebar-collapsed .file-list-section.organize-tray {
+        left: var(--sidebar-collapsed-width);
     }
 }
 

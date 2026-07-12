@@ -69,7 +69,7 @@ class TestMigrationAvlistToGallery:
 
         assert "gallery" in result
         assert "avlist" not in result
-        assert result["gallery"]["directories"] == ["/videos"]
+        assert result["gallery"]["directories"] == [{"path": "/videos", "readonly": False, "output_path": ""}]
 
     def test_avlist_not_renamed_when_gallery_exists(self, tmp_path, monkeypatch):
         """若 gallery 已存在，不覆蓋"""
@@ -83,7 +83,7 @@ class TestMigrationAvlistToGallery:
 
         result = load_config()
 
-        assert result["gallery"]["directories"] == ["/new"]
+        assert result["gallery"]["directories"] == [{"path": "/new", "readonly": False, "output_path": ""}]
         assert "avlist" in result  # 保留未搬移的 avlist
 
 
@@ -1409,3 +1409,167 @@ class TestMigrationCloseAction:
         # migration must have persisted the corrected value
         written = _read_config(config_path)
         assert written.get("general", {}).get("close_action") == "ask"
+
+
+# ============ TASK-88a-T3：gallery.directories str → DirectoryConfig object migration ============
+
+class TestMigrationDirectoriesToObject:
+    """gallery.directories 純字串清單 → DirectoryConfig 物件遷移（TASK-88a-T3）"""
+
+    def test_str_list_migrated_to_object_list(self, tmp_path, monkeypatch):
+        """純字串 directories → load_config 後每個元素升級為完整物件"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"gallery": {"directories": ["/videos"]}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert result["gallery"]["directories"] == [
+            {"path": "/videos", "readonly": False, "output_path": ""}
+        ]
+
+    def test_migration_idempotent(self, tmp_path, monkeypatch, mocker):
+        """已是完整物件的 config 再 load，第二次不觸發 _save_config_unlocked（冪等）。
+
+        使用 AppConfig().model_dump() 作基底，確保 scraper/source_links/general 等
+        各段 key 都存在，避免不相關的 migration 在第二次 load 重複觸發。
+        第一次 load 可能因 ollama_url strip / javlibrary additive 觸發一次 save；
+        第二次 load 所有 migration 皆已滿足，directories 已是物件形態 → 不觸發 save。
+        """
+        import core.config as core_config_module
+        config_path = tmp_path / "config.json"
+        # Build a full base config so unrelated migrations don't re-fire on second load
+        base = core_config_module.AppConfig().model_dump()
+        base["gallery"]["directories"] = [
+            {"path": "/videos", "readonly": False, "output_path": ""}
+        ]
+        _write_config(config_path, base)
+        monkeypatch.setattr(core_config_module, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config_module, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        spy = mocker.spy(core_config_module, "_save_config_unlocked")
+
+        # First load: may trigger other migrations (ollama_url strip, javlibrary additive);
+        # directories migration must NOT add to need_save (directories already complete objects).
+        result1 = core_config_module.load_config()
+        assert result1["gallery"]["directories"] == [
+            {"path": "/videos", "readonly": False, "output_path": ""}
+        ]
+        count_after_first = spy.call_count
+
+        # Second load: all migrations already applied; directories still complete objects →
+        # _save_config_unlocked must NOT be called again.
+        result2 = core_config_module.load_config()
+        assert result2["gallery"]["directories"] == [
+            {"path": "/videos", "readonly": False, "output_path": ""}
+        ]
+        assert spy.call_count == count_after_first, (
+            f"second load must not re-save for directories reason "
+            f"(call_count went from {count_after_first} to {spy.call_count})"
+        )
+
+    def test_mixed_list_preserved(self, tmp_path, monkeypatch):
+        """混合清單：str 升級；dict 的 readonly/output_path 值保留"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {
+            "gallery": {
+                "directories": [
+                    "/a",
+                    {"path": "/b", "readonly": True, "output_path": "/out"},
+                ]
+            }
+        })
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        dirs = result["gallery"]["directories"]
+        assert dirs[0] == {"path": "/a", "readonly": False, "output_path": ""}
+        assert dirs[1] == {"path": "/b", "readonly": True, "output_path": "/out"}
+
+    def test_avlist_chain(self, tmp_path, monkeypatch):
+        """avlist.directories 字串清單 → avlist→gallery 遷移後再經 directories 遷移 → 完整物件"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"avlist": {"directories": ["/x"]}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert result["gallery"]["directories"] == [
+            {"path": "/x", "readonly": False, "output_path": ""}
+        ]
+
+
+# ============ TASK-90a-T2：scraper.strm_path_mappings schema + additive migration ============
+
+class TestScraperStrmPathMappings:
+    """ScraperConfig.strm_path_mappings: Dict[str,str] = {} + load_config additive migration（TASK-90a-T2）"""
+
+    def test_schema_construct_with_mappings(self):
+        """ScraperConfig(strm_path_mappings={...}) 建構正常，值保留"""
+        from core.config import ScraperConfig
+        cfg = ScraperConfig(strm_path_mappings={"Z:\\115\\": "/vol/"})
+        assert cfg.strm_path_mappings == {"Z:\\115\\": "/vol/"}
+
+    def test_schema_default_empty_dict(self):
+        """fresh ScraperConfig → strm_path_mappings 預設空 dict"""
+        from core.config import ScraperConfig
+        cfg = ScraperConfig()
+        assert cfg.strm_path_mappings == {}
+
+    def test_migration_added_when_missing(self, tmp_path, monkeypatch):
+        """舊 config scraper 段無 strm_path_mappings → migration 補空 dict，不 raise"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"scraper": {"create_folder": True, "external_manager": "off"}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert result["scraper"]["strm_path_mappings"] == {}
+
+    def test_migration_when_scraper_section_absent(self, tmp_path, monkeypatch):
+        """極舊 config 完全無 scraper 段 → migration 不 raise，仍能安全載入"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {"general": {"theme": "dark"}})
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        # scraper 段缺失時 raw_config.get('scraper', {}) 為 in-place 空 dict，
+        # 補值不寫回原 config（比照 download_sample_images 對缺段的處理）；關鍵是不 raise。
+        assert result.get("scraper", {}).get("strm_path_mappings", {}) == {}
+
+    def test_migration_not_overwrite_existing(self, tmp_path, monkeypatch):
+        """已含 strm_path_mappings 有值 → migration 不覆寫，保留原值"""
+        config_path = tmp_path / "config.json"
+        _write_config(config_path, {
+            "scraper": {"strm_path_mappings": {"Z:\\115\\": "/vol/"}}
+        })
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        result = load_config()
+
+        assert result["scraper"]["strm_path_mappings"] == {"Z:\\115\\": "/vol/"}
+
+    def test_put_roundtrip_preserves_mappings(self, tmp_path, monkeypatch):
+        """整份 config（含 strm_path_mappings）經 AppConfig model_dump round-trip 後值不變（模擬 PUT 路徑）"""
+        from core.config import AppConfig
+        config_path = tmp_path / "config.json"
+        monkeypatch.setattr(core_config, "CONFIG_PATH", config_path)
+        monkeypatch.setattr(core_config, "CONFIG_DEFAULT_PATH", tmp_path / "config.default.json")
+
+        cfg = AppConfig().model_dump()
+        cfg["scraper"]["strm_path_mappings"] = {"Z:\\115\\": "/vol/"}
+        # 模擬 PUT: AppConfig(**payload).model_dump() → save_config → load_config
+        payload = AppConfig(**cfg).model_dump()
+        assert payload["scraper"]["strm_path_mappings"] == {"Z:\\115\\": "/vol/"}
+        save_config(payload)
+
+        reloaded = load_config()
+        assert reloaded["scraper"]["strm_path_mappings"] == {"Z:\\115\\": "/vol/"}

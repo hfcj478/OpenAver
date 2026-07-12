@@ -16,7 +16,7 @@
      @dragleave.document="handleDragLeave($event)"
      @dragover.document.prevent
      @drop.document.prevent="handleDrop($event)"
-     @keydown.escape.window="dirtyCheckModalOpen && dirtyCheckCancel(); missingConfirmModalOpen && cancelLargeMissingEnrich(); deleteAliasGroupModalOpen && cancelDeleteAliasGroupModal(); deleteTagAliasGroupModalOpen && cancelDeleteTagAliasGroupModal(); copyFailModalOpen && closeCopyFailModal();">
+     @keydown.escape.window="dirtyCheckModalOpen && dirtyCheckCancel(); missingConfirmModalOpen && cancelLargeMissingEnrich(); deleteAliasGroupModalOpen && cancelDeleteAliasGroupModal(); deleteTagAliasGroupModalOpen && cancelDeleteTagAliasGroupModal(); copyFailModalOpen && closeCopyFailModal(); readonlyConfirmModalOpen && readonlyConfirmCancel();">
     <!-- Drag Overlay (must be inside x-data scope) -->
     <div class="drag-overlay" id="dragOverlay" x-show="showDragOverlay" x-transition.opacity>
         <div class="drag-overlay-content">
@@ -69,13 +69,27 @@
 
                 <!-- Folder Items -->
                 <template x-for="(dir, idx) in directories" :key="idx">
-                    <div class="folder-item">
-                        <i class="bi bi-folder folder-icon"></i>
-                        <span class="folder-path" x-text="dir"></span>
-                        <button class="btn btn-sm btn-outline btn-error btn-remove"
-                                @click="removeDirectory(idx)" title="{{ t('scanner.folder.remove_title') }}">
-                            <i class="bi bi-x"></i>
-                        </button>
+                    <div>
+                        <div class="folder-item">
+                            <label class="flex items-center gap-1">
+                                <input type="checkbox" class="toggle toggle-primary toggle-sm"
+                                       :checked="dir.readonly"
+                                       @click.prevent="onReadonlyToggleClick(idx)">
+                                <span>{{ t('scanner.folder.readonly_label') }}</span>
+                            </label>
+                            <i class="bi bi-folder folder-icon"></i>
+                            <span class="folder-path" x-text="dirPath(dir)"></span>
+                            <button class="btn btn-sm btn-outline btn-error btn-remove"
+                                    @click="removeDirectory(idx)" title="{{ t('scanner.folder.remove_title') }}">
+                                <i class="bi bi-x"></i>
+                            </button>
+                        </div>
+                        <div class="folder-item-output" x-show="dir.readonly && ['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)">
+                            <span>{{ t('scanner.folder.output_path_label') }}</span>
+                            <input type="text" class="input input-bordered input-sm flex-1"
+                                   x-model="dir.output_path"
+                                   placeholder="{{ t('scanner.folder.output_path_placeholder') }}">
+                        </div>
                     </div>
                 </template>
             </div>
@@ -89,6 +103,18 @@
             </div>
             <a href="/settings" class="settings-link">
                 <i class="bi bi-gear"></i> {{ t('scanner.folder.settings_link') }}
+            </a>
+        </div>
+
+        <!-- 跨機器路徑提醒（media-server 風味）：strm 內寫本機路徑，播放端在別機須認得，可到設定設路徑替換規則 -->
+        <div class="output-info"
+             x-show="['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)">
+            <div class="path">
+                <i class="bi bi-exclamation-triangle"></i>
+                {{ t('scanner.folder.cross_machine_hint') }}
+            </div>
+            <a href="/settings" class="settings-link">
+                <i class="bi bi-gear"></i> {{ t('scanner.folder.cross_machine_settings_link') }}
             </a>
         </div>
 
@@ -143,6 +169,47 @@
                 </button>
             </div>
         </div>
+
+        <!-- TASK-94-T4/T8: 逐片補資料進度卡（header 之後、log 之上，CD-94-8 修正 §2 落點）
+             兩格版位：左待命格（前一片命中封面，停駐至下一片命中才飛）+ 右當前卡（番號/狀態/來源/badge）。 -->
+        <div class="enrich-card" x-show="state === 'enriching' && currentCard" x-cloak>
+            <!-- TASK-94-T8 / Codex T8-plan P1：左待命格容器恆渲染、固定尺寸、不掛 x-show（x-show 只放內層 img）。
+                 容器隨整張 .enrich-card 一起渲染/隱藏，run 期間恆在，rect 跨換片穩定 —— 免 $nextTick，
+                 且同一 SSE chunk 內連兩命中也不因 Alpine patch 時序退化成 0×0（同 T5 race 教訓但更徹底）。 -->
+            <div class="enrich-ondeck" x-ref="enrichOnDeckCover">
+                <img :src="onDeckCard?.coverSrc" x-show="onDeckCard" alt="">
+            </div>
+            <div class="enrich-card-info">
+                <span class="enrich-card-number" x-text="currentCard?.number"></span>
+                <span class="enrich-card-source" x-show="currentCard?.source" x-text="currentCard?.source"></span>
+                <span class="enrich-card-status" x-show="currentCard?.status === 'searching'">
+                    <span class="loading loading-spinner loading-xs"></span>
+                    <span x-text="window.t('scanner.stats.missing_enrich_card_searching')"></span>
+                </span>
+                <!-- TASK-94-T8：hit 不再放大封面（封面歸左待命格），改 ✓ glyph，避免雙封面 -->
+                <span class="enrich-card-status enrich-card-status-neutral" x-show="currentCard?.status === 'hit'">
+                    <span class="enrich-card-glyph">✓</span>
+                </span>
+                <span class="enrich-card-status enrich-card-status-neutral" x-show="currentCard?.status === 'no_cover'">
+                    <span class="enrich-card-glyph">✓</span>
+                    <span x-text="window.t('scanner.stats.missing_enrich_card_no_cover')"></span>
+                </span>
+                <span class="enrich-card-status enrich-card-status-accent" x-show="currentCard?.status === 'not_found'">
+                    <span class="enrich-card-glyph">⊘</span>
+                    <span x-text="window.t('scanner.stats.missing_enrich_card_not_found')"></span>
+                </span>
+                <span class="enrich-card-status enrich-card-status-error" x-show="currentCard?.status === 'error'">
+                    <span class="enrich-card-glyph">⚠</span>
+                    <span x-text="window.t('scanner.stats.missing_enrich_card_error')"></span>
+                </span>
+                <span class="enrich-card-status enrich-card-status-neutral" x-show="currentCard?.status === 'readonly'">
+                    <span class="enrich-card-glyph">⤿</span>
+                    <span x-text="window.t('scanner.stats.missing_enrich_card_readonly')"></span>
+                </span>
+            </div>
+            <span class="enrich-card-badge" x-show="enrichBadgeCount > 0" x-text="enrichBadgeCount"></span>
+        </div>
+
         <div class="progress-mini">
             <div class="bar" id="progressBar" x-bind:style="{ width: progressPercent + '%' }"></div>
         </div>
@@ -554,6 +621,40 @@
                 </button>
                 <button type="button" class="btn btn-primary" @click="dirtyCheckSave()">
                     {{ t('scanner.dirty_modal.save') }}
+                </button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- TASK-90b-T1: Readonly Confirm Modal -->
+    <dialog class="modal fluent-modal"
+            :class="{ 'modal-open': readonlyConfirmModalOpen }"
+            @click.self="readonlyConfirmCancel()">
+        <div class="modal-box fluent-modal-box">
+            <h3 class="fluent-modal-title">
+                <i class="bi bi-exclamation-triangle"></i> {{ t('scanner.readonly_confirm_modal.title') }}
+            </h3>
+            <p class="fluent-modal-body">
+                {{ t('scanner.readonly_confirm_modal.intro') }}
+            </p>
+            <p class="fluent-modal-body"
+               x-show="['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)">
+                {{ t('scanner.readonly_confirm_modal.output_hint_media_server') }}
+            </p>
+            <p class="fluent-modal-body"
+               x-show="!['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)">
+                {{ t('scanner.readonly_confirm_modal.output_hint_offline') }}
+            </p>
+            <p class="fluent-modal-body"
+               x-show="!['jellyfin', 'emby', 'kodi'].includes(config?.scraper?.external_manager)">
+                {{ t('scanner.readonly_confirm_modal.nas_hint') }}
+            </p>
+            <div class="modal-action fluent-modal-actions">
+                <button type="button" class="btn btn-ghost" @click="readonlyConfirmCancel()">
+                    {{ t('scanner.readonly_confirm_modal.cancel') }}
+                </button>
+                <button type="button" class="btn btn-primary" @click="readonlyConfirmAccept()">
+                    {{ t('scanner.readonly_confirm_modal.confirm') }}
                 </button>
             </div>
         </div>

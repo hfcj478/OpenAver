@@ -13,3 +13,4 @@ select = ["E722", "F", "B", "T201", "S110", "S112"]
 "build.py" = ["T201"]
 "build_macos.py" = ["T201"]
 "scripts/audit_build_artifact.py" = ["T201"]  # CLI build 工具，print 為正常輸出（同 build.py）
+"scripts/verify_artifact_imports.py" = ["T201"]  # 產物 import sweep 守衛，print 即輸出（跑在 embedded python，stdlib-only）
