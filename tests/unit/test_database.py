@@ -59,6 +59,8 @@ def test_init_db_creates_table(tmp_path):
     # TASK-98a-T4: focal + crop_mode 欄位（videos）
     assert "auto_focal" in columns
     assert "crop_mode" in columns
+    # Codex PR#105 P2: focal_attempted_at 欄位（videos，no-face re-enqueue 修復）
+    assert "focal_attempted_at" in columns
 
     # actresses schema 斷言（先前完全沒有，98a 新增，見 T4 DoD-1）
     conn3 = sqlite3.connect(str(db_path))
@@ -1256,6 +1258,8 @@ class TestFocalCropMigration:
 
         assert "auto_focal" in columns
         assert "crop_mode" in columns
+        # Codex PR#105 P2 no-face re-enqueue 修復：videos.focal_attempted_at（actresses 不在範圍）
+        assert "focal_attempted_at" in columns
 
     def test_migration_adds_focal_and_fp_columns_to_actresses(self, tmp_path):
         """舊 actresses 表升級後 auto_focal/crop_mode/photo_fp_* 五欄存在"""
@@ -1298,6 +1302,8 @@ class TestFocalCropMigration:
         assert result.title == "舊片"
         assert result.crop_mode == "auto"
         assert result.auto_focal == ""
+        # Codex PR#105 P2：舊 row 升級後 focal_attempted_at 為 NULL（從未偵測過，非 0/''）
+        assert result.focal_attempted_at is None
 
     def test_migration_existing_actress_row_gets_defaults_and_stays_readable(self, tmp_path):
         """既有 actresses row 升級後得 crop_mode='auto'/auto_focal=''/fp 預設，且 get_by_name 仍可正常讀出

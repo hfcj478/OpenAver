@@ -119,6 +119,7 @@ def init_db(db_path: Path = None) -> None:
             scrape_attempted_at REAL DEFAULT 0,
             auto_focal TEXT DEFAULT '',
             crop_mode TEXT NOT NULL DEFAULT 'auto',
+            focal_attempted_at TIMESTAMP DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -266,6 +267,12 @@ def init_db(db_path: Path = None) -> None:
         cursor.execute("ALTER TABLE videos ADD COLUMN auto_focal TEXT DEFAULT ''")
     if 'crop_mode' not in existing_cols:
         cursor.execute("ALTER TABLE videos ADD COLUMN crop_mode TEXT NOT NULL DEFAULT 'auto'")
+
+    # Migration: 加入 focal_attempted_at 欄位（videos，Codex PR#105 P2 修復 — 無臉偵測結果
+    # 也存 format_focal(None) == ''，若不記「試過了」會被 get_empty_focal_candidates
+    # 每次重掃無限重排。nullable：NULL = 從未偵測過，非 NULL = 偵測跑過（不論有臉/無臉）。
+    if 'focal_attempted_at' not in existing_cols:
+        cursor.execute("ALTER TABLE videos ADD COLUMN focal_attempted_at TIMESTAMP DEFAULT NULL")
 
     # Migration: 加入 98a focal + photo fingerprint 欄位（actresses，CD-98a-8 新 guarded block）
     existing_actress_cols = {

@@ -39,6 +39,7 @@ class Video:
     scrape_attempted_at: float = 0.0
     auto_focal: str = ''
     crop_mode: str = 'auto'
+    focal_attempted_at: Optional[str] = None  # NULL=從未偵測過；非 NULL=偵測跑過（Codex PR#105 P2）
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -149,8 +150,10 @@ class Video:
 
 # preserve-on-conflict 欄位集合（CD-98a-6）：比照 path — 首次 INSERT 帶 dataclass 預設值，
 # 衝突/repath 一律保留 DB 既有值。focal 只由專用 update_auto_focal/update_crop_mode mutator
-# 改寫，掃描/重刮（走下方 4 個 builder）永不覆蓋。
-_FOCAL_PRESERVE = frozenset({'auto_focal', 'crop_mode'})
+# 改寫，掃描/重刮（走下方 4 個 builder）永不覆蓋。focal_attempted_at 隨 update_auto_focal
+# 原子蓋章（Codex PR#105 P2），同理必須 preserve——否則重掃的 upsert_batch 會把它洗回
+# NULL，無臉列又被 get_empty_focal_candidates 重新排入。
+_FOCAL_PRESERVE = frozenset({'auto_focal', 'crop_mode', 'focal_attempted_at'})
 
 
 class VideoRepository:
@@ -710,7 +713,8 @@ class VideoRepository:
             conn.close()
 
     def get_empty_focal_candidates(self, paths: List[str]) -> List[Tuple[str, Optional[str], str, str]]:
-        """批次讀「本次掃描 in-scope 但 auto_focal 仍空」的候選列（Codex PR#105 P2 修復）。
+        """批次讀「本次掃描 in-scope 但 auto_focal 仍空、且從未偵測過」的候選列
+        （Codex PR#105 P2 修復；no-face re-enqueue 修復同號 P2）。
 
         舊版掃描 focal trigger 只迴圈 videos_to_upsert（= needs_scan，新檔/mtime 或
         NFO 變動的檔），既有、未變動、auto_focal='' 的列永遠不會被送偵測——「重掃
@@ -718,18 +722,24 @@ class VideoRepository:
         由呼叫端傳入本次掃描 in-scope 的完整 DB-key URI 集合（與 upsert 同一套
         to_file_uri(path, path_mappings) 推導，不在此另建 URI）查詢，一次補齊。
 
+        偵測到「無臉」時 auto_focal 也存 format_focal(None) == ''，與「從未偵測過」
+        無法用 auto_focal 單一欄位區分——若只篩 auto_focal 空，無臉封面會被每次重掃
+        無限重排、worker 白忙。因此額外要求 focal_attempted_at IS NULL（update_auto_focal
+        蓋章過的列一律排除，不論找到臉或無臉）。
+
         單條 `SELECT path, number, maker, cover_path FROM videos WHERE path IN (...)
-        AND (auto_focal IS NULL OR auto_focal = '')`，超過 SQLite 變數上限時分批。
-        空 paths 直接回 []（不查詢）。gate（requires_face_detection）仍在 Python
-        側逐列判（番號/廠牌邏輯不搬 SQL），此處只做欄位篩選。鏡射
-        get_auto_focal_map/get_focal_crop_map 連線 pattern。
+        AND (auto_focal IS NULL OR auto_focal = '') AND focal_attempted_at IS NULL`，
+        超過 SQLite 變數上限時分批。空 paths 直接回 []（不查詢）。gate
+        （requires_face_detection）仍在 Python 側逐列判（番號/廠牌邏輯不搬 SQL），
+        此處只做欄位篩選。鏡射 get_auto_focal_map/get_focal_crop_map 連線 pattern。
 
         Args:
             paths: 本次掃描 in-scope 的 path（DB key，file:/// URI 格式）列表。
 
         Returns:
             list[tuple[str, str|None, str, str]]: [(path, number, maker, cover_path), ...]；
-            未在 DB 的 path 或 auto_focal 非空的 path 不會出現在結果中。
+            未在 DB 的 path、auto_focal 非空的 path、或已偵測過（focal_attempted_at 非
+            NULL，含無臉結果）的 path 都不會出現在結果中。
         """
         if not paths:
             return []
@@ -745,7 +755,8 @@ class VideoRepository:
                 cursor.execute(
                     f"""SELECT path, number, maker, cover_path FROM videos
                         WHERE path IN ({placeholders})
-                        AND (auto_focal IS NULL OR auto_focal = '')""",
+                        AND (auto_focal IS NULL OR auto_focal = '')
+                        AND focal_attempted_at IS NULL""",
                     chunk,
                 )
                 result.extend(cursor.fetchall())
@@ -1118,9 +1129,16 @@ class VideoRepository:
     def update_auto_focal(self, path: str, focal: str) -> bool:
         """安全更新 auto_focal 欄位（不碰其他欄位，CD-98a-6 mutator，鏡射 update_user_tags）。
 
+        同時蓋章 focal_attempted_at = CURRENT_TIMESTAMP（單條 UPDATE 原子寫，Codex PR#105
+        P2 修復）：背景 worker 與 force-detect endpoint 都經此方法 commit 偵測結果——不論
+        找到臉（focal='x,y'）或無臉（focal=''），都代表「偵測跑過了」，須排除於後續
+        get_empty_focal_candidates 的重掃 backfill 之外，否則無臉封面每次重掃都被當
+        「沒偵測過」無限重排。
+
         Args:
             path: 影片路徑（DB key，file:/// URI 格式）
-            focal: 新的 auto_focal 值（背景 focal 演算法算出的座標字串，如 '0.5,0.4'）
+            focal: 新的 auto_focal 值（背景 focal 演算法算出的座標字串，如 '0.5,0.4'，
+                無臉時為 format_focal(None) == ''）
 
         Returns:
             bool: 是否成功更新（path 不存在 → False，不拋例外、不新建 row）
@@ -1129,7 +1147,8 @@ class VideoRepository:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "UPDATE videos SET auto_focal = ?, updated_at = CURRENT_TIMESTAMP WHERE path = ?",
+                "UPDATE videos SET auto_focal = ?, focal_attempted_at = CURRENT_TIMESTAMP, "
+                "updated_at = CURRENT_TIMESTAMP WHERE path = ?",
                 (focal, path)
             )
             conn.commit()
