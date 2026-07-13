@@ -2377,6 +2377,28 @@ const RULES = [
     pattern: ['openPagePicker', 'showPicker'],
     note: '[TestT4FooterStructure] test_showcase_html_contains — core.js openPagePicker 用 showPicker 實作',
   },
+
+  // ==== 98b-T3：focal render 綁定守衛（binding existence + helper existence + imperative pairing）====
+  // north-star：template `:style` 綁定字面 / imperative helper 存在性是靜態字串契約 → lint 不進 pytest。
+  // no-`!important` 不變式（inline 必勝前提）由 css-guard.mjs CG-FOCAL-01 守（object-position 半邊）。
+
+  // -- Binding existence：三個 focal-aware template 站的 :style 綁定字面必存在 --
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'focalStyle(video)', note: '[TestFocalRenderGuard] F1 grid img :style binding' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'focalStyle(_getSlotItem', note: '[TestFocalRenderGuard] F2 similar desktop slot img :style binding' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'focalStyle(item)', note: '[TestFocalRenderGuard] F4 similar mobile burst img :style binding' },
+
+  // -- Helper existence：兩 state 模組各 import focal.js + 定義各自 helper --
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: "'@/shared/focal.js'", note: '[TestFocalRenderGuard] state-videos.js imports focal.js' },
+  { file: 'web/static/js/pages/showcase/state-videos.js', kind: 'required-string', pattern: 'focalStyle', note: '[TestFocalRenderGuard] state-videos.js focalStyle helper（供 F1/F2/F4 template）' },
+  { file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string', pattern: "'@/shared/focal.js'", note: '[TestFocalRenderGuard] state-similar.js imports focal.js' },
+  { file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string', pattern: 'applyFocalToImg', note: '[TestFocalRenderGuard] state-similar.js applyFocalToImg helper' },
+
+  // -- Imperative pairing：state-similar.js applyFocalToImg 出現 >=7 次（helper def 1 + I-a…I-e/I-g 六個 .src= 成對）--
+  { file: 'web/static/js/pages/showcase/state-similar.js', kind: 'required-string', pattern: 'applyFocalToImg', count: 7, note: '[TestFocalRenderGuard] state-similar.js applyFocalToImg helper + 6 imperative pairings（I-a..I-e,I-g；count 鎖成對，移除任一 .src= 配對即 RED）' },
+
+  // -- Imperative pairing：BurstPicker 鏡射來源卡 objectPosition（focal-agnostic，只搬呈現）--
+  { file: 'web/static/js/shared/burst-picker.js', kind: 'required-string', pattern: 'coverImg.style.objectPosition = selectedImg.style.objectPosition', note: '[TestFocalRenderGuard] I-f burst-picker.js 正常動畫 objectPosition 鏡射' },
+  { file: 'web/static/js/shared/burst-picker.js', kind: 'required-string', pattern: '_covImg.style.objectPosition = _selImg.style.objectPosition', note: '[TestFocalRenderGuard] I-f burst-picker.js reduced-motion objectPosition 鏡射' },
 ];
 
 // ---- helpers ----

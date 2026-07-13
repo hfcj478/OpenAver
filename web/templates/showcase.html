@@ -322,6 +322,7 @@
                         <!-- 67-A2: 三態（CD-67-3）。保留單一 <img> 沿用 handleCoverError 換圖；
                              淡入靠 _imgLoaded 的 .cover-loaded class（A1 CSS）；首屏前 8 張 eager+high（CD-67-5，不可 lazy+high 並存） -->
                         <img :src="video.cover_url"
+                             :style="focalStyle(video)"
                              :alt="video.number"
                              :loading="index < 8 ? 'eager' : 'lazy'"
                              :fetchpriority="index < 8 ? 'high' : 'auto'"
@@ -1166,6 +1167,7 @@
                      @mouseleave="onSimilarCardHoverLeave(anchor.id)">
                     <img class="similar-slot-img"
                          :src="(_getSlotItem && _getSlotItem(anchor.id))?.cover_url"
+                         :style="focalStyle(_getSlotItem(anchor.id))"
                          :alt="(_getSlotItem && _getSlotItem(anchor.id))?.title"
                          loading="lazy">
                 </div>
@@ -1217,7 +1219,7 @@
                 <template x-for="item in similarResults" :key="_mobilePanelRunId + '-' + item.video_id">
                     <div class="similar-mobile-burst-card"
                          @click="onMobileDrillClick(item, $event)">
-                        <img :src="item.cover_url" alt="" aria-hidden="true">
+                        <img :src="item.cover_url" :style="focalStyle(item)" alt="" aria-hidden="true">
                     </div>
                 </template>
             </div>
