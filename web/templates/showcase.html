@@ -699,12 +699,14 @@
 
                             <!-- 98b-T4：焦點裁切遮罩 overlay（亮窗＝小格保留區；窗外 box-shadow spotlight 壓暗；
                                  點窗 default 貼右 ⇄ auto 對焦點，亮窗左右滑動；點窗外關閉存 crop_mode）。 -->
+                            <!-- 98b-T6：移除 x-transition.opacity——實測其 enter transition 會卡在 opacity:0
+                                 (_x_transitioning 永真) 使遮罩雖 display:block 卻全透明看不見。功能性遮罩
+                                 不需淡入，x-show 即時顯示更可靠（亦符 owner 克制取向）。 -->
                             <div class="lb-mask-overlay"
                                  x-show="_maskVisible"
-                                 x-transition.opacity
                                  @click.self="closeMask()">
                                 <div class="lb-mask-window"
-                                     :style="_maskWindowStyle()"
+                                     :style="_maskWinStyle"
                                      @click="toggleMaskMode()"></div>
                                 <div class="lb-mask-spinner" x-show="_maskDetecting" aria-hidden="true">
                                     <i class="bi bi-arrow-clockwise spin"></i>
@@ -778,7 +780,7 @@
                                 <span x-show="_fetchSamplesLoading" x-text="t('showcase.samples.fetching')"></span>
                                 <!-- 98b-T4：焦點裁切遮罩 toggle（低調圓鈕，styled-like .lb-action-btn 但更小）-->
                                 <button class="lb-mask-btn"
-                                        x-show="!!currentLightboxVideo?.path"
+                                        x-show="!!currentLightboxVideo?.path && _lbFullLoaded"
                                         @click="openMask()"
                                         :title="t('showcase.lightbox.mask_toggle')"
                                         :aria-label="t('showcase.lightbox.mask_toggle')">

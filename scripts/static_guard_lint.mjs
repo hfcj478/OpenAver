@@ -96,28 +96,32 @@ const RULES = [
   // ---- [TestMaskToggleGuard] 98b-T4：遮罩 toggle 綁定 / 生命週期 guard / no-硬編-ratio / endpoint URL ----
   { file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@click="openMask', note: '[TestMaskToggleGuard] mask toggle icon button 綁 openMask' },
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '_maskVideoPath === this.currentLightboxVideo', note: '[TestMaskToggleGuard] closeMask commit guard（換片洩漏防線 CD-98b-8）' },
+  // 98b-T6：亮窗幾何改 reactive data（imperative $nextTick 算），禁量測-in-binding 復活。
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: ':style="_maskWinStyle"', note: '[TestMaskToggleGuard] .lb-mask-window 綁 reactive data _maskWinStyle（非量測-in-binding）' },
+  { file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: '_maskWindowStyle()', note: '[TestMaskToggleGuard] 禁 :style 內呼叫量測方法（stale 幾何反模式 98b-T6）' },
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'sessionPath === this.currentLightboxVideo', note: '[TestMaskToggleGuard] closeMask session re-check（await 後不誤關新片遮罩 Codex P2）' },
   { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string', pattern: "$watch('currentLightboxVideo?.path'", note: '[TestMaskToggleGuard] 換片 _resetMask 視覺防線（CD-98b-8，防遮罩畫到下一片）' },
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '/api/showcase/video/crop-mode', note: '[TestMaskToggleGuard] crop-mode endpoint fetch URL' },
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '/api/showcase/video/detect-focal', note: '[TestMaskToggleGuard] detect-focal endpoint fetch URL' },
   {
     file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'getComputedStyle',
-    scope: { anchor: /_maskWindowStyle\s*\(\s*\)\s*\{/, braceBalanced: true },
-    note: '[TestMaskToggleGuard] _maskWindowStyle 讀 CSS var（getComputedStyle）非 JS 硬編比例',
+    scope: { anchor: /_computeMaskWinStyle\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] _computeMaskWinStyle 讀 CSS var（getComputedStyle）非 JS 硬編比例',
   },
   {
     file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '--poster-crop-ratio',
-    scope: { anchor: /_maskWindowStyle\s*\(\s*\)\s*\{/, braceBalanced: true },
-    note: '[TestMaskToggleGuard] _maskWindowStyle 讀 --poster-crop-ratio（單一真理）',
+    scope: { anchor: /_computeMaskWinStyle\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] _computeMaskWinStyle 讀 --poster-crop-ratio（單一真理）',
   },
   {
     file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: '0.71',
-    scope: { anchor: /_maskWindowStyle\s*\(\s*\)\s*\{/, braceBalanced: true },
-    note: '[TestMaskToggleGuard] _maskWindowStyle 不得硬編 0.71（比例讀 CSS var）',
+    scope: { anchor: /_computeMaskWinStyle\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] _computeMaskWinStyle 不得硬編 0.71（比例讀 CSS var）',
   },
   {
     file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: /2\s*\/\s*3/,
-    scope: { anchor: /_maskWindowStyle\s*\(\s*\)\s*\{/, braceBalanced: true },
-    note: '[TestMaskToggleGuard] _maskWindowStyle 不得硬編 2/3 比例（讀 CSS var）',
+    scope: { anchor: /_computeMaskWinStyle\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] _computeMaskWinStyle 不得硬編 2/3 比例（讀 CSS var）',
   },
 
   // ---- [TestSearchLightboxMetadataGuard] search.html：5 個 required ----

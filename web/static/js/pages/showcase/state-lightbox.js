@@ -58,6 +58,8 @@ export function stateLightbox() {
         _maskMode: 'default',           // 'default'（窗貼右）| 'auto'（窗對焦點），開啟時以當前片 crop_mode 初始化
         _maskVideoPath: null,           // 開啟遮罩當下的片 path（commit guard）
         _maskDetecting: false,          // force-detect 進行中（spinner）
+        _maskWinStyle: '',              // 98b-T6：亮窗幾何 reactive data（openMask/toggle 同步 imperative 算，非量測-in-binding）
+        _maskResizeHandler: null,       // 98b-T6：開遮罩時綁 window resize 重算，close/reset 時解
 
         _videoChipsExpanded: false,     // 影片 tag chips +N 展開（T4 使用）
 
@@ -727,10 +729,30 @@ export function stateLightbox() {
         // ↔ _resetMask（換片 / 關燈箱 丟棄未提交態）。
 
         openMask() {
+            if (this._maskVisible) return;   // 98b-T6：re-entry guard——按鈕在遮罩開啟時仍可見，
+                                             // 再點不重複裝 resize listener / 不重置 _maskMode（防洩漏）。
             if (!this.currentLightboxVideo?.path) return;
+            // 98b-T6 防线：圖未就緒不開（按鈕也 gate _lbFullLoaded，此為 defense-in-depth）。
+            if (!this._lbFullLoaded) return;
             this._maskMode = this.currentLightboxVideo.crop_mode || 'auto';
+            // 98b-T6 根因修：**同步**算幾何、存 reactive data _maskWinStyle，先設幾何再顯示。
+            // 量測目標是恆可見、開遮罩時已 layout 的 cover（.lb-full），非 overlay → 無需 defer；
+            // 且本頁 Alpine $nextTick 不可靠（實測 callback 不 fire），deferred compute 會留空窗。
+            // 避免把量測放進 :style binding（抓到暫態尺寸後永不重算＝原 T4 bug）。
+            const s = this._computeMaskWinStyle();
+            if (!s) {
+                // 幾何算不出（rect=0 / naturalWidth=0）→ 不開、不留「全灰無窗」死態，toast 提示。
+                this.showToast(window.t('showcase.lightbox.mask_detect_failed'), 'error');
+                return;
+            }
             this._maskVideoPath = this.currentLightboxVideo.path;
-            this._maskVisible = true;
+            this._maskWinStyle = s;      // 先設幾何
+            this._maskVisible = true;    // 再顯示（無空窗閃）
+            // 開啟期間 window resize 重算（開時綁、close/reset 時解，lifecycle 對稱）。
+            this._maskResizeHandler = () => {
+                if (this._maskVisible) this._maskWinStyle = this._computeMaskWinStyle();
+            };
+            window.addEventListener('resize', this._maskResizeHandler);
         },
 
         // 翻頁 default ⇄ auto；翻到 auto 但 auto_focal 空（gate 漏判片）→ 同步 force-detect。
@@ -760,10 +782,16 @@ export function stateLightbox() {
                     this._maskDetecting = false;
                 }
             }
+            // 98b-T6：mode 翻轉（＋ detect-focal 回填 auto_focal）後**同步**重算窗幾何（cover 已 layout、
+            // 不用 $nextTick）。寬高不變、只 translateX 變 → :style 的 CSS transition:transform 觸發左右滑動。
+            this._maskWinStyle = this._computeMaskWinStyle();
         },
 
         // 主動關遮罩：僅當 guard 相符（未在 await 期間換片）才 commit crop_mode 到 DB + 同參考。
         async closeMask() {
+            // 98b-T6 session token：await 前記開啟當下的片；await 後 re-check 才動 _maskVisible，
+            // 防 A 存檔期間切到 B 開 B 遮罩時，A 的舊回應誤關 B 的遮罩（Codex P2）。
+            const sessionPath = this._maskVideoPath;
             if (this._maskVideoPath === this.currentLightboxVideo?.path) {
                 const targetVideo = this.currentLightboxVideo;
                 const mode = this._maskMode;
@@ -784,18 +812,32 @@ export function stateLightbox() {
                     this.showToast(window.t('showcase.lightbox.mask_save_failed'), 'error');
                 }
             }
-            this._maskVisible = false;
+            // 只有仍停在同一片（未切走）才收 overlay + 解 resize listener；切到 B 時 _resetMask 已處理
+            // A 的 visibility 與 A 的舊 handler，且 B 的 openMask 已裝新 handler → A 的舊回應不得 clobber。
+            if (sessionPath === this.currentLightboxVideo?.path) {
+                this._maskVisible = false;
+                if (this._maskResizeHandler) {
+                    window.removeEventListener('resize', this._maskResizeHandler);
+                    this._maskResizeHandler = null;
+                }
+            }
         },
 
         // 換片 / 關燈箱：丟棄未提交態（不 commit，不把前片 _maskMode 帶到下一片）。
         _resetMask() {
             this._maskVisible = false;
+            this._maskWinStyle = '';     // 98b-T6：清窗幾何避免殘留閃（下次 open 同步重算覆蓋）
+            if (this._maskResizeHandler) {
+                window.removeEventListener('resize', this._maskResizeHandler);
+                this._maskResizeHandler = null;
+            }
         },
 
         // 亮窗幾何：讀 CSS var --poster-crop-ratio（非硬編）+ focalObjectPosition 解焦點 x%。
         // 回傳 inline style 字串（width/height + transform translateX）供 template :style 綁定。
         // 亮窗以外由 CSS box-shadow spotlight 壓暗；transform 換模式時 CSS transition 左右滑動。
-        _maskWindowStyle() {
+        // 98b-T6：純 compute（原 _maskWindowStyle 邏輯不變），由 openMask/toggleMaskMode/resize imperative 呼叫。
+        _computeMaskWinStyle() {
             const el = this.$refs.lightboxCoverFull;
             // C17/#10：圖 render 前 rect=0 → 不畫（naturalWidth 未就緒）
             if (!el || !el.naturalWidth) return '';
