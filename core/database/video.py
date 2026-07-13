@@ -397,11 +397,13 @@ class VideoRepository:
                         continue  # 保留 DB 既有值
                     set_parts.append("auto_focal = ?")
                     set_values.append('')
+                    continue  # 已排入 reset，勿 fall through 到底部通用 append（重複 SET→SQLite 取最右＝incoming stale 值蓋掉 reset，Codex PR#105 P2c）
                 elif col == 'focal_attempted_at':
                     if cover_unchanged:
                         continue  # 保留 DB 既有值
                     set_parts.append("focal_attempted_at = ?")
                     set_values.append(None)
+                    continue  # 同上：勿 fall through 重複 append 蓋掉 reset（Codex PR#105 P2c）
                 elif col == 'output_dir' and not val:
                     # incoming output_dir 空 → 保留既有值（不寫入），與 upsert() CASE-WHEN 對稱
                     continue

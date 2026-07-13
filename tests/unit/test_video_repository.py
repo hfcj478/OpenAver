@@ -1104,7 +1104,11 @@ class TestFocalPreserveOnConflict:
         with patch("core.similar.ranker_cache.SimilarRankerCache"):
             repo.repath(
                 old_uri, new_uri,
-                Video(path=new_uri, title="換封面重掃", cover_path=new_cover),
+                # incoming 帶 non-default focal（Codex PR#105 P2c）：若 reset branch 漏 continue、
+                # fall through 到底部通用 append，會用這裡的 stale 值蓋掉 reset（SQLite 取最右 SET）。
+                # 用預設 ''/None 會與 reset 值巧合相同、測不出 missing-continue，故刻意餵非預設值。
+                Video(path=new_uri, title="換封面重掃", cover_path=new_cover,
+                      auto_focal='0.9,0.9', focal_attempted_at='2020-01-01 00:00:00'),
             )
 
         result = repo.get_by_path(new_uri)
