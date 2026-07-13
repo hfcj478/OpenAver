@@ -3,7 +3,7 @@ import sqlite3
 import json
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from datetime import datetime
 
 from core.logger import get_logger
@@ -705,6 +705,50 @@ class VideoRepository:
                 )
                 for row in cursor.fetchall():
                     result[row[0]] = (row[1], row[2])
+            return result
+        finally:
+            conn.close()
+
+    def get_empty_focal_candidates(self, paths: List[str]) -> List[Tuple[str, Optional[str], str, str]]:
+        """批次讀「本次掃描 in-scope 但 auto_focal 仍空」的候選列（Codex PR#105 P2 修復）。
+
+        舊版掃描 focal trigger 只迴圈 videos_to_upsert（= needs_scan，新檔/mtime 或
+        NFO 變動的檔），既有、未變動、auto_focal='' 的列永遠不會被送偵測——「重掃
+        一次自動補焦既有庫」實際上是假的（見 CHANGELOG 0.12.0 已知限制承諾）。改
+        由呼叫端傳入本次掃描 in-scope 的完整 DB-key URI 集合（與 upsert 同一套
+        to_file_uri(path, path_mappings) 推導，不在此另建 URI）查詢，一次補齊。
+
+        單條 `SELECT path, number, maker, cover_path FROM videos WHERE path IN (...)
+        AND (auto_focal IS NULL OR auto_focal = '')`，超過 SQLite 變數上限時分批。
+        空 paths 直接回 []（不查詢）。gate（requires_face_detection）仍在 Python
+        側逐列判（番號/廠牌邏輯不搬 SQL），此處只做欄位篩選。鏡射
+        get_auto_focal_map/get_focal_crop_map 連線 pattern。
+
+        Args:
+            paths: 本次掃描 in-scope 的 path（DB key，file:/// URI 格式）列表。
+
+        Returns:
+            list[tuple[str, str|None, str, str]]: [(path, number, maker, cover_path), ...]；
+            未在 DB 的 path 或 auto_focal 非空的 path 不會出現在結果中。
+        """
+        if not paths:
+            return []
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            result: List[Tuple[str, Optional[str], str, str]] = []
+            chunk_size = 900  # 保守低於 SQLite 999 變數上限
+            for i in range(0, len(paths), chunk_size):
+                chunk = paths[i:i + chunk_size]
+                placeholders = ', '.join(['?'] * len(chunk))
+                cursor.execute(
+                    f"""SELECT path, number, maker, cover_path FROM videos
+                        WHERE path IN ({placeholders})
+                        AND (auto_focal IS NULL OR auto_focal = '')""",
+                    chunk,
+                )
+                result.extend(cursor.fetchall())
             return result
         finally:
             conn.close()

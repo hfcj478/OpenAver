@@ -939,3 +939,49 @@ class TestScanFocalTrigger:
         # SONE-205 = 有碼 → requires_face_detection False → 不 submit
         mock_submit = self._run_scan(tmp_path, "SONE-205", maker="SOD")
         mock_submit.assert_not_called()
+
+    def test_existing_unchanged_empty_focal_backfilled(self, tmp_path):
+        """Codex PR#105 P2 回歸釘：既有 DB 列、auto_focal=''、mtime 未變（不進
+        needs_scan/videos_to_upsert）、無碼 → 重掃一次仍要被送偵測，否則「重掃一次
+        自動補焦既有庫」的承諾對這批既有片形同虛設。
+
+        mutation：focal 來源若改回只迴圈 videos_to_upsert，此列不會被 submit → RED。
+        """
+        from unittest.mock import patch
+        from core.database import init_db, VideoRepository, Video
+        from core.path_utils import to_file_uri
+
+        num = "SIRO-9999"
+        db_file = tmp_path / "scan_focal_unchanged.db"
+        init_db(db_file)
+        repo = VideoRepository(db_path=db_file)
+
+        video_fs = str(tmp_path / f"{num}.mp4")
+        cover_fs = tmp_path / f"{num}.jpg"
+        cover_fs.write_bytes(b"x")
+        path_uri = to_file_uri(video_fs)
+        cover_uri = to_file_uri(str(cover_fs))
+
+        # 既有列，mtime 與本次掃描一致（不進 needs_scan）；auto_focal 維持 dataclass
+        # 預設空字串（不呼叫 update_auto_focal）。
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(
+                path=path_uri, number=num, maker="", cover_path=cover_uri,
+                mtime=111, nfo_mtime=0.0,
+            ))
+
+        scanner = VideoScanner()
+        file_infos = [{"path": video_fs, "mtime": 111, "nfo_mtime": 0}]
+
+        with (
+            patch("core.gallery_scanner.fast_scan_directory", return_value=file_infos),
+            patch("core.similar.ranker_cache.SimilarRankerCache"),
+            patch("core.gallery_scanner._run_sample_images_cleanup_pass"),
+            patch("core.gallery_scanner.maybe_submit_video_focal") as mock_submit,
+        ):
+            scanner.scan_to_sqlite(str(tmp_path), db_path=db_file)
+
+        mock_submit.assert_called_once()
+        args = mock_submit.call_args[0]
+        assert args[0] == num
+        assert args[2] == path_uri

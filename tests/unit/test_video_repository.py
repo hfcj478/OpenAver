@@ -1054,3 +1054,36 @@ class TestFocalMutators:
     def test_update_crop_mode_missing_path_returns_false(self, temp_db):
         repo = VideoRepository(temp_db)
         assert repo.update_crop_mode(to_file_uri("/focal_mutator_nonexistent2.mp4"), 'default') is False
+
+
+class TestGetEmptyFocalCandidates:
+    """VideoRepository.get_empty_focal_candidates（Codex PR#105 P2 scan-backfill 修復用）。
+
+    掃描 focal trigger 改用此方法涵蓋「本次掃描 in-scope 但 auto_focal 仍空」的所有
+    列（不只 upsert batch），此處直接驗證 SQL 篩選正確性：只回空 auto_focal 且
+    path 在 in-scope 集合內的列。
+    """
+
+    def test_empty_paths_returns_empty_list(self, temp_db):
+        repo = VideoRepository(temp_db)
+        assert repo.get_empty_focal_candidates([]) == []
+
+    def test_returns_only_empty_focal_rows_within_scope(self, temp_db):
+        repo = VideoRepository(temp_db)
+        p_empty = to_file_uri("/empty_focal_candidates_empty.mp4")
+        p_filled = to_file_uri("/empty_focal_candidates_filled.mp4")
+        p_out_of_scope = to_file_uri("/empty_focal_candidates_out_of_scope.mp4")
+
+        repo.upsert(Video(path=p_empty, number="SIRO-1111", maker="", cover_path="cover1"))
+        repo.upsert(Video(path=p_filled, number="SIRO-2222", maker="", cover_path="cover2"))
+        repo.update_auto_focal(p_filled, "0.5,0.5")
+        # 不在本次掃描 in-scope 集合的列（即使 auto_focal 也是空）不該被查到
+        repo.upsert(Video(path=p_out_of_scope, number="SIRO-3333", maker="", cover_path="cover3"))
+
+        result = repo.get_empty_focal_candidates([p_empty, p_filled])
+
+        assert result == [(p_empty, "SIRO-1111", "", "cover1")]
+
+    def test_missing_path_not_in_result(self, temp_db):
+        repo = VideoRepository(temp_db)
+        assert repo.get_empty_focal_candidates([to_file_uri("/no_such_video.mp4")]) == []

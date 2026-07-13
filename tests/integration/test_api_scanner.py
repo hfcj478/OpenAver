@@ -2226,7 +2226,7 @@ class TestGenerateAvlistFocalTrigger:
     maybe_submit_video_focal` 只驗接線與 gate，不真跑 pigo。
     """
 
-    def _run(self, tmp_path, num, maker="", seed_auto_focal=None):
+    def _run(self, tmp_path, num, maker="", seed_auto_focal=None, seed_unchanged=False):
         import types
         from unittest.mock import patch, MagicMock
         from core.database import init_db, VideoRepository, Video
@@ -2248,6 +2248,14 @@ class TestGenerateAvlistFocalTrigger:
             with patch("core.similar.ranker_cache.SimilarRankerCache"):
                 repo.upsert(Video(path=path_uri, number=num, maker=maker, cover_path=cover_uri))
             repo.update_auto_focal(path_uri, seed_auto_focal)
+        elif seed_unchanged:
+            # Codex PR#105 P2 回歸釘：既有列 mtime 與本次掃描一致（111）→ 不進
+            # needs_scan/videos_to_upsert，auto_focal 維持 dataclass 預設空字串。
+            with patch("core.similar.ranker_cache.SimilarRankerCache"):
+                repo.upsert(Video(
+                    path=path_uri, number=num, maker=maker, cover_path=cover_uri,
+                    mtime=111, nfo_mtime=0.0,
+                ))
 
         info = VideoInfo()
         info.num = num
@@ -2303,3 +2311,13 @@ class TestGenerateAvlistFocalTrigger:
     def test_censored_no_submit(self, tmp_path):
         mock_submit = self._run(tmp_path, "SONE-205", maker="SOD")
         mock_submit.assert_not_called()
+
+    def test_existing_unchanged_empty_focal_backfilled(self, tmp_path):
+        # Codex PR#105 P2 回歸釘：既有 DB 列、auto_focal=''、mtime 未變（不進
+        # needs_scan/videos_to_upsert）、無碼 → 重掃一次仍要被送偵測，否則「重掃一次
+        # 自動補焦既有庫」的承諾對這批既有片形同虛設。
+        # mutation：focal 來源若改回只迴圈 videos_to_upsert，此列不會被 submit → RED。
+        mock_submit = self._run(tmp_path, "SIRO-1234", seed_unchanged=True)
+        mock_submit.assert_called_once()
+        args = mock_submit.call_args[0]
+        assert args[0] == "SIRO-1234"

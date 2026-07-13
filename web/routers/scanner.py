@@ -524,14 +524,18 @@ def generate_avlist(should_abort: Optional[Callable[[], bool]] = None) -> Genera
                     total_inserted += inserted
                     total_updated += updated
 
-                    # 掃描 focal trigger（TASK-98b-T2）：一次批次讀現有 auto_focal，
-                    # 逐片 gate 無碼 且 現有 auto_focal 為空 → 反解 cover → 排背景偵測。
-                    focal_paths = [v.path for v in videos_to_upsert]
-                    focal_map = repo.get_auto_focal_map(focal_paths)
-                    for v in videos_to_upsert:
-                        if requires_face_detection(v.number, v.maker) and not focal_map.get(v.path):
-                            cover_fs = uri_to_local_fs_path(v.cover_path, path_mappings)
-                            maybe_submit_video_focal(v.number, v.maker, v.path, cover_fs, db_path=repo.db_path)
+                # 掃描 focal trigger（TASK-98b-T2 / Codex PR#105 P2）：涵蓋本次掃描
+                # in-scope 的所有空焦點無碼片，不只 upsert batch（needs_scan）——既有、
+                # 未變動、auto_focal='' 的列（不在 videos_to_upsert 內）也要補，否則
+                # 「重掃一次自動補焦既有庫」形同虛設。current_paths 是本目錄本次掃到
+                # 的完整 DB-key URI 集合（:457-458 同一套 to_file_uri(path,
+                # path_mappings) 推導），bulk 查詢，不另建 URI、不 N+1。
+                if current_paths:
+                    focal_candidates = repo.get_empty_focal_candidates(list(current_paths))
+                    for c_path, c_number, c_maker, c_cover_path in focal_candidates:
+                        if requires_face_detection(c_number, c_maker):
+                            cover_fs = uri_to_local_fs_path(c_cover_path, path_mappings)
+                            maybe_submit_video_focal(c_number, c_maker, c_path, cover_fs, db_path=repo.db_path)
 
                 logger.info(f"[Gallery] {directory}: {len(all_files)} 個檔案，快取命中 {cache_hits}")
 

@@ -729,19 +729,22 @@ class VideoScanner:
         inserted, updated = repo.upsert_batch(videos_to_upsert)
         logger.info(f"[*] 完成: 新增 {inserted}, 更新 {updated}, 刪除 {deleted_count}")
 
-        # 掃描 focal trigger（TASK-98b-T2）：與 web/routers/scanner.py 對稱——一次批次
-        # 讀現有 auto_focal，逐片 gate 無碼 且 現有 auto_focal 為空 → 反解 cover → 排偵測。
+        # 掃描 focal trigger（TASK-98b-T2 / Codex PR#105 P2）：與 web/routers/scanner.py
+        # 對稱——涵蓋本次掃描 in-scope 的所有空焦點無碼片，不只 upsert batch
+        # （needs_scan）。既有、未變動、auto_focal='' 的列（不在 videos_to_upsert 內）
+        # 也要補，否則「重掃一次自動補焦既有庫」形同虛設。current_file_uris 是本次
+        # 掃描的完整 DB-key URI 集合（:685-690 同一套 to_file_uri(fs_path,
+        # self.path_mappings) 推導），bulk 查詢，不另建 URI、不 N+1。
         # focal 是純副作用（安全退化：無 focal → render 退 baseline 右裁），任何例外都
-        # 不得中止掃描——包整個 loop（含 get_auto_focal_map），log warning 後續走 cleanup
-        # + return。web/routers/scanner.py 的對稱塊已在 per-directory try 內，此處為
-        # method top-level 需自帶防護。
+        # 不得中止掃描——包整個 loop（含 get_empty_focal_candidates），log warning 後續
+        # 走 cleanup + return。web/routers/scanner.py 的對稱塊已在 per-directory try
+        # 內，此處為 method top-level 需自帶防護。
         try:
-            focal_paths = [v.path for v in videos_to_upsert]
-            focal_map = repo.get_auto_focal_map(focal_paths)
-            for v in videos_to_upsert:
-                if requires_face_detection(v.number, v.maker) and not focal_map.get(v.path):
-                    cover_fs = uri_to_local_fs_path(v.cover_path, self.path_mappings)
-                    maybe_submit_video_focal(v.number, v.maker, v.path, cover_fs, db_path=repo.db_path)
+            focal_candidates = repo.get_empty_focal_candidates(list(current_file_uris))
+            for c_path, c_number, c_maker, c_cover_path in focal_candidates:
+                if requires_face_detection(c_number, c_maker):
+                    cover_fs = uri_to_local_fs_path(c_cover_path, self.path_mappings)
+                    maybe_submit_video_focal(c_number, c_maker, c_path, cover_fs, db_path=repo.db_path)
         except Exception:
             logger.warning("[*] focal trigger 批次排程失敗（不影響掃描結果）", exc_info=True)
 
