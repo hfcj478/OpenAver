@@ -1571,6 +1571,30 @@ const RULES = [
       }
     },
   },
+
+  // CG-FOCAL-02 ← 99a-T3：拖曳中停用 .lb-mask-window transition，防與連續 pointermove 打架
+  // （橡皮筋延遲手感，違反 spec §3.3「拖曳即時預覽」）。若被移除，視覺上不會立即崩潰（只是拖曳
+  // 手感變差），純靠人眼不易發現，值得一條結構守衛鎖住。
+  {
+    id: 'CG-FOCAL-02',
+    file: 'pages/showcase.css',
+    kind: 'selector-require',
+    markers: ['.lb-mask-window--dragging'],
+    pattern: /transition\s*:\s*none/,
+    msg: '.lb-mask-window--dragging must keep transition:none — 99a-T3 拖曳跟手；移除會讓 .lb-mask-window 的 333ms ease-out 與連續 pointermove 打架（橡皮筋延遲）',
+  },
+
+  // CG-FOCAL-03 ← 99a-T3：.lb-action-btn--success 刻意採 token-based color-mix(var(--color-success))
+  // 而非像既有 --danger 那樣硬編 rgba（--danger 是 44c-T3 遺留、早於 6-role 材質系統，touched-
+  // when-modified 才修，非本規則管轄）。鎖住「不要把新 modifier 也走回硬編老路」。
+  {
+    id: 'CG-FOCAL-03',
+    file: 'pages/showcase.css',
+    kind: 'selector-forbid',
+    markers: ['.lb-action-btn--success'],
+    pattern: /rgba\(/,
+    msg: '.lb-action-btn--success must stay token-based (color-mix(in oklch, var(--color-success) ...)), not hardcoded rgba — unlike legacy .lb-action-btn--danger (pre-dates 6-role material system, out of scope here)',
+  },
 ];
 
 // ── per-file read+parse cache（同檔多 rule 共用，讀一次 → stripCssComments → parseRuleBlocks）──

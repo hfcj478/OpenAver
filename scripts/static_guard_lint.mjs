@@ -166,6 +166,121 @@ const RULES = [
     note: '[TestMaskToggleGuard] _computeMaskWinStyle 不得硬編 2/3 比例（讀 CSS var）',
   },
 
+  // ---- [TestMaskToggleGuard] 99a-T4：T3 新互動（force-detect 預覽 + 左右拖曳 + ✓/✗）回填守衛 ----
+  // §1 拖曳 wiring（4）：.lb-mask-window 起手綁定 + 函式定義存在 + 退役 toggle handler 兩檔 forbidden。
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: '@pointerdown="_maskDragStart($event)"',
+    note: '[TestMaskToggleGuard] 99a-T4：.lb-mask-window 綁新拖曳起手（取代 98b @click="toggleMaskMode()"）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: 'toggleMaskMode',
+    note: '[TestMaskToggleGuard] 99a-T4：退役 toggle handler 不得復活（thorough-cleanup lock）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: '_maskDragStart(evt) {',
+    note: '[TestMaskToggleGuard] 99a-T4：拖曳起手函式定義存在',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: 'toggleMaskMode',
+    note: '[TestMaskToggleGuard] 99a-T4：退役 toggle handler 不得復活（thorough-cleanup lock）',
+  },
+
+  // §2 退役識別字 forbidden-string（3，比照既有 _maskVideoPath 先例 :136）：_maskMode/closeMask
+  // 全域零殘留，本 task 補鎖住這個「巧合乾淨」的狀態，防未來以舊名復活。
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: '_maskMode',
+    note: '[TestMaskToggleGuard] 99a-T4：退役 default⇄auto toggle 狀態不得復活（thorough-cleanup lock）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: 'closeMask',
+    note: '[TestMaskToggleGuard] 99a-T4：退役「點窗外隱式存」函式不得以舊名復活（confirmMask/cancelMask 已取代）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: 'closeMask',
+    note: '[TestMaskToggleGuard] 99a-T4：overlay @click.self 不得指回舊 closeMask（現為 cancelMask）',
+  },
+
+  // §3 拖曳 listener 對稱 add/remove（6，scope-anchored——flat required-string 驗不出「掛在對的
+  // 函式、解在對的函式」，見 TASK-99a-T4 技術要點 §3 的「錯位置」反例）。
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: "document.addEventListener('pointermove'",
+    scope: { anchor: /_maskDragStart\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T4：_maskDragStart 掛 pointermove（拖曳跟手核心）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: "document.addEventListener('pointerup'",
+    scope: { anchor: /_maskDragStart\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T4：_maskDragStart 掛 pointerup（放開結束拖曳）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: "document.addEventListener('pointercancel'",
+    scope: { anchor: /_maskDragStart\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T4：_maskDragStart 掛 pointercancel（系統中斷手勢時仍收尾，防洩漏）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: "document.removeEventListener('pointermove'",
+    scope: { anchor: /_maskRemoveDragListeners\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T4：_maskRemoveDragListeners 對稱移除 pointermove（防洩漏）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: "document.removeEventListener('pointerup'",
+    scope: { anchor: /_maskRemoveDragListeners\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T4：_maskRemoveDragListeners 對稱移除 pointerup（防洩漏）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: "document.removeEventListener('pointercancel'",
+    scope: { anchor: /_maskRemoveDragListeners\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 99a-T4：_maskRemoveDragListeners 對稱移除 pointercancel（防洩漏）',
+  },
+
+  // §4 V/X handler + gating class（8：5 + 3 顆原按鈕 gate）
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@click.stop="confirmMask()"',
+    note: '[TestMaskToggleGuard] 99a-T4：✓ 鈕綁 confirmMask（CD-6 就地佔 .cover-actions）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@click.stop="cancelMask()"',
+    note: '[TestMaskToggleGuard] 99a-T4：✗ 鈕綁 cancelMask',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@click.self="cancelMask()"',
+    note: '[TestMaskToggleGuard] 99a-T4：overlay 點窗外 = ✗（owner 定案，非 closeMask）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: 'cancelMask() {',
+    note: '[TestMaskToggleGuard] 99a-T4：cancelMask 函式定義存在',
+  },
+  // confirmMask 定義本身已被既有規則（:131-135，scope anchor `async confirmMask()`）transitively
+  // 鎖住——若函式被砍/改名，該既有規則的 anchor-not-found 會直接硬錯，不需要本 task 重複加一條。
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: ":class=\"{'cover-actions--focal-edit': _maskVisible}\"",
+    note: '[TestMaskToggleGuard] 99a-T4：.cover-actions 容器 focal-edit gating class 綁定（CD-6，桌面 hover-only 常顯解法）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-show="!_maskVisible" @click="playVideo(',
+    note: '[TestMaskToggleGuard] 99a-T4：play 鈕編輯中暫隱（CD-6）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-show="!_maskVisible" @click="openLocal(',
+    note: '[TestMaskToggleGuard] 99a-T4：開資料夾鈕編輯中暫隱（CD-6）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-show="(!currentLightboxVideo?.has_cover || !currentLightboxVideo?.has_nfo) && !_maskVisible"',
+    note: '[TestMaskToggleGuard] 99a-T4：補缺鈕編輯中暫隱（CD-6，錨完整值防 has_cover/has_nfo 條件被誤刪只剩 !_maskVisible）',
+  },
+
   // ---- [TestSearchLightboxMetadataGuard] search.html：5 個 required ----
   { file: 'web/templates/search.html', kind: 'required-string', pattern: 'currentLightboxVideo()?.director', note: '[TestSearchLightboxMetadataGuard] lightbox field' },
   { file: 'web/templates/search.html', kind: 'required-string', pattern: 'currentLightboxVideo()?.duration', note: '[TestSearchLightboxMetadataGuard] lightbox field' },
