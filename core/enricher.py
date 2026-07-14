@@ -521,16 +521,21 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
         _db_upsert(repo, number, fs_path_for_db, meta, local_cover_path=local_cover,
                    nfo_mtime=nfo_mtime, written_uris=written_uris, path_mappings=path_mappings)
 
-        # 重刮 focal trigger（TASK-98b-T2）：無條件 submit（:514 gate 已保證真刮到新
-        # cover）；preserve-on-conflict 使 crop_mode 不被動。video_path_uri 須與
-        # _db_upsert 寫入的 key 一致（:190 / :594 to_file_uri(fs_path_for_db)）。
-        # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
-        maybe_submit_video_focal(
-            number,
-            meta.get("maker"),
-            to_file_uri(fs_path_for_db if fs_path_for_db is not None else fs_path),
-            local_cover,
-        )
+        # 重刮 focal trigger（TASK-98b-T2 + 99a-T1b CD-4）：只在「實際寫入新封面內容」
+        # （cover_written=True）時才作廢舊手動焦點、再排新的背景偵測；reset 必須在
+        # submit 之前（先清舊值、再讓 gate 判斷是否排 worker，避免有碼片極端時序下
+        # 短暫殘留 manual）。cover_written=False（只重寫 NFO，未覆蓋既有封面）→ 完全
+        # 不進此塊，manual 值原樣保留。video_path_uri 須與 _db_upsert 寫入的 key 一致
+        # （:190 / :594 to_file_uri(fs_path_for_db)），複用上方已算過的 path_uri。
+        if cover_written:
+            repo.reset_focal_to_auto(path_uri)
+            # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
+            maybe_submit_video_focal(
+                number,
+                meta.get("maker"),
+                to_file_uri(fs_path_for_db if fs_path_for_db is not None else fs_path),
+                local_cover,
+            )
 
     # nfo_mtime 獨立更新：不論 mode/source，只要 NFO 存在就同步 DB
     # 避免 analysis 永遠視為 missing_nfo

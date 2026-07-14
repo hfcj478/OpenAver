@@ -1146,6 +1146,128 @@ class TestFocalPreserveOnConflict:
         assert result.focal_attempted_at is None
         assert result.crop_mode == 'default'
 
+    # ── 99a-T1b CD-10：manual 座標換封面必須降回 auto（平行於上方 default 版本）───
+
+    def test_upsert_preserves_manual_focal_when_cover_path_unchanged(self, temp_db):
+        """同封面：manual row 全欄位保留（證明 crop_mode 仍留在保留集、非被移出
+        `_FOCAL_PRESERVE` fall-through）。"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/focal_same_cover_upsert_manual.mp4")
+        cover = to_file_uri("/focal_same_cover_upsert_manual.jpg")
+
+        repo.upsert(Video(path=path, title="舊片", cover_path=cover))
+        assert repo.update_manual_focal(path, '0.3000,0.6000') is True
+
+        repo.upsert(Video(path=path, title="重掃描-metadata only", cover_path=cover))
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.cover_path == cover
+        assert result.crop_mode == 'manual'
+        assert result.auto_focal == '0.3000,0.6000'
+        assert result.focal_attempted_at is None
+
+    def test_upsert_resets_manual_focal_when_cover_path_changes(self, temp_db):
+        """CD-10 核心回歸：manual 座標對舊封面算的，換封面已失效，crop_mode 必須降回
+        'auto'，否則 CD-9 守衛落地後，不經 enricher 的換封面路徑（scanner/sidecar/NFO）
+        會把 row 永久卡在 manual+空焦點。mutation：拔掉 upsert() crop_mode CASE 的降級
+        分支（回到無條件 continue）→ 留 manual → RED。"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/focal_cover_change_upsert_manual.mp4")
+        old_cover = to_file_uri("/focal_cover_change_upsert_manual_old.jpg")
+        new_cover = to_file_uri("/focal_cover_change_upsert_manual_new.jpg")
+
+        repo.upsert(Video(path=path, title="舊片", cover_path=old_cover))
+        assert repo.update_manual_focal(path, '0.3000,0.6000') is True
+
+        repo.upsert(Video(path=path, title="換封面重掃", cover_path=new_cover))
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.cover_path == new_cover
+        assert result.auto_focal == ''
+        assert result.focal_attempted_at is None
+        assert result.crop_mode == 'auto', "manual 座標對新封面已失效，換封面必須降回 auto"
+
+    def test_upsert_batch_resets_manual_focal_when_cover_path_changes(self, temp_db):
+        """upsert_batch() 同鏡射（Scanner 增量掃描主路徑，漏此等於沒修）。mutation：
+        拔掉 upsert_batch() crop_mode CASE 的降級分支 → 留 manual → RED。"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/focal_cover_change_batch_manual.mp4")
+        old_cover = to_file_uri("/focal_cover_change_batch_manual_old.jpg")
+        new_cover = to_file_uri("/focal_cover_change_batch_manual_new.jpg")
+
+        repo.upsert(Video(path=path, title="舊片", cover_path=old_cover))
+        assert repo.update_manual_focal(path, '0.3000,0.6000') is True
+
+        repo.upsert_batch([Video(path=path, title="換封面重掃", cover_path=new_cover)])
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.cover_path == new_cover
+        assert result.auto_focal == ''
+        assert result.focal_attempted_at is None
+        assert result.crop_mode == 'auto'
+
+    def test_repath_normal_update_resets_manual_focal_when_cover_path_changes(self, temp_db):
+        """repath() 分支 2（機制 B，inline `cover_unchanged` 判斷、非經 `_FOCAL_PRESERVE`）
+        manual 版——task 標注「最易漏」，因為此分支是逐欄手動組 SET、無法直接鏡射機制 A
+        的 CASE 寫法。mutation：拔掉 `old_row.crop_mode == 'manual'` 降級分支 → 留
+        manual → RED。"""
+        repo = VideoRepository(temp_db)
+        old_uri = to_file_uri("/focal_repath_cover_change_old_manual.mp4")
+        new_uri = to_file_uri("/focal_repath_cover_change_new_manual.mp4")
+        old_cover = to_file_uri("/focal_repath_cover_change_old_manual.jpg")
+        new_cover = to_file_uri("/focal_repath_cover_change_new_manual.jpg")
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=old_uri, title="舊片", cover_path=old_cover))
+        assert repo.update_manual_focal(old_uri, '0.3000,0.6000') is True
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.repath(
+                old_uri, new_uri,
+                # incoming 帶 non-default focal（Codex PR#105 P2c 教訓）：若 reset branch
+                # 漏 continue、fall through 到底部通用 append，會用這裡的 stale 值蓋掉
+                # reset（SQLite 取最右 SET）。
+                Video(path=new_uri, title="換封面重掃", cover_path=new_cover,
+                      auto_focal='0.9,0.9', focal_attempted_at='2020-01-01 00:00:00'),
+            )
+
+        result = repo.get_by_path(new_uri)
+        assert result is not None
+        assert result.cover_path == new_cover
+        assert result.auto_focal == ''
+        assert result.focal_attempted_at is None
+        assert result.crop_mode == 'auto', "manual 座標對新封面已失效，換封面必須降回 auto"
+
+    def test_repath_collision_merge_resets_manual_focal_when_cover_path_changes(self, temp_db):
+        """repath() 分支 3（碰撞 delete-merge）manual 版。mutation：拔掉 repath 分支 3
+        crop_mode CASE 的降級分支 → 留 manual → RED。"""
+        repo = VideoRepository(temp_db)
+        old_uri = to_file_uri("/focal_collision_cover_change_old_manual.mp4")
+        new_uri = to_file_uri("/focal_collision_cover_change_new_manual.mp4")
+        existing_cover = to_file_uri("/focal_collision_cover_change_existing_manual.jpg")
+        incoming_cover = to_file_uri("/focal_collision_cover_change_incoming_manual.jpg")
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=old_uri, title="舊片"))
+            repo.upsert(Video(path=new_uri, title="既有新路徑片", cover_path=existing_cover))
+        assert repo.update_manual_focal(new_uri, '0.3000,0.6000') is True
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.repath(
+                old_uri, new_uri,
+                Video(path=new_uri, title="換封面重掃", cover_path=incoming_cover),
+            )
+
+        result = repo.get_by_path(new_uri)
+        assert result is not None
+        assert result.cover_path == incoming_cover
+        assert result.auto_focal == ''
+        assert result.focal_attempted_at is None
+        assert result.crop_mode == 'auto'
+
     def test_insert_writes_dataclass_focal_defaults(self, temp_db):
         """INSERT（新 path，非衝突）：focal 欄位照寫 dataclass 預設值（''/'auto'/None），
         鏡像操作對稱驗證（CD-98a-6 語意驗證段落）"""
@@ -1255,6 +1377,76 @@ class TestFocalMutators:
         assert result.auto_focal == '0.3000,0.6000'
         assert result.crop_mode == 'manual'
         assert result.focal_attempted_at is None
+
+    # ── 99a-T1b CD-4：reset_focal_to_auto ────────────────────────────────────
+
+    def test_reset_focal_to_auto_roundtrip(self, temp_db):
+        """單一 UPDATE 原子清空 auto_focal 並把 crop_mode 降回 'auto'（比照
+        update_manual_focal 的原子寫法）。"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/focal_mutator_reset.mp4")
+        repo.upsert(Video(path=path, title="片"))
+        assert repo.update_manual_focal(path, '0.3000,0.6000') is True
+
+        assert repo.reset_focal_to_auto(path) is True
+
+        result = repo.get_by_path(path)
+        assert result is not None
+        assert result.auto_focal == ''
+        assert result.crop_mode == 'auto'
+
+    def test_reset_focal_to_auto_missing_path_returns_false(self, temp_db):
+        repo = VideoRepository(temp_db)
+        assert repo.reset_focal_to_auto(to_file_uri("/focal_mutator_reset_nonexistent.mp4")) is False
+
+    # ── 99a-T1b CD-9：worker commit 加 crop_mode != 'manual' 守衛 ─────────────
+
+    def test_update_auto_focal_blocked_when_crop_mode_manual(self, temp_db):
+        """manual row 被 in-flight worker commit 擋下（rowcount 0）——mutation：拔掉
+        `AND crop_mode != 'manual'` 會讓這條 RED（manual 座標被偷換）。"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/focal_mutator_cd9_guard.mp4")
+        repo.upsert(Video(path=path, title="片"))
+        assert repo.update_manual_focal(path, '0.3000,0.6000') is True
+
+        assert repo.update_auto_focal(path, '0.9,0.9') is False, "manual row 應被守衛擋下，rowcount 0"
+
+        result = repo.get_by_path(path)
+        assert result.auto_focal == '0.3000,0.6000', "manual 座標不可被 stale worker 偷換"
+        assert result.crop_mode == 'manual'
+
+    def test_update_auto_focal_not_blocked_for_default_crop_mode(self, temp_db):
+        """auto/default row 不受 CD-9 守衛影響，照常寫入兩欄——既有行為，不可回歸。"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/focal_mutator_cd9_default.mp4")
+        repo.upsert(Video(path=path, title="片"))
+        assert repo.update_crop_mode(path, 'default') is True
+
+        assert repo.update_auto_focal(path, '0.7,0.3') is True
+
+        result = repo.get_by_path(path)
+        assert result.auto_focal == '0.7,0.3'
+        assert result.focal_attempted_at is not None
+        assert result.crop_mode == 'default'
+
+    def test_worker_commit_after_manual_save_does_not_clobber(self, temp_db):
+        """時序回歸鎖：worker 排入 → 使用者手存 manual → 舊 worker 才 commit → 最終仍是
+        manual 座標（守住 spec §3.12 未涵蓋的同封面 race，CD-9）。"""
+        repo = VideoRepository(temp_db)
+        path = to_file_uri("/focal_cd9_timing_lock.mp4")
+        repo.upsert(Video(path=path, title="片"))
+
+        # ① worker 排入時 row 仍是 auto/空（背景偵測開跑前狀態，無需額外動作）
+        # ② 使用者在 worker 完成前存成 manual
+        assert repo.update_manual_focal(path, '0.2000,0.8000') is True
+
+        # ③ 舊（worker 排入時）worker 才完成、呼叫 commit（stale 偵測結果）
+        committed = repo.update_auto_focal(path, '0.55,0.45')
+        assert committed is False
+
+        result = repo.get_by_path(path)
+        assert result.auto_focal == '0.2000,0.8000'
+        assert result.crop_mode == 'manual'
 
 
 class TestGetEmptyFocalCandidates:

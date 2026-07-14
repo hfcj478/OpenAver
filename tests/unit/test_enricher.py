@@ -2450,7 +2450,14 @@ class TestEnrichFocalTrigger:
 
 
 class TestEnrichPreserveCropModeE2E:
-    """重刮路徑 preserve-on-conflict 端到端：先設 crop_mode='default' → 重刮 → 仍 default。"""
+    """重刮路徑 preserve-on-conflict 端到端：先設 crop_mode='default' → metadata-only
+    重刮（不換封面）→ 仍 default。
+
+    write_cover=False（99a-T1b）：這條測的是 CD-10（`_db_upsert`→`upsert()` 的
+    preserve-on-conflict CASE）端到端，需與 CD-4（`core/enricher.py` 的
+    `reset_focal_to_auto`，只在 cover_written=True 才觸發、無條件把 crop_mode 降回
+    'auto'）隔開，否則兩個機制的職責會疊在同一斷言上、測不出各自的邊界。cover_written=True
+    的情境已由 `TestEnrichFocalReset` 覆蓋。"""
 
     def test_rescrape_preserves_user_crop_mode(self, tmp_path):
         from unittest.mock import patch
@@ -2489,10 +2496,119 @@ class TestEnrichPreserveCropModeE2E:
             from core.enricher import enrich_single
             enrich_single(
                 file_path=file_path, number="SIRO-1234", mode="refresh_full",
-                write_nfo=False, write_cover=True, write_extrafanart=False,
+                write_nfo=False, write_cover=False, write_extrafanart=False,
             )
 
         row = repo.get_by_path(db_key)
         assert row is not None
         assert row.crop_mode == "default", f"重刮不應回退 crop_mode，得 {row.crop_mode!r}"
         assert row.title == "New", "重刮應更新非 preserve 欄位（title）"
+
+
+class TestEnrichFocalReset:
+    """99a-T1b CD-4：重刮實際寫入新封面時同步作廢手動焦點。
+
+    `reset_focal_to_auto` + `maybe_submit_video_focal` 必須一起被 `if cover_written:`
+    包住、reset 在 submit 之前——三個 mutation 鎖：
+    - hoist reset 出 `if cover_written:` → cover_written=False 也清 manual → RED
+      （`test_cover_written_false_preserves_manual`）。
+    - reset/submit 順序對調 → submit 呼叫當下 crop_mode 仍是 manual → RED
+      （`test_cover_written_true_reset_happens_before_submit`）。
+    """
+
+    _SCRAPER_DATA = {
+        "number": "PLACEHOLDER", "title": "New", "actors": [],
+        "cover": "http://example.com/cover.jpg", "date": "2024-01-01",
+        "maker": "SOD", "director": "", "series": "", "label": "",
+        "tags": [], "sample_images": [], "source": "javbus",
+    }
+
+    def _seed_manual(self, tmp_path, db_name, number, video_name):
+        from unittest.mock import patch
+        from core.database import init_db, VideoRepository, Video
+        from core.path_utils import to_file_uri, uri_to_fs_path
+
+        db_file = tmp_path / db_name
+        init_db(db_file)
+        repo = VideoRepository(db_path=db_file)
+
+        video_file = tmp_path / video_name
+        video_file.write_bytes(b"x")
+        file_path = str(video_file)
+        db_key = to_file_uri(uri_to_fs_path(file_path))
+
+        with patch("core.similar.ranker_cache.SimilarRankerCache"):
+            repo.upsert(Video(path=db_key, number=number, title="Old", maker="SOD"))
+        assert repo.update_manual_focal(db_key, "0.3000,0.6000") is True
+        return repo, file_path, db_key
+
+    def test_cover_written_true_reset_happens_before_submit(self, tmp_path):
+        """cover_written=True：reset 必須在 submit 之前落地——用 side_effect 在 submit
+        呼叫當下讀 DB 現況，若順序對調（submit 先跑）會讀到仍是 manual 的 stale 值。"""
+        from unittest.mock import patch
+        repo, file_path, db_key = self._seed_manual(
+            tmp_path, "focal_reset_order.db", "SIRO-2001", "SIRO-2001.mp4"
+        )
+
+        captured = {}
+
+        def _capture_submit(number, maker, video_path_uri, cover_fs):
+            row = repo.get_by_path(video_path_uri)
+            captured["crop_mode_at_submit"] = row.crop_mode
+            captured["auto_focal_at_submit"] = row.auto_focal
+
+        scraper_data = dict(self._SCRAPER_DATA, number="SIRO-2001")
+        with (
+            patch("core.enricher.VideoRepository", return_value=repo),
+            patch("core.enricher.search_jav", return_value=scraper_data),
+            patch("core.enricher.generate_nfo", return_value=True),
+            patch("core.enricher.download_image", return_value=True),
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+            patch("core.enricher.maybe_submit_video_focal", side_effect=_capture_submit),
+            patch("core.similar.ranker_cache.SimilarRankerCache"),
+        ):
+            from core.enricher import enrich_single
+            enrich_single(
+                file_path=file_path, number="SIRO-2001", mode="refresh_full",
+                write_nfo=False, write_cover=True, write_extrafanart=False,
+                overwrite_existing=True,
+            )
+
+        assert captured, "cover_written=True 時 maybe_submit_video_focal 必須被呼叫"
+        assert captured["crop_mode_at_submit"] == "auto", "reset 必須在 submit 之前落地"
+        assert captured["auto_focal_at_submit"] == ""
+
+        row = repo.get_by_path(db_key)
+        assert row.crop_mode == "auto"
+        assert row.auto_focal == ""
+
+    def test_cover_written_false_preserves_manual(self, tmp_path):
+        """cover_written=False（write_cover=False，只重寫 NFO、未覆蓋既有封面）→ 完全
+        不進 reset/submit 分支，manual 原樣保留。"""
+        from unittest.mock import patch
+        repo, file_path, db_key = self._seed_manual(
+            tmp_path, "focal_reset_cover_false.db", "SIRO-2002", "SIRO-2002.mp4"
+        )
+
+        scraper_data = dict(self._SCRAPER_DATA, number="SIRO-2002")
+        with (
+            patch("core.enricher.VideoRepository", return_value=repo),
+            patch("core.enricher.search_jav", return_value=scraper_data),
+            patch("core.enricher.generate_nfo", return_value=True),
+            patch("core.enricher.download_image", return_value=True),
+            patch("core.enricher.find_subtitle_files", return_value=[]),
+            patch("core.enricher.maybe_submit_video_focal") as mock_submit,
+            patch("core.similar.ranker_cache.SimilarRankerCache"),
+        ):
+            from core.enricher import enrich_single
+            enrich_single(
+                file_path=file_path, number="SIRO-2002", mode="refresh_full",
+                write_nfo=False, write_cover=False, write_extrafanart=False,
+                overwrite_existing=True,
+            )
+
+        mock_submit.assert_not_called()
+        row = repo.get_by_path(db_key)
+        assert row is not None
+        assert row.crop_mode == "manual", "沒換圖，manual 必須原樣保留"
+        assert row.auto_focal == "0.3000,0.6000"

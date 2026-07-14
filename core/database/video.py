@@ -172,6 +172,13 @@ _FOCAL_ATTEMPTED_AT_CASE_SQL = (
     "focal_attempted_at = CASE WHEN excluded.cover_path = videos.cover_path "
     "THEN videos.focal_attempted_at ELSE NULL END"
 )
+# crop_mode 版（99a-T1b CD-10）：同封面一律保留（manual/auto/default 皆不動）；
+# 換封面時 manual 座標已對新內容失效 → 降回 'auto'（讓 empty-focal gate 能重掃）；
+# auto/legacy default 換封面不受影響（只有 auto_focal/focal_attempted_at 被清）。
+_FOCAL_CROP_MODE_CASE_SQL = (
+    "crop_mode = CASE WHEN excluded.cover_path = videos.cover_path THEN videos.crop_mode "
+    "WHEN videos.crop_mode = 'manual' THEN 'auto' ELSE videos.crop_mode END"
+)
 
 
 class VideoRepository:
@@ -221,8 +228,8 @@ class VideoRepository:
                     continue
                 elif col in _FOCAL_PRESERVE:
                     if col == 'crop_mode':
-                        # 裁切模式偏好與封面無關，一律保留 DB 既有值（CD-98a-6）
-                        continue
+                        # 同封面保留；換封面時 manual 座標已失效 → 降回 auto（CD-10/99a-T1b）
+                        update_parts.append(_FOCAL_CROP_MODE_CASE_SQL)
                     elif col == 'auto_focal':
                         # cover_path 相同 → 保留；換封面 → 重置為未偵測（Codex PR#105 P2b）
                         update_parts.append(_FOCAL_AUTO_FOCAL_CASE_SQL)
@@ -390,8 +397,13 @@ class VideoRepository:
                 if col == 'user_tags':
                     continue  # handled separately
                 elif col == 'crop_mode':
-                    # 裁切模式偏好與封面無關，一律保留 DB 既有值（CD-98a-6）
-                    continue
+                    if cover_unchanged:
+                        continue  # 裁切模式偏好與封面無關，同封面一律保留 DB 既有值（CD-98a-6）
+                    if old_row and old_row.crop_mode == 'manual':
+                        # 換封面：manual 座標對新內容已失效 → 降回 auto（CD-10/99a-T1b）
+                        set_parts.append("crop_mode = ?")
+                        set_values.append('auto')
+                    continue  # 防 fall-through 到底部通用 append 重複 SET（Codex PR#105 P2c 教訓）
                 elif col == 'auto_focal':
                     if cover_unchanged:
                         continue  # 保留 DB 既有值
@@ -499,8 +511,8 @@ class VideoRepository:
                 continue
             elif col in _FOCAL_PRESERVE:
                 if col == 'crop_mode':
-                    # 裁切模式偏好與封面無關，一律保留 DB 既有值（CD-98a-6）
-                    continue
+                    # 同封面保留；換封面時 manual 座標已失效 → 降回 auto（CD-10/99a-T1b）
+                    update_parts.append(_FOCAL_CROP_MODE_CASE_SQL)
                 elif col == 'auto_focal':
                     # cover_path 相同 → 保留；換封面 → 重置為未偵測（Codex PR#105 P2b）
                     update_parts.append(_FOCAL_AUTO_FOCAL_CASE_SQL)
@@ -628,8 +640,8 @@ class VideoRepository:
                         continue
                     elif col in _FOCAL_PRESERVE:
                         if col == 'crop_mode':
-                            # 裁切模式偏好與封面無關，一律保留 DB 既有值（CD-98a-6）
-                            continue
+                            # 同封面保留；換封面時 manual 座標已失效 → 降回 auto（CD-10/99a-T1b）
+                            update_parts.append(_FOCAL_CROP_MODE_CASE_SQL)
                         elif col == 'auto_focal':
                             # cover_path 相同 → 保留；換封面 → 重置為未偵測（Codex PR#105 P2b）
                             update_parts.append(_FOCAL_AUTO_FOCAL_CASE_SQL)
@@ -1192,20 +1204,28 @@ class VideoRepository:
         get_empty_focal_candidates 的重掃 backfill 之外，否則無臉封面每次重掃都被當
         「沒偵測過」無限重排。
 
+        `AND crop_mode != 'manual'`（CD-9/99a-T1b）：本方法現為 update_auto_focal
+        唯一 production caller（core/focal_trigger.py 的 worker commit lambda）——
+        擋掉 in-flight stale worker（開跑後使用者才手存 manual）commit 時偷換剛存的
+        手動座標。manual row 被擋下時 rowcount 為 0，focal_attempted_at 不蓋章，但
+        安全：manual row 的 auto_focal 恆非空字串，天然被 get_empty_focal_candidates
+        的 `auto_focal = ''` 篩選排除，不會被誤重排。
+
         Args:
             path: 影片路徑（DB key，file:/// URI 格式）
             focal: 新的 auto_focal 值（背景 focal 演算法算出的座標字串，如 '0.5,0.4'，
                 無臉時為 format_focal(None) == ''）
 
         Returns:
-            bool: 是否成功更新（path 不存在 → False，不拋例外、不新建 row）
+            bool: 是否成功更新（path 不存在或 crop_mode='manual' → False，不拋例外、
+                不新建 row）
         """
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute(
                 "UPDATE videos SET auto_focal = ?, focal_attempted_at = CURRENT_TIMESTAMP, "
-                "updated_at = CURRENT_TIMESTAMP WHERE path = ?",
+                "updated_at = CURRENT_TIMESTAMP WHERE path = ? AND crop_mode != 'manual'",
                 (focal, path)
             )
             conn.commit()
@@ -1258,6 +1278,34 @@ class VideoRepository:
                 "UPDATE videos SET auto_focal = ?, crop_mode = 'manual', "
                 "updated_at = CURRENT_TIMESTAMP WHERE path = ?",
                 (focal, path)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def reset_focal_to_auto(self, path: str) -> bool:
+        """作廢手動焦點、降回未偵測狀態（99a-T1b mutator，CD-4）。
+
+        單一 UPDATE 原子清空 auto_focal 並把 crop_mode 降回 'auto'（比照
+        update_manual_focal 的原子寫法，不可拆兩次 UPDATE）。呼叫端（enricher 重刮
+        流程）於確認 cover_written=True（實際寫入新封面內容）時呼叫，且必須在排入
+        新的背景 focal 偵測（maybe_submit_video_focal）之前——先清舊值、再讓 gate
+        判斷是否排 worker，避免有碼片在極端時序下短暫殘留 manual。
+
+        Args:
+            path: 影片路徑（DB key，file:/// URI 格式）
+
+        Returns:
+            bool: 是否成功更新（path 不存在 → False，不拋例外、不新建 row）
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE videos SET auto_focal = '', crop_mode = 'auto', "
+                "updated_at = CURRENT_TIMESTAMP WHERE path = ?",
+                (path,)
             )
             conn.commit()
             return cursor.rowcount > 0
