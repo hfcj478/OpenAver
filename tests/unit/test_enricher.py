@@ -2539,7 +2539,7 @@ class TestEnrichFocalReset:
 
         with patch("core.similar.ranker_cache.SimilarRankerCache"):
             repo.upsert(Video(path=db_key, number=number, title="Old", maker="SOD"))
-        assert repo.update_manual_focal(db_key, "0.3000,0.6000") is True
+        assert repo.update_manual_focal(db_key, "0.3000,0.6000", '') is True
         return repo, file_path, db_key
 
     def test_cover_written_true_reset_happens_before_submit(self, tmp_path):

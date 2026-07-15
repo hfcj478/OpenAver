@@ -73,6 +73,12 @@ export function stateLightbox() {
         // 99a-T3：手動焦點編輯狀態。_maskFocalX 恆為具體數字（geometry 已知後）——僅在 openMask
         // 幾何尚未解出的極短暫態為 null（見 openMask 內註解，Opus correction B）。
         _maskFocalX: null,
+        // Codex PR#107 第二輪 P2：使用者開遮罩當下觀察到的 cover_path（server 端 DB-key
+        // file:/// URI 原樣值，由 /detect-focal 回應帶回，非前端反解/推算）。null＝尚未
+        // 從 server 取得任何值（openMask 起手重置、或本次 detect 連 JSON body 都沒拿到，
+        // 見 openMask 內 try/catch 註解）——confirmMask 见 null 一律 fail-closed 拒存，
+        // 不送 POST，避免用「猜的」cover_path 打穿 compare-and-store 守衛的保護意圖。
+        _maskExpectedCoverPath: null,
         _maskDragging: false,           // 拖曳中（停用 CSS transition，跟手不打架，見 showcase.css）
         _maskDragMoveHandler: null,     // document pointermove listener 參照（成對 add/remove）
         _maskDragUpHandler: null,       // document pointerup/pointercancel listener 參照（成對 add/remove）
@@ -766,6 +772,10 @@ export function stateLightbox() {
             // 失敗/無臉」時的終值 fallback，不會先畫出來再滑走（.lb-mask-window 在 _maskDetecting
             // 為真時不渲染，見 showcase.html x-show）。
             this._maskFocalX = null;
+            // Codex PR#107 第二輪 P2：新 session 起手先清舊 token，防止「這次 detect 連
+            // JSON body 都沒拿到」時沿用上一支影片/上一個 session 殘留的 cover_path
+            // 誤配到這支影片（confirmMask 的 fail-closed 判斷才有意義）。
+            this._maskExpectedCoverPath = null;
             const s = this._computeMaskWinStyle();
             if (!s) {
                 // 幾何算不出（rect=0 / naturalWidth=0）→ 不開、不留「全灰無窗」死態，toast 提示。
@@ -831,9 +841,19 @@ export function stateLightbox() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ path: targetVideo.path }),
                 });
+                // Codex PR#107 第二輪 P2：先嘗試解 body 拿 cover_path，不管 resp.ok——
+                // server 在成功偵測與「找到 row 但封面檔缺失」兩個分支都帶 cover_path
+                // （見 web/routers/showcase.py detect_video_focal），拖到下面 !resp.ok
+                // 才 throw 會漏接後者。真正的網路層失敗（fetch reject / body 非 JSON）
+                // 才會讓 data 維持 null，此時 _maskExpectedCoverPath 停在 openMask 起手
+                // 清空的 null，confirmMask 見 null 一律 fail-closed 拒存（不可用猜的值）。
+                let data = null;
+                try { data = await resp.json(); } catch (_jsonErr) { data = null; }
+                if (data && typeof data.cover_path === 'string' && session === this._maskSession) {
+                    this._maskExpectedCoverPath = data.cover_path;
+                }
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const data = await resp.json();
-                if (!data.success) throw new Error(data.error || 'API failed');
+                if (!data || !data.success) throw new Error((data && data.error) || 'API failed');
                 if (session === this._maskSession) {
                     const parsed = parseFocal(data.auto_focal);   // '' / 畸形 → null，維持右裁基準
                     if (parsed) {
@@ -936,6 +956,15 @@ export function stateLightbox() {
                 this._maskTeardown();
                 return;
             }
+            // Codex PR#107 第二輪 P2 fail-closed guard：從未拿到 server 端 cover_path
+            // token（openMask 的 /detect-focal 連 JSON body 都沒解析成功，例如純網路層
+            // 失敗）→ 拒絕送出，不可用猜的 cover_path 打穿 compare-and-store 守衛的保護
+            // 意圖（寧可這次存不進、逼使用者重開遮罩，也不可能誤配錯封面）。
+            if (this._maskExpectedCoverPath === null || this._maskExpectedCoverPath === undefined) {
+                this.showToast(window.t('showcase.lightbox.mask_save_failed'), 'error');
+                this._maskTeardown();
+                return;
+            }
             const session = this._maskSession;
             const targetVideo = this.currentLightboxVideo;
             const focal = `${this._maskFocalX.toFixed(4)},0.5000`;   // y 恆 0.5（render 只用 X，spec §3.3）
@@ -943,11 +972,25 @@ export function stateLightbox() {
                 const resp = await fetch('/api/showcase/video/focal', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: targetVideo.path, focal }),
+                    body: JSON.stringify({
+                        path: targetVideo.path,
+                        focal,
+                        // Codex PR#107 第二輪 P2：原樣帶回 openMask 期間 server 給的 cover_path，
+                        // 讓 update_manual_focal 的 compare-and-store 守衛比對「使用者觀察當下」
+                        // 與「存檔當下」的封面是否一致，擋掉 rescan/rescrape 換封面的 race。
+                        expected_cover_path: this._maskExpectedCoverPath,
+                    }),
                 });
+                const data = await resp.json().catch(() => null);
+                if (resp.status === 409) {
+                    // 封面已變更（compare-and-store 守衛擋下）：與一般失敗分開給更明確的提示。
+                    if (session === this._maskSession) {
+                        this.showToast(window.t('showcase.lightbox.mask_cover_changed'), 'error');
+                    }
+                    return;
+                }
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const data = await resp.json();
-                if (!data.success) throw new Error(data.error || 'API failed');
+                if (!data || !data.success) throw new Error((data && data.error) || 'API failed');
                 targetVideo.auto_focal = data.auto_focal;   // 同參考 → lightbox + grid 立即重算（T2 applyCellFocal $watch 接手）
                 targetVideo.crop_mode = 'manual';
             } catch (e) {
@@ -990,6 +1033,7 @@ export function stateLightbox() {
             this._maskWinStyle = {};     // 98b-T6：清窗幾何避免殘留閃（下次 open 同步重算覆蓋）。
                                           // 99a-T5：恆 object，不可退回 '' string（見宣告處註解）。
             this._maskFocalX = null;     // 99a-T3：清 component-state 焦點，防下一片沿用上一片的拖曳結果
+            this._maskExpectedCoverPath = null;   // Codex PR#107 P2：防下一片沿用上一片的 cover token
             this._maskDragging = false;  // 99a-T3：防拖曳中途換片，dragging class 卡死在 true
             this._maskRemoveDragListeners();   // 99a-T3：拖曳中途換片/關燈箱兜底，移除 document listener
             this._maskStopWaitAnim();    // 99a-T5：detect 期間中斷（換片/關燈箱/ESC）對稱停星空動畫，

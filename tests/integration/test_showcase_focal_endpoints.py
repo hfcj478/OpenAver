@@ -111,6 +111,9 @@ class TestDetectFocalEndpoint:
         assert resp.status_code == 200
         assert resp.json()["success"] is True
         assert resp.json()["auto_focal"] == "0.4200,0.5000"
+        # Codex PR#107 第二輪 P2：回應帶 row 當下的 cover_path（DB-key URI），供前端
+        # 存為 mask session 的 expected_cover_path token，之後原樣帶回 /video/focal。
+        assert resp.json()["cover_path"] == focal_endpoint_setup["cover_uri"]
 
         spy.assert_called_once()
         called_path = spy.call_args.args[0]
@@ -179,7 +182,9 @@ class TestDetectFocalEndpoint:
         spy.assert_not_called()
 
     def test_cover_file_missing_fixed_string_no_crash(self, client, focal_endpoint_setup, mocker):
-        """DB 有 cover_path 但檔案不存在 → 固定字串、不崩、不呼 detect_focal。"""
+        """DB 有 cover_path 但檔案不存在 → 固定字串、不崩、不呼 detect_focal。仍帶
+        cover_path（Codex PR#107 第二輪 P2：detect 失敗路徑前端也要拿得到 token，
+        否則使用者拖曳窗子後 confirmMask 會被 fail-closed guard 擋下無法存檔）。"""
         _patch_db_and_config(mocker, focal_endpoint_setup)
         spy = mocker.patch("web.routers.showcase.detect_focal", return_value=(0.4, 0.5))
         resp = client.post("/api/showcase/video/detect-focal",
@@ -187,6 +192,7 @@ class TestDetectFocalEndpoint:
         assert resp.status_code == 400
         assert resp.json()["success"] is False
         assert resp.json()["error"]
+        assert resp.json()["cover_path"]   # non-empty DB-key URI（值本身由 fixture 決定，不重掛死值）
         spy.assert_not_called()
 
     def test_no_face_returns_empty_string(self, client, focal_endpoint_setup, mocker):
@@ -204,10 +210,12 @@ class TestDetectFocalEndpoint:
 
 class TestManualFocalEndpoint:
     def test_valid_focal_atomic_write(self, client, focal_endpoint_setup, mocker):
-        """成功後 auto_focal 與 crop_mode='manual' 同時反映在 DB（單一 UPDATE 原子寫）。"""
+        """成功後 auto_focal 與 crop_mode='manual' 同時反映在 DB（單一 UPDATE 原子寫）。
+        expected_cover_path 對上目前 row.cover_path（fixture 的 cover_uri）→ 正常寫入。"""
         _patch_db_and_config(mocker, focal_endpoint_setup)
         resp = client.post("/api/showcase/video/focal",
-                           json={"path": focal_endpoint_setup["video_uri"], "focal": "0.3,0.6"})
+                           json={"path": focal_endpoint_setup["video_uri"], "focal": "0.3,0.6",
+                                 "expected_cover_path": focal_endpoint_setup["cover_uri"]})
         assert resp.status_code == 200
         assert resp.json()["success"] is True
         repo = VideoRepository(focal_endpoint_setup["db_path"])
@@ -215,12 +223,47 @@ class TestManualFocalEndpoint:
         assert result.auto_focal == "0.3000,0.6000"   # 正規化（format_focal(parse_focal(...))）
         assert result.crop_mode == "manual"
 
+    def test_missing_expected_cover_path_422(self, client, focal_endpoint_setup, mocker):
+        """expected_cover_path 為必填欄位（Codex PR#107 第二輪 P2）：省略 → pydantic
+        422，連 route handler 都不執行、DB 不碰。"""
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        resp = client.post("/api/showcase/video/focal",
+                           json={"path": focal_endpoint_setup["video_uri"], "focal": "0.3,0.6"})
+        assert resp.status_code == 422
+        repo = VideoRepository(focal_endpoint_setup["db_path"])
+        result = repo.get_by_path(focal_endpoint_setup["video_uri"])
+        assert result.crop_mode != "manual"
+
+    def test_cover_path_mismatch_409_db_unchanged(self, client, focal_endpoint_setup, mocker):
+        """核心回歸鎖（Codex PR#107 第二輪 P2）：expected_cover_path 與目前 row.cover_path
+        不符（使用者開遮罩期間封面被 rescan/rescrape 換掉）→ 409、DB 完全不變（不寫
+        auto_focal、不蓋 crop_mode='manual'）。mutation：把
+        `VideoRepository.update_manual_focal` 呼叫改用真正的目前 cover_path（而非
+        request 帶來的 expected 值）會讓這條 RED（守衛被繞過，寫入成功）。"""
+        _patch_db_and_config(mocker, focal_endpoint_setup)
+        stale_cover = to_file_uri(focal_endpoint_setup["video_dir"] + "/old-cover.jpg", {})
+        before = VideoRepository(focal_endpoint_setup["db_path"]).get_by_path(
+            focal_endpoint_setup["video_uri"])
+
+        resp = client.post("/api/showcase/video/focal",
+                           json={"path": focal_endpoint_setup["video_uri"], "focal": "0.3,0.6",
+                                 "expected_cover_path": stale_cover})
+        assert resp.status_code == 409
+        assert resp.json()["success"] is False
+        assert resp.json()["error"]
+
+        after = VideoRepository(focal_endpoint_setup["db_path"]).get_by_path(
+            focal_endpoint_setup["video_uri"])
+        assert after.auto_focal == before.auto_focal
+        assert after.crop_mode == before.crop_mode
+        assert after.crop_mode != "manual"
+
     def test_path_not_in_db_404_no_write(self, client, focal_endpoint_setup, mocker, tmp_path):
         """path 不存在於 DB → 404（不是 500，不新建 row）。"""
         _patch_db_and_config(mocker, focal_endpoint_setup)
         bogus = to_file_uri(str(tmp_path / "not-in-db.mp4"), {})
         resp = client.post("/api/showcase/video/focal",
-                           json={"path": bogus, "focal": "0.3,0.6"})
+                           json={"path": bogus, "focal": "0.3,0.6", "expected_cover_path": ""})
         assert resp.status_code == 404
         assert resp.json()["success"] is False
         repo = VideoRepository(focal_endpoint_setup["db_path"])
@@ -232,7 +275,8 @@ class TestManualFocalEndpoint:
         _patch_db_and_config(mocker, focal_endpoint_setup)
         spy = mocker.patch("web.routers.showcase.VideoRepository.get_by_path")
         resp = client.post("/api/showcase/video/focal",
-                           json={"path": focal_endpoint_setup["video_uri"], "focal": "abc"})
+                           json={"path": focal_endpoint_setup["video_uri"], "focal": "abc",
+                                 "expected_cover_path": focal_endpoint_setup["cover_uri"]})
         assert resp.status_code == 400
         assert resp.json()["success"] is False
         assert resp.json()["error"]
@@ -242,14 +286,16 @@ class TestManualFocalEndpoint:
         """空字串焦點 → 400（手動存的 focal 不可為空，不同於 detect 的「無臉」語意）。"""
         _patch_db_and_config(mocker, focal_endpoint_setup)
         resp = client.post("/api/showcase/video/focal",
-                           json={"path": focal_endpoint_setup["video_uri"], "focal": ""})
+                           json={"path": focal_endpoint_setup["video_uri"], "focal": "",
+                                 "expected_cover_path": focal_endpoint_setup["cover_uri"]})
         assert resp.status_code == 400
 
     def test_invalid_focal_out_of_range_400(self, client, focal_endpoint_setup, mocker):
         """超出 [0,1] 範圍 → 400。"""
         _patch_db_and_config(mocker, focal_endpoint_setup)
         resp = client.post("/api/showcase/video/focal",
-                           json={"path": focal_endpoint_setup["video_uri"], "focal": "1.5,0.5"})
+                           json={"path": focal_endpoint_setup["video_uri"], "focal": "1.5,0.5",
+                                 "expected_cover_path": focal_endpoint_setup["cover_uri"]})
         assert resp.status_code == 400
 
     def test_out_of_scope_403_db_unchanged(self, client, focal_endpoint_setup, mocker, tmp_path):
@@ -269,7 +315,8 @@ class TestManualFocalEndpoint:
         before = VideoRepository(focal_endpoint_setup["db_path"]).get_by_path(
             focal_endpoint_setup["video_uri"])
         resp = client.post("/api/showcase/video/focal",
-                           json={"path": focal_endpoint_setup["video_uri"], "focal": "0.3,0.6"})
+                           json={"path": focal_endpoint_setup["video_uri"], "focal": "0.3,0.6",
+                                 "expected_cover_path": focal_endpoint_setup["cover_uri"]})
         assert resp.status_code == 403
         assert resp.json()["success"] is False
         after = VideoRepository(focal_endpoint_setup["db_path"]).get_by_path(
@@ -289,7 +336,8 @@ class TestManualFocalEndpoint:
         }
         _patch_db_and_config(mocker, focal_endpoint_setup, config=ro_config)
         resp = client.post("/api/showcase/video/focal",
-                           json={"path": focal_endpoint_setup["video_uri"], "focal": "0.3,0.6"})
+                           json={"path": focal_endpoint_setup["video_uri"], "focal": "0.3,0.6",
+                                 "expected_cover_path": focal_endpoint_setup["cover_uri"]})
         assert resp.status_code == 200
         assert resp.json()["success"] is True
         repo = VideoRepository(focal_endpoint_setup["db_path"])

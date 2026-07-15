@@ -32,9 +32,13 @@ class DetectFocalRequest(BaseModel):
 
 
 class ManualFocalRequest(BaseModel):
-    """POST /video/focal body：path（DB key）+ focal（'x.xxxx,y.xxxx' 格式字串）。"""
+    """POST /video/focal body：path（DB key）+ focal（'x.xxxx,y.xxxx' 格式字串）+
+    expected_cover_path（Codex PR#107 第二輪 P2：使用者開遮罩當下觀察到的
+    row.cover_path，DB-key file:/// URI 或空字串；必填、不可省略——見
+    VideoRepository.update_manual_focal 的 cover compare-and-store 說明）。"""
     path: str
     focal: str
+    expected_cover_path: str
 
 
 def _serialize_video(v, path_mappings: dict, enabled: bool = False, readonly_prefixes: list = None, writable_prefixes: list = None) -> dict:
@@ -226,6 +230,13 @@ def detect_video_focal(req: DetectFocalRequest):
       偵測本身不寫入，不需要可寫權限）。要存入需另呼叫 `POST /video/focal` mutator。
     - row.cover_path 空或檔案不存在 → 固定字串（不崩）。
     - 無臉 → format_focal(None) = '' 回傳（不存）。
+
+    回應（row 找到、in-scope 之後的所有分支：成功偵測 / 封面檔缺失）皆帶
+    `cover_path`（row 當下的 DB-key `cover_path`，Codex PR#107 第二輪 P2）：
+    前端拿這個值原樣存為 mask session 的 `expected_cover_path`，之後
+    `POST /video/focal` 存檔時原樣帶回，讓 `update_manual_focal` 的
+    compare-and-store 守衛比對「使用者觀察當下」與「存檔當下」的封面是否一致，
+    擋掉 rescan/rescrape 換封面卻把舊座標存成新封面 manual 值的 race。
     `def`（非 async）→ threadpool；detect_focal 同步 ~2.2s。**不進 capabilities（不揭露）。**
     """
     try:
@@ -250,11 +261,12 @@ def detect_video_focal(req: DetectFocalRequest):
         # ★ Codex P0：取 row.cover_path（非 body path）反解封面 fs
         cover_fs = uri_to_local_fs_path(row.cover_path, path_mappings) if row.cover_path else ''
         if not row.cover_path or not os.path.isfile(cover_fs):
-            return JSONResponse({"success": False, "error": "找不到封面檔案"}, status_code=400)
+            return JSONResponse({"success": False, "error": "找不到封面檔案",
+                                 "cover_path": row.cover_path}, status_code=400)
 
         focal = detect_focal(cover_fs, 0.71)     # 同步；無臉 → None
         auto_focal = format_focal(focal)          # None → ''，純預覽不寫 DB
-        return JSONResponse({"success": True, "auto_focal": auto_focal})
+        return JSONResponse({"success": True, "auto_focal": auto_focal, "cover_path": row.cover_path})
 
     except Exception as e:
         logger.error("偵測焦點失敗: %s", e)
@@ -273,6 +285,10 @@ def set_manual_focal(req: ManualFocalRequest):
     正規化後存（`format_focal(parse_focal(...))`），與 `/detect-focal` 存
     `format_focal(focal)` 的既有慣例一致。原子單一 UPDATE 同時寫 auto_focal +
     crop_mode='manual'（`VideoRepository.update_manual_focal`）。
+
+    body 另帶必填 `expected_cover_path`（Codex PR#107 第二輪 P2）：使用者開遮罩當下
+    觀察到的 `cover_path`，原樣帶回與存檔當下的 `row.cover_path` 比對——不符（rescan/
+    rescrape 期間換了封面）→ 409，DB 不變，前端應提示使用者重新開啟裁切工具。
     `def`（非 async）→ Starlette threadpool。**不進 capabilities（不揭露）。**
     """
     parsed = parse_focal(req.focal)
@@ -299,7 +315,12 @@ def set_manual_focal(req: ManualFocalRequest):
             return JSONResponse({"success": False, "error": "此影片不在收藏範圍，無法存入焦點"}, status_code=403)
 
         normalized = format_focal(parsed)
-        repo.update_manual_focal(req.path, normalized)
+        written = repo.update_manual_focal(req.path, normalized, req.expected_cover_path)
+        if not written:
+            return JSONResponse(
+                {"success": False, "error": "封面已變更，請重新開啟裁切工具再試一次"},
+                status_code=409,
+            )
         return JSONResponse({"success": True, "auto_focal": normalized})
 
     except Exception as e:

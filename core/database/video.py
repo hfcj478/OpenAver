@@ -1247,8 +1247,9 @@ class VideoRepository:
         finally:
             conn.close()
 
-    def update_manual_focal(self, path: str, focal: str) -> bool:
-        """原子寫入使用者手動指定的焦點座標（99a-T1a mutator，CD-2）。
+    def update_manual_focal(self, path: str, focal: str, expected_cover_path: str) -> bool:
+        """原子寫入使用者手動指定的焦點座標（99a-T1a mutator，CD-2；99b Codex P2
+        補 cover_path compare-and-store，鏡射 update_auto_focal 的 99b-T2 修法）。
 
         同一 UPDATE 內把 crop_mode 蓋為 'manual'，代表「使用者手動存過」——與
         update_auto_focal（背景/預覽偵測寫入，不動 crop_mode）語意分離。刻意不碰
@@ -1256,20 +1257,33 @@ class VideoRepository:
         parse_focal 擋掉空字串/非法輸入），get_empty_focal_candidates 的
         `auto_focal = ''` 篩選天然排除 manual row，不需要額外蓋章。
 
+        `AND cover_path = ?`（Codex PR#107 第二輪 P2）：使用者開遮罩觀察的是某張
+        封面，若期間 rescan/rescrape 換了封面（row.cover_path 變了），這支 UPDATE
+        必須拒絕把舊封面算出的座標蓋進新封面、且標成 manual——一旦寫入，
+        update_auto_focal 的 `AND crop_mode != 'manual'` 守衛會永久擋住背景 worker
+        重新分析新封面，`get_empty_focal_candidates` 的 `auto_focal = ''` 篩選也
+        因 row 已有非空值而永不重排，新封面座標會卡死。expected_cover_path 為
+        必填、不可傳 None——`cover_path=''` 是真實存在的合法值（封面下載失敗時
+        `_db_upsert` 會寫 `''`），把 None 解釋成「比對空字串」會命中錯的 row。
+
         Args:
             path: 影片路徑（DB key，file:/// URI 格式）
             focal: 正規化後的焦點座標字串（如 '0.5000,0.4000'）
+            expected_cover_path: 使用者編輯遮罩當下觀察到的 `cover_path`（DB-key
+                file:/// URI 或空字串），必須是 server 端當時回傳給前端的原始值，
+                不可用反解後的 FS path（namespace 對不上會讓 UPDATE 恆命中 0 列）。
 
         Returns:
-            bool: 是否成功更新（path 不存在 → False，不拋例外、不新建 row）
+            bool: 是否成功更新（path 不存在、或 cover_path 已不符
+                expected_cover_path → False，不拋例外、不新建 row）
         """
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute(
                 "UPDATE videos SET auto_focal = ?, crop_mode = 'manual', "
-                "updated_at = CURRENT_TIMESTAMP WHERE path = ?",
-                (focal, path)
+                "updated_at = CURRENT_TIMESTAMP WHERE path = ? AND cover_path = ?",
+                (focal, path, expected_cover_path)
             )
             conn.commit()
             return cursor.rowcount > 0
