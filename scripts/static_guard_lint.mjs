@@ -135,8 +135,11 @@ const RULES = [
   },
   { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string', pattern: '_maskVideoPath', note: '[TestMaskToggleGuard] 舊 path-based guard 變數不得復活（已由 _maskSession 取代，Codex P2）' },
   // 98b-T6：亮窗幾何改 reactive data（imperative $nextTick 算），禁量測-in-binding 復活。
-  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: ':style="_maskWinStyle"', note: '[TestMaskToggleGuard] .lb-mask-window 綁 reactive data _maskWinStyle（非量測-in-binding）' },
-  { file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: '_maskWindowStyle()', note: '[TestMaskToggleGuard] 禁 :style 內呼叫量測方法（stale 幾何反模式 98b-T6）' },
+  // 100b-T1（CD-4/CD-5）：遮罩 DOM 抽出 web/templates/_macros/focal_mask.html partial，
+  // 下列 6 條（原標 #2/#3/#4/#5/#6/#9）file: 改指向 partial——守護對象（遮罩互動綁定 /
+  // 退役字樣 forbidden）隨 DOM 一起搬家，否則 forbidden 3 條會靜默轉綠成死守衛（CD-5）。
+  { file: 'web/templates/_macros/focal_mask.html', kind: 'required-string', pattern: ':style="_maskWinStyle"', note: '[TestMaskToggleGuard] .lb-mask-window 綁 reactive data _maskWinStyle（非量測-in-binding）' },
+  { file: 'web/templates/_macros/focal_mask.html', kind: 'forbidden-string', pattern: '_maskWindowStyle()', note: '[TestMaskToggleGuard] 禁 :style 內呼叫量測方法（stale 幾何反模式 98b-T6）' },
   { file: 'web/static/js/pages/showcase/state-base.js', kind: 'required-string', pattern: "$watch('currentLightboxVideo?.path'", note: '[TestMaskToggleGuard] 換片 _resetMask 視覺防線（CD-98b-8，防遮罩畫到下一片）' },
   // 99a-T1a 已刪除 /crop-mode 路由；99a-T3 移除前端這條 fetch 呼叫（closeMask 整條拆掉，改
   // confirmMask 打 /video/focal）。TASK-99a-T1a 原文把「這條 required-string 規則的正式替換」
@@ -179,12 +182,12 @@ const RULES = [
   // ---- [TestMaskToggleGuard] 99a-T4：T3 新互動（force-detect 預覽 + 左右拖曳 + ✓/✗）回填守衛 ----
   // §1 拖曳 wiring（4）：.lb-mask-window 起手綁定 + 函式定義存在 + 退役 toggle handler 兩檔 forbidden。
   {
-    file: 'web/templates/showcase.html', kind: 'required-string',
+    file: 'web/templates/_macros/focal_mask.html', kind: 'required-string',
     pattern: '@pointerdown="_maskDragStart($event)"',
     note: '[TestMaskToggleGuard] 99a-T4：.lb-mask-window 綁新拖曳起手（取代 98b @click="toggleMaskMode()"）',
   },
   {
-    file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: 'toggleMaskMode',
+    file: 'web/templates/_macros/focal_mask.html', kind: 'forbidden-string', pattern: 'toggleMaskMode',
     note: '[TestMaskToggleGuard] 99a-T4：退役 toggle handler 不得復活（thorough-cleanup lock）',
   },
   {
@@ -208,7 +211,7 @@ const RULES = [
     note: '[TestMaskToggleGuard] 99a-T4：退役「點窗外隱式存」函式不得以舊名復活（confirmMask/cancelMask 已取代）',
   },
   {
-    file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: 'closeMask',
+    file: 'web/templates/_macros/focal_mask.html', kind: 'forbidden-string', pattern: 'closeMask',
     note: '[TestMaskToggleGuard] 99a-T4：overlay @click.self 不得指回舊 closeMask（現為 cancelMask）',
   },
 
@@ -261,7 +264,7 @@ const RULES = [
     note: '[TestMaskToggleGuard] 99a-T4：✗ 鈕綁 cancelMask',
   },
   {
-    file: 'web/templates/showcase.html', kind: 'required-string', pattern: '@click.self="cancelMask()"',
+    file: 'web/templates/_macros/focal_mask.html', kind: 'required-string', pattern: '@click.self="cancelMask()"',
     note: '[TestMaskToggleGuard] 99a-T4：overlay 點窗外 = ✗（owner 定案，非 closeMask）',
   },
   {
@@ -297,7 +300,11 @@ const RULES = [
 
   // 新 gating 條件字面存在（.lb-mask-window + ✓ + ✗ 三處，count-based 確保三處都改到，防未來
   // 重構把其中一處漏改回舊的單旗標 x-show="_maskVisible"）。
-  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'x-show="_maskVisible && !_maskDetecting"', count: 3, note: '[TestMaskToggleGuard] 99a-T5：.lb-mask-window + ✓ + ✗ 三處收窄 gating（detect 完成才可拖/可提交），count=3 鎖住三處都改到' },
+  // 100b-T1（Opus 裁決 D 待決問題1）：原 count:3 拆兩條——引擎的 count 是單一 file: 內計數，
+  // 無跨檔加總語法。.lb-mask-window 那份隨 DOM 搬進 partial（count:1）；✓/✗ 兩份仍在
+  // showcase.html 的 .cover-actions（未搬動，count:2）。
+  { file: 'web/templates/_macros/focal_mask.html', kind: 'required-string', pattern: 'x-show="_maskVisible && !_maskDetecting"', count: 1, note: '[TestMaskToggleGuard] 99a-T5→100b-T1：.lb-mask-window 收窄 gating（detect 完成才可拖），partial 內僅 1 處' },
+  { file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'x-show="_maskVisible && !_maskDetecting"', count: 2, note: '[TestMaskToggleGuard] 99a-T5→100b-T1：✓ + ✗ 兩處收窄 gating（detect 完成才可提交），count=2 鎖住兩處都改到（.lb-mask-window 已搬至 partial）' },
 
   // 星空等待動畫函式定義存在（ghost-fly.js）+ callsite（state-lightbox.js openMask，唯一啟動點）。
   { file: 'web/static/js/shared/ghost-fly.js', kind: 'required-string', pattern: 'function playFocalDetectWait', note: '[TestMaskToggleGuard] 99a-T5：ghost-fly.js 定義星空等待迴圈動畫（start）' },
