@@ -171,15 +171,49 @@ test('applyCellFocal〔ratioVar 預設值零回歸〕2-arg 呼叫（既有三處
   });
 });
 
-test('applyCellFocal〔ratioVar 顯式傳入，證明讀對那一個 var〕imgAspect=0.73 落在兩個 ratio 之間：傳 "--actress-crop-ratio"(0.75) 應走 y 分支；若參數被忽略、誤讀預設 --poster-crop-ratio(0.71) 會變 x 分支（mutation 抓點）', () => {
+test('applyCellFocal〔ratioVar 顯式傳入，證明讀對那一個 var〕imgAspect=0.73 落在兩個 ratio 之間：傳 "--actress-crop-ratio"(0.75) + axisMode="auto" 應走 y 分支；若參數被忽略、誤讀預設 --poster-crop-ratio(0.71) 會變 x 分支（mutation 抓點；Fix C 後 axisMode 須顯式傳 "auto" 才可達 y 分支，比照女優小格呼叫形狀）', () => {
   withFakeComputedStyleVars({ '--poster-crop-ratio': 0.71, '--actress-crop-ratio': 0.75 }, () => {
     const img = makeFakeImg({ complete: true, naturalWidth: 73, naturalHeight: 100, src: 'a.jpg' }); // a=0.73
-    applyCellFocal(img, AUTO_VIDEO, '--actress-crop-ratio');
+    applyCellFocal(img, AUTO_VIDEO, '--actress-crop-ratio', 'auto');
     assert.match(
       img.style.objectPosition,
       /^center/,
       '應走 y 分支（a=0.73 < actress ratio 0.75）；若誤讀 poster ratio(0.71，a=0.73>0.71) 會變 x 分支',
     );
+  });
+});
+
+// ── Fix C 補洞：axisMode 必須透傳到「未載入 → load listener 延後算」那條路徑 ──
+// 上方所有 load-gate 測試餵的都是寬圖（1490x1000，a=1.49>r），恆走 x 分支 ⇒ 全部繞過 axisMode
+// 分支。若有人只在同步路徑透傳、漏掉 listener 內那次 computeAndApply，既有測試全綠而女優窄圖
+// 會在「未快取」路徑上靜默失去 Y 軸——而那正是上傳/換候選的 cache-bust URL 走的路徑（最要緊
+// 的一條，見 §B-2b）。此案是該分支的唯一鎖（gotchas-frontend §8c 同型：漏的那幾行不在 diff 裡）。
+test('applyCellFocal〔axisMode 透傳到 load-gate 路徑〕complete=false + 窄圖 + axisMode="auto"，_fireLoad 後應走 y 分支（鎖 listener 內那次 computeAndApply 也帶 axisMode）', () => {
+  withFakeComputedStyleVars({ '--poster-crop-ratio': 0.71, '--actress-crop-ratio': 0.75 }, () => {
+    const img = makeFakeImg({ complete: false, naturalWidth: 0, naturalHeight: 0, src: 'a.jpg' });
+    applyCellFocal(img, AUTO_VIDEO, '--actress-crop-ratio', 'auto');
+    assert.equal(img._hasListener('load'), true, '未載入應走 load-gate');
+    img.naturalWidth = 360;   // a=0.7087 < r=0.75 → 窄圖
+    img.naturalHeight = 508;
+    img.complete = true;
+    img._fireLoad();
+    assert.match(
+      img.style.objectPosition,
+      /^center /,
+      'load 後應走 y 分支；若 listener 內漏傳 axisMode 會退回預設 "x" → a<r 回 null → 清成空字串',
+    );
+  });
+});
+
+test('applyCellFocal〔axisMode 預設值零回歸 via load-gate〕complete=false + 窄圖 + 3-arg（不傳 axisMode），_fireLoad 後 → 清 inline（影片未快取窄圖封面不吃 Y 軸）', () => {
+  withFakeComputedStyleVars({ '--poster-crop-ratio': 0.71, '--actress-crop-ratio': 0.75 }, () => {
+    const img = makeFakeImg({ complete: false, naturalWidth: 0, naturalHeight: 0, src: 'a.jpg' });
+    applyCellFocal(img, AUTO_VIDEO, '--actress-crop-ratio');
+    img.naturalWidth = 360;
+    img.naturalHeight = 508;
+    img.complete = true;
+    img._fireLoad();
+    assert.equal(img.style.objectPosition, '', '預設 axisMode="x" 下 a<r → null → 清 inline');
   });
 });
 

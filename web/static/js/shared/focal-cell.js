@@ -22,14 +22,14 @@ import { focalCellObjectPosition } from './focal.js';
 // falsy 值），故零回歸。女優小格（T4）將傳 '--actress-crop-ratio'。
 const DEFAULT_RATIO_VAR = '--poster-crop-ratio';
 
-function computeAndApply(el, video, ratioVar = DEFAULT_RATIO_VAR) {
+function computeAndApply(el, video, ratioVar = DEFAULT_RATIO_VAR, axisMode = 'x') {
   const a = el.naturalWidth / el.naturalHeight;
   const r = parseFloat(getComputedStyle(el).getPropertyValue(ratioVar));
   if (!Number.isFinite(r) || r <= 0) {
     el.style.objectPosition = '';
     return;
   }
-  const result = focalCellObjectPosition(video, a, r);
+  const result = focalCellObjectPosition(video, a, r, axisMode);
   el.style.objectPosition = result || ''; // null → 清 inline，退 CSS baseline，不殘留舊值（換片 A→B 契約）
 }
 
@@ -44,11 +44,13 @@ function computeAndApply(el, video, ratioVar = DEFAULT_RATIO_VAR) {
  * @param {HTMLImageElement|null} el 小格 <img>（grid / similar slot / mobile drill / 女優卡 四站共用）；須已 in-DOM
  * @param {{crop_mode: string, auto_focal: string}|null|undefined} video
  * @param {string} [ratioVar] 讀取的 CSS var 名稱，預設 '--poster-crop-ratio'；女優小格（T4）傳 '--actress-crop-ratio'
+ * @param {'x'|'auto'} [axisMode='x'] 透傳給 focalCellObjectPosition 的軸向宣告（Codex 本地
+ *   review 修正（Fix C））：預設 'x' 只調 X 軸（video 既有行為，零回歸）；女優小格傳 'auto'。
  */
-export function applyCellFocal(el, video, ratioVar = DEFAULT_RATIO_VAR) {
+export function applyCellFocal(el, video, ratioVar = DEFAULT_RATIO_VAR, axisMode = 'x') {
   if (!el) return;
   if (el.complete && el.naturalWidth) {
-    computeAndApply(el, video, ratioVar);
+    computeAndApply(el, video, ratioVar, axisMode);
     return;
   }
   // 未載入（或 broken image：complete=true 但 naturalWidth=0）→ 掛 load listener 延後算。
@@ -58,7 +60,7 @@ export function applyCellFocal(el, video, ratioVar = DEFAULT_RATIO_VAR) {
     () => {
       // 換過圖了（同一元素被重用、.src= 換成新值）→ 放棄，不覆寫新圖的 objectPosition。
       if (el.currentSrc !== expectedSrc && el.src !== expectedSrc) return;
-      computeAndApply(el, video, ratioVar);
+      computeAndApply(el, video, ratioVar, axisMode);
     },
     { once: true },
   );

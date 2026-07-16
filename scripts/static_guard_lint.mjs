@@ -391,6 +391,32 @@ const RULES = [
     note: '[TestMaskToggleGuard] 99a-T5：_maskTeardown 防禦性再保險呼叫 _maskStopWaitAnim（比照 _maskRemoveDragListeners 先例）',
   },
 
+  // ---- Codex 本地 review 修正（Fix A）：_actressPhotoLoaded 不該被 _maskTeardown 清掉 ----
+  // 病灶：_maskTeardown 原本會把此旗標設回 false，但 confirmMask/cancelMask → _maskTeardown
+  // 之後沒有任何路徑會把它重新判定回真值（URL 未變的已載入 img 不會重觸發 @load）——focal
+  // 按鈕的 x-show 因而永久消失，直到關燈箱重開或切換女優才恢復。回歸鎖：禁止在 _maskTeardown
+  // 函式體內出現「清掉此旗標」的字面組合；真正該清（且會被 _refreshActressPhotoLoaded 重新
+  // 判定）的收尾路徑是 _resetMask，兩者語意不同不可一併刪除。
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string',
+    pattern: '_actressPhotoLoaded = false',
+    scope: { anchor: /_maskTeardown\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] Fix A：_maskTeardown 不可再清 _actressPhotoLoaded（旗標生命週期屬燈箱照片本身，清在此會讓 focal 按鈕 confirm/cancel 後永久消失、無自我修復路徑；真正該清的收尾是 _resetMask，其後必經 _refreshActressPhotoLoaded 重新判定）',
+  },
+
+  // ---- Codex 本地 review 修正（Fix B）：confirmMask 的 actress-sync gate 須讀 await 前捕獲值 ----
+  // 病灶：原本 gate 讀 this._maskKind 的即時值——await 期間使用者切走女優 →
+  // nextActressLightbox → _setActressLightboxIndex → _resetMask 把 this._maskKind 清空 →
+  // gate 誤判成 video 分支，跳過 _syncActressesArray，牆格停在存檔前的裁法。回歸鎖：禁止在
+  // confirmMask 函式體內出現讀即時值的字面組合，必須改讀 await 前捕獲的 kind 區域變數
+  // （與 _onPickerSelect／_uploadActressPhoto 的 by-captured-name 模式一致）。
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string',
+    pattern: 'this._maskKind ===',
+    scope: { anchor: /async\s+confirmMask\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] Fix B：confirmMask 不可讀 this._maskKind 即時值——await 期間切走女優會被 _resetMask 清空，須改讀 await 前捕獲的 kind（防退回讀即時值造成牆格漏同步）',
+  },
+
   // ---- [TestMaskToggleGuard] 100b-T2b（§B-1f）：上傳女優照片主流程 — wiring + 六個必踩點的機械可鎖部分 ----
   // 女優 wiring 正向鎖：隱藏 file input + accept + 上傳鈕 + handler 綁定，四者缺一即代表
   // 接線斷掉（例如 accept 被砍 → 手機端也能選非圖片檔，spec §3.7-3 失守）。
@@ -505,9 +531,9 @@ const RULES = [
   },
   {
     file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
-    pattern: "if (this._maskKind === 'actress') {",
+    pattern: "if (kind === 'actress') {",
     scope: { anchor: /async\s+confirmMask\s*\(\s*\)\s*\{/, braceBalanced: true },
-    note: '[TestMaskToggleGuard] 100b-T4：confirmMask 陣列側寫入須 gate 在 _maskKind===actress（video 分支沒有 paginatedActresses 可查，兩者是正交資料，不得誤觸發）',
+    note: '[TestMaskToggleGuard] 100b-T4／Fix C 修正：confirmMask 陣列側寫入須 gate 在 kind===actress（video 分支沒有 paginatedActresses 可查，兩者是正交資料，不得誤觸發）——Fix B 把即時值 this._maskKind 改為 await 前捕獲的 kind 區域變數，pattern 同步更新',
   },
   // 🔴 防止已被推翻的錯誤前提復活：舊註解主張 actress 分支的 targetObj 與
   // paginatedActresses[idx] 恆為同一物件參考（本 branch 稱其為「CD-10 同物件參考」）——
@@ -568,10 +594,13 @@ const RULES = [
   // 傳 --actress-crop-ratio（CD-3）。count:3 涵蓋 @load 呼叫本身 + 兩個 $watch callback 內
   // 各自呼叫一次，缺一即代表接線不全（例如漏改成不帶 ratioVar 的 2-arg 呼叫，會誤用
   // 預設 --poster-crop-ratio）。
+  // Codex 本地 review 修正（Fix C）：pattern 錨完整引數列（含結尾 'auto')）,比照 :2972-2976
+  // 「錨完整 @load 值」慣例——只認到 '--actress-crop-ratio' 這一段會被舊 3-arg 呼叫（缺
+  // axisMode，退回吃預設 'x'，女優小格會靜默丟失 Y 軸修正）假綠放行，證不出第 4 引數還在。
   {
     file: 'web/templates/showcase.html', kind: 'required-string', count: 3,
-    pattern: "applyCellFocal($el, actress, '--actress-crop-ratio')",
-    note: '[TestMaskToggleGuard] 100b-T4：女優牆格 @load + 兩條 $watch 三件套皆傳 --actress-crop-ratio（CD-3／CD-6，比照 video 三件套）',
+    pattern: "applyCellFocal($el, actress, '--actress-crop-ratio', 'auto')",
+    note: '[TestMaskToggleGuard] 100b-T4／Fix C：女優牆格 @load + 兩條 $watch 三件套皆傳 --actress-crop-ratio + axisMode=auto（CD-3／CD-6，比照 video 三件套；錨完整引數列防第 4 引數被砍掉假綠）',
   },
   {
     file: 'web/templates/showcase.html', kind: 'required-string',

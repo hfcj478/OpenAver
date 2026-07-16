@@ -192,37 +192,64 @@ test('focalCellObjectPosition〔auto 套 deadzone〕同一 x=0.70/a/r，crop_mod
   assert.equal(result, null);
 });
 
-test('focalCellObjectPosition〔a<r〕a=0.60 < r=0.71 → 走 y 分支（CD-6 100b-T3：不再是 null，改為垂直溢出修正；y=0.30 非對稱值，防退化回原值）', () => {
-  const result = focalCellObjectPosition({ crop_mode: 'auto', auto_focal: '0.3000,0.3000' }, 0.60, 0.71);
+test('focalCellObjectPosition〔a<r〕a=0.60 < r=0.71，顯式傳 axisMode="auto" → 走 y 分支（CD-6 100b-T3：不再是 null，改為垂直溢出修正；y=0.30 非對稱值，防退化回原值。Fix C：軸向收回為顯式參數，此案顯式傳 "auto"）', () => {
+  const result = focalCellObjectPosition({ crop_mode: 'auto', auto_focal: '0.3000,0.3000' }, 0.60, 0.71, 'auto');
   assert.notEqual(result, null);
   assert.notEqual(result, '30.00% center'); // 未退化成 x 分支/raw 字面值
   assert.equal(result, refCellFormulaY(0.30, 0.60, 0.71));
 });
 
-test('focalCellObjectPosition〔偏側 y 算對〕y=0.30, a=0.50, r=0.75（女優窄圖典型值）→ 依 y 公式算出，非等於 raw 30.00%（mutation 抓點，仿 x 分支 :165-169）', () => {
-  const result = focalCellObjectPosition({ crop_mode: 'auto', auto_focal: '0.5000,0.3000' }, AY, RY);
+test('focalCellObjectPosition〔偏側 y 算對〕y=0.30, a=0.50, r=0.75（女優窄圖典型值），顯式傳 axisMode="auto" → 依 y 公式算出，非等於 raw 30.00%（mutation 抓點，仿 x 分支 :165-169）', () => {
+  const result = focalCellObjectPosition({ crop_mode: 'auto', auto_focal: '0.5000,0.3000' }, AY, RY, 'auto');
   assert.notEqual(result, 'center 30.00%');
   assert.equal(result, refCellFormulaY(0.30, AY, RY));
 });
 
-test('focalCellObjectPosition〔y 分支 manual 繞 deadzone〕a<r 且 crop_mode=manual → 非 null，套 y 公式算出（deadzone 只鎖 x 軸，對 y 分支無感）', () => {
-  const result = focalCellObjectPosition({ crop_mode: 'manual', auto_focal: '0.9000,0.3000' }, AY, RY);
+test('focalCellObjectPosition〔y 分支 manual 繞 deadzone〕a<r 且 crop_mode=manual，顯式傳 axisMode="auto" → 非 null，套 y 公式算出（deadzone 只鎖 x 軸，對 y 分支無感）', () => {
+  const result = focalCellObjectPosition({ crop_mode: 'manual', auto_focal: '0.9000,0.3000' }, AY, RY, 'auto');
   assert.notEqual(result, null);
   assert.equal(result, refCellFormulaY(0.30, AY, RY));
 });
 
-test('focalCellObjectPosition〔y 分支 clamp 下界〕y=0（極端上）→ clamp 進 0 → "center 0.00%"', () => {
+test('focalCellObjectPosition〔y 分支 clamp 下界〕y=0（極端上），顯式傳 axisMode="auto" → clamp 進 0 → "center 0.00%"', () => {
   assert.equal(
-    focalCellObjectPosition({ crop_mode: 'manual', auto_focal: '0.5000,0.0000' }, AY, RY),
+    focalCellObjectPosition({ crop_mode: 'manual', auto_focal: '0.5000,0.0000' }, AY, RY, 'auto'),
     'center 0.00%',
   );
 });
 
-test('focalCellObjectPosition〔y 分支 clamp 上界〕y=1（極端下）→ clamp 進 1 → "center 100.00%"', () => {
+test('focalCellObjectPosition〔y 分支 clamp 上界〕y=1（極端下），顯式傳 axisMode="auto" → clamp 進 1 → "center 100.00%"', () => {
   assert.equal(
-    focalCellObjectPosition({ crop_mode: 'manual', auto_focal: '0.5000,1.0000' }, AY, RY),
+    focalCellObjectPosition({ crop_mode: 'manual', auto_focal: '0.5000,1.0000' }, AY, RY, 'auto'),
     'center 100.00%',
   );
+});
+
+// ── Fix C（Codex 本地 review）：影片零回歸——axisMode 預設='x'，共用函式無法自行判斷呼叫者 ──
+// 病灶回顧：100b-T3 曾讓 focalCellObjectPosition 依 a/r 大小關係自判軸向，使所有影片 grid /
+// similar / mobile（呼叫端未變、皆 3-arg 呼叫）意外吃到 Y 軸，且從未對窄比例影片封面做過
+// CDP 驗證。收回為顯式 axisMode 參數、預設 'x'，與 fd48295a~1（100b-T3 之前）逐字等價。
+
+test('focalCellObjectPosition〔axisMode 預設=x〕a<r（窄圖）+ 合法 focal + crop_mode=manual，不傳第 4 引數 → null（影片窄圖不吃 Y 軸，零回歸核心案）', () => {
+  const result = focalCellObjectPosition({ crop_mode: 'manual', auto_focal: '0.5000,0.3000' }, 0.60, 0.71);
+  assert.equal(result, null);
+});
+
+test('focalCellObjectPosition〔axisMode="x" 顯式 vs "auto" 對照〕同一組 a<r 輸入：顯式 "x" → null；顯式 "auto" → 非 null（鎖住預設值真的是 "x"，防有人把預設改成 "auto" 而測試照樣綠）', () => {
+  const video = { crop_mode: 'manual', auto_focal: '0.5000,0.3000' };
+  const xResult = focalCellObjectPosition(video, 0.60, 0.71, 'x');
+  const autoResult = focalCellObjectPosition(video, 0.60, 0.71, 'auto');
+  assert.equal(xResult, null);
+  assert.notEqual(autoResult, null);
+  assert.equal(autoResult, refCellFormulaY(0.30, 0.60, 0.71));
+});
+
+test('focalCellObjectPosition〔寬圖零分歧〕a>r 時 axisMode="x" 與 "auto" 輸出完全相同（鎖住寬圖零分歧——兩軸模式在 a>r 分支必須是同一段程式碼路徑）', () => {
+  const video = { crop_mode: 'auto', auto_focal: '0.3000,0.5000' };
+  const xResult = focalCellObjectPosition(video, A, R, 'x');
+  const autoResult = focalCellObjectPosition(video, A, R, 'auto');
+  assert.equal(xResult, autoResult);
+  assert.equal(xResult, refCellFormula(0.30, A, R));
 });
 
 // ── CD-7〔空操作證明〕女優型資料（manual 模式）在 x 分支與 y 分支都不會被 deadzone 攔下 ──
@@ -235,9 +262,9 @@ test('CD-7〔空操作證明 x 分支〕crop_mode=manual, x=0.90（深入 deadzo
   );
 });
 
-test('CD-7〔空操作證明 y 分支〕crop_mode=manual, y=0.90, a<r → 非 null（軸向擴充不會意外新增 y 向 deadzone）', () => {
+test('CD-7〔空操作證明 y 分支〕crop_mode=manual, y=0.90, a<r，顯式傳 axisMode="auto" → 非 null（軸向擴充不會意外新增 y 向 deadzone；Fix C 後 y 分支僅在 axisMode="auto" 時可達，故顯式傳）', () => {
   assert.notEqual(
-    focalCellObjectPosition({ crop_mode: 'manual', auto_focal: '0.5000,0.9000' }, 0.50, 0.75),
+    focalCellObjectPosition({ crop_mode: 'manual', auto_focal: '0.5000,0.9000' }, 0.50, 0.75, 'auto'),
     null,
   );
 });
@@ -353,7 +380,11 @@ function renderAxisOf(objPosStr) {
   return /^center/.test(objPosStr) ? 'y' : 'x';
 }
 
-test('editor/render 軸向一致性〔交叉驗證矩陣〕computeMaskAxis(imgAspect,1,r).axis 與 focalCellObjectPosition 輸出格式判定的軸向永遠一致（僅斷言 .axis，忽略 frozen）', () => {
+// Fix C 後續調整：computeMaskAxis（editor）只在 _maskKind==='actress' 時被呼叫
+// （state-lightbox.js:916-922，video 恆 axis='x'/frozen=false，不走 computeMaskAxis）。
+// 本交叉驗證比對的是「actress 編輯器算出的軸向」與「actress 小格渲染算出的軸向」是否一致，
+// 故 focalCellObjectPosition 這裡顯式傳 axisMode='auto'（不可省略、不可依賴預設值）。
+test('editor/render 軸向一致性〔交叉驗證矩陣〕computeMaskAxis(imgAspect,1,r).axis 與 focalCellObjectPosition(...,\'auto\') 輸出格式判定的軸向永遠一致（僅斷言 .axis，忽略 frozen；比對對象是 actress 路徑，故顯式傳 axisMode="auto"）', () => {
   const matrix = [
     [1.49, 0.71], // a>r 典型 poster
     [0.60, 0.71], // a<r 典型女優窄圖
@@ -368,6 +399,7 @@ test('editor/render 軸向一致性〔交叉驗證矩陣〕computeMaskAxis(imgAs
       { crop_mode: 'manual', auto_focal: '0.5000,0.5000' },
       imgAspect,
       r,
+      'auto',
     );
     const renderAxis = renderAxisOf(cellResult);
     assert.equal(
@@ -378,7 +410,7 @@ test('editor/render 軸向一致性〔交叉驗證矩陣〕computeMaskAxis(imgAs
   }
 });
 
-test('editor/render 軸向一致性〔a===r 邊界，顯式處理〕editor→{axis:"x",frozen:true}；render→null——兩者語意皆為「無裁切、無可調空間」，非不一致', () => {
+test('editor/render 軸向一致性〔a===r 邊界，顯式處理〕editor→{axis:"x",frozen:true}；render(axisMode="auto")→null——兩者語意皆為「無裁切、無可調空間」，非不一致', () => {
   const r = 0.71;
   const editorResult = computeMaskAxis(r, 1, r); // imgAspect===r 正規化代入
   assert.equal(editorResult.axis, 'x');
@@ -387,6 +419,7 @@ test('editor/render 軸向一致性〔a===r 邊界，顯式處理〕editor→{ax
     { crop_mode: 'manual', auto_focal: '0.5000,0.5000' },
     r,
     r,
+    'auto',
   );
   assert.equal(cellResult, null); // render 側無裁切餘裕 → null；與 editor 的 frozen:true 同語意，非衝突
 });

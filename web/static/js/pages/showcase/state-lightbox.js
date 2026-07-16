@@ -1168,10 +1168,17 @@ export function stateLightbox() {
             }
             const session = this._maskSession;
             const targetObj = this._maskTarget().obj;   // 捕獲：await 期間可能已換片/切走
+            // Codex 本地 review 修正（Fix B）：與 targetObj 同時捕獲 kind——本函式下方所有對
+            // 「這次送出的到底是哪個 kind」的判斷（含下面組 focal 字串、下方 _syncActressesArray
+            // 的 gate）一律讀這個捕獲值，不讀 this._maskKind 即時值。換片路徑
+            // （nextActressLightbox → _setActressLightboxIndex → _resetMask）會把 this._maskKind
+            // 清空，若 await 之後才判斷即時值，使用者在存檔 request resolve 前切走女優就會讓判斷
+            // 誤判成 video 分支、跳過牆格同步。
+            const kind = this._maskKind;
             // 100b-T2a：兩軸各自輸出，未拖的那軸填 0.5000。video 恆 Y=0.5000（render 只用 X，
             // spec §3.3，零回歸）；actress 依 _maskAxis 實際拖曳結果輸出對應值（另一軸恆 0.5000，
             // openMask 已設定基準，凍結模式/無臉逃生口皆同一終值）。
-            const focal = this._maskKind === 'actress'
+            const focal = kind === 'actress'
                 ? `${this._maskFocalX.toFixed(4)},${this._maskFocalY.toFixed(4)}`
                 : `${this._maskFocalX.toFixed(4)},0.5000`;
             try {
@@ -1214,10 +1221,15 @@ export function stateLightbox() {
                 // 與 _uploadActressPhoto／_onPickerSelect 對稱：改資料一律 by-name 呼叫
                 // _syncActressesArray；用 targetObj.name（await 前捕獲值）而非
                 // this.currentLightboxActress?.name，防使用者在 await 期間切走女優時寫錯格。
-                // gate 在 _maskKind === 'actress'：video 分支 targetObj 是 currentLightboxVideo，
+                // gate 在 kind 為 'actress' 時才做：video 分支 targetObj 是 currentLightboxVideo，
                 // 沒有 paginatedActresses 可查（那是 paginatedVideos），video/actress 是正交的
                 // 兩條資料，不可讓這段在 video 分支被誤觸發。
-                if (this._maskKind === 'actress') {
+                // Codex 本地 review 修正（Fix B）：gate 讀上方捕獲的 kind（await 前凍結值），不讀
+                // this._maskKind 的即時值——切走 → _resetMask 清掉 kind 欄位 → 若讀即時值會誤判
+                // 成 video 分支而跳過本次同步，牆格停在存檔前的裁法。與 _onPickerSelect／
+                // _uploadActressPhoto 一致：改資料（by captured name）無條件做，只有「改當前畫面」
+                // 才需要 gate 在使用者還留在原處。
+                if (kind === 'actress') {
                     this._syncActressesArray(targetObj.name, { auto_focal: data.auto_focal, crop_mode: 'manual' });
                 }
             } catch (e) {
@@ -1252,7 +1264,15 @@ export function stateLightbox() {
             this._maskAxis = null;
             this._maskFrozen = false;
             this._maskFocalY = null;
-            this._actressPhotoLoaded = false;
+            // Codex 本地 review 修正（Fix A）：本函式刻意**不**在此清女優圖已載入旗標。
+            // 該旗標的生命週期屬於「燈箱這張照片」（writer 只有 @load handler +
+            // _refreshActressPhotoLoaded() 的 4 個呼叫點），不屬於「這次遮罩編輯 session」。
+            // confirmMask/cancelMask 收尾走到本函式之後，沒有任何路徑會把它重新判定回真值
+            // ——URL 未變的已載入 img 不會重觸發 @load——在此清掉會讓 showcase.html 的
+            // focal 按鈕 x-show 判斷永久失效（confirm/cancel 各一次即消失），直到關燈箱重開
+            // 或切換女優才恢復。真正該清（且會被重新判定）的收尾路徑是換片/關燈箱的
+            // _resetMask()（下方）——其後必經 _setActressLightboxIndex 呼叫
+            // _refreshActressPhotoLoaded() 重新判定，兩者語意不同，不可為了對稱一併刪除。
             // 100b-T1（裁決 D-3）：kind 收尾排最後——本函式內以上收尾皆不依賴 _maskTarget()（皆
             // 直接操作 handler/listener 參考），故順序本身不影響現有行為；仍照裁決排最後，
             // 避免未來新增依賴 _maskTarget() 的收尾時誤踩「先清 kind 查到錯元素」。
