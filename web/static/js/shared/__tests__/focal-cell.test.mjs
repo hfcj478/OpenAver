@@ -144,3 +144,61 @@ test('applyCellFocal〔--poster-crop-ratio 讀不到〕r<=0 → 清 inline，不
     assert.equal(img.style.objectPosition, '', 'r<=0 應退化清 inline');
   });
 });
+
+// ── ratioVar 參數化（100b-T3 CD-6）───────────────────────────────────────
+// 假 getComputedStyle 同時掛兩個不同值的 var，證明 computeAndApply/applyCellFocal 真的讀對
+// 呼叫端指定的那一個（mutation 抓點：若參數被忽略、恆讀預設 --poster-crop-ratio，下面兩條必 RED）。
+
+function withFakeComputedStyleVars(varMap, run) {
+  const orig = globalThis.getComputedStyle;
+  globalThis.getComputedStyle = () => ({
+    getPropertyValue(name) {
+      return Object.prototype.hasOwnProperty.call(varMap, name) ? String(varMap[name]) : '';
+    },
+  });
+  try {
+    return run();
+  } finally {
+    globalThis.getComputedStyle = orig;
+  }
+}
+
+test('applyCellFocal〔ratioVar 預設值零回歸〕2-arg 呼叫（既有三處呼叫點的呼叫形狀）仍讀 --poster-crop-ratio，不受新增的 --actress-crop-ratio 影響', () => {
+  withFakeComputedStyleVars({ '--poster-crop-ratio': R, '--actress-crop-ratio': 0.75 }, () => {
+    const img = makeFakeImg({ complete: true, naturalWidth: 1490, naturalHeight: 1000, src: 'a.jpg' });
+    applyCellFocal(img, AUTO_VIDEO); // 2-arg，無 ratioVar
+    assert.notEqual(img.style.objectPosition, '', '應以 --poster-crop-ratio(0.71) 算出非空值');
+  });
+});
+
+test('applyCellFocal〔ratioVar 顯式傳入，證明讀對那一個 var〕imgAspect=1.2（寬圖，同時 > 0.71 與 0.75，兩個 r 值算出的 x 分支公式數值不同）：傳 "--actress-crop-ratio" 應套用 r=0.75 算出的結果，非誤讀預設 --poster-crop-ratio(0.71)（mutation 抓點；T3b 後軸向參數已隨 Y 軸移除，呼叫收斂為 3-arg）', () => {
+  withFakeComputedStyleVars({ '--poster-crop-ratio': 0.71, '--actress-crop-ratio': 0.75 }, () => {
+    const img = makeFakeImg({ complete: true, naturalWidth: 120, naturalHeight: 100, src: 'a.jpg' }); // a=1.2
+    const video = { crop_mode: 'auto', auto_focal: '0.6000,0.5000' };
+    applyCellFocal(img, video, '--actress-crop-ratio');
+    // r=0.75: v=r/a=0.625, raw=(0.6-0.3125)/0.375=0.76667 → "76.67% center"
+    // 若誤讀 r=0.71: v≈0.59167, raw≈0.74490 → "74.49% center"（與正確值不同，證明讀對 var）
+    assert.equal(img.style.objectPosition, '76.67% center');
+  });
+});
+
+test('applyCellFocal〔窄圖經 load-gate 路徑清 inline〕complete=false + 窄圖 + 3-arg（無軸向參數可傳），_fireLoad 後 → 清 inline（T3b 後 a<=r 恆 null，無 Y 軸可吃）', () => {
+  withFakeComputedStyleVars({ '--poster-crop-ratio': 0.71, '--actress-crop-ratio': 0.75 }, () => {
+    const img = makeFakeImg({ complete: false, naturalWidth: 0, naturalHeight: 0, src: 'a.jpg' });
+    applyCellFocal(img, AUTO_VIDEO, '--actress-crop-ratio');
+    img.naturalWidth = 360;
+    img.naturalHeight = 508;
+    img.complete = true;
+    img._fireLoad();
+    assert.equal(img.style.objectPosition, '', 'a<=r 恆 null → 清 inline');
+  });
+});
+
+test('applyCellFocal〔ratioVar 讀不到〕傳入不存在的 var 名稱 → getPropertyValue 回空字串 → 清 inline（既有行為套用到任一 var）', () => {
+  withFakeComputedStyleVars({ '--poster-crop-ratio': R, '--actress-crop-ratio': 0.75 }, () => {
+    const img = makeFakeImg({ complete: true, naturalWidth: 1490, naturalHeight: 1000, src: 'a.jpg' });
+    img.style.objectPosition = '38.20% center'; // 殘留舊值
+    applyCellFocal(img, AUTO_VIDEO, '--nonexistent-ratio');
+    assert.equal(img.style.objectPosition, '', '讀不到指定 ratioVar → 清 inline，不殘留舊值');
+  });
+});

@@ -13,6 +13,11 @@ import { POSTER_CROP_MAX_W } from '@/shared/breakpoints.js';
 import { detectSwipe } from '@/shared/swipe.js';
 import { waitForMount } from '@/shared/dom-timing.js';
 import { parseFocal, clampMaskWinLeft } from '@/shared/focal.js';
+// 100b-T2a：CD-2 軸向/凍結判定 + 亮窗幾何純函式抽至 shared/mask-geometry.js（可測試性——
+// 本檔的 `@/showcase/...` importmap alias 只有瀏覽器認得，node:test 無法直接 import 本檔；
+// mask-geometry.js 只用相對路徑 import，node:test 可直接驗證，見該檔開頭說明）。
+import { computeMaskWinGeometry, computeMaskDragRoom, MASK_MIN_DRAG_ROOM } from '@/shared/mask-geometry.js';
+import { syncActressFields } from '@/shared/actress-sync.js';
 
 export function stateLightbox() {
     // 49b T4cd: Picker 動畫參數（T1 fix2 定案，2026-04-25）
@@ -52,11 +57,31 @@ export function stateLightbox() {
 
         _lbFullLoaded: false,           // 71-T6 blur-up：原圖（cover_full_url）@load 後翻 true → overlay opacity 淡入
 
+        // 100b-T2a（§B-2b）：女優封面 img 快取命中/@load 就緒旗標，平行 _lbFullLoaded（video）。
+        // openMask() 的 `if (!this._maskTarget().loaded) return;` 門檻直接消費本欄。lifecycle
+        // 契約見 _refreshActressPhotoLoaded()——女優牆與燈箱同 URL，開燈箱時圖幾乎必然已快取，
+        // 只靠 @load 會讓 focal 按鈕在最常見路徑上永久打不開（[[feedback_guards_cant_prove_usable]]）。
+        _actressPhotoLoaded: false,
+
+        // 100c-T2（CD-5/CD-7）：橫向可拖幅度 ≥ MASK_MIN_DRAG_ROOM（20%）門檻旗標，生命週期
+        // 與 _actressPhotoLoaded 完全鏡射（同一對「清空/就緒」helper 同步設值/清除，見下方
+        // 兩 helper 定義）。openMask() 的 focal icon x-show 五條件之一：窄圖（無意義的可拖
+        // 空間）恆 false，icon 不顯示。
+        _actressPhotoWideEnough: false,
+
         // 99a-T3：焦點裁切遮罩 — 一律 force-detect 預覽 + 左右拖曳微調 + ✓/✗ 提交（Alpine 短狀態，
         // 單一提交生命週期 CD-98b-8 沿用）。98b 的 default⇄auto toggle 已整條移除（見 CHANGELOG）。
         // _maskSession 為單調遞增 session id（98b P2 fix 沿用，Codex）：openMask()/_resetMask() 遞增，
         // confirmMask()/_maskDragStart() 的 pointermove 在 await/事件前捕捉、之後比對，不符即代表
         // 已換片/關燈箱，跳過該次的共用 UI 狀態寫入。
+        // 100b-T1：_maskKind 是本 task 唯一新增的 state（CD-4/§B-1b dispatch key）。openMask()
+        // 起手第一行凍結一次（'video'|'actress'，依 currentLightboxActress 是否有值），
+        // _maskTarget() 內部不得重新判斷（G4：actress/video 各自獨立 state，需在觸發點凍結，
+        // 不可逐次重判）。T1 階段 openMask 唯一觸發入口（.lb-mask-btn）只在 video 分支渲染，
+        // 故本欄此刻恆解析為 'video'——這正是 T1 DoD ③「女優路徑仍不可達」的結構性保證，
+        // 非約定俗成。_resetMask()/_maskTeardown() 收尾時重置（見兩函式末尾，裁決 D-3：
+        // 排在最後，防先清 kind 再做依賴 _maskTarget() 的收尾查到錯的分支/元素）。
+        _maskKind: null,                // 'video' | 'actress'，dispatch key（100b-T1）
         _maskVisible: false,            // 遮罩 overlay 是否顯示
         _maskSession: 0,                // 單調遞增 session id（openMask/_resetMask 遞增）
         _maskDetecting: false,          // force-detect 進行中（spinner）
@@ -147,6 +172,69 @@ export function stateLightbox() {
                     self._lbFullLoaded = true;
                 }
             });
+        },
+
+        // 100b-T2a（§B-2b）：女優版 _refreshLbFullBlurUp 平行實作——女優牆與燈箱用同一個
+        // /api/actresses/photo/{name} URL，開燈箱時圖幾乎必然已快取（瀏覽器快取命中是常態，
+        // 非邊角）。快取圖 .src= 後同步即 complete，@load 不會觸發；只加 @load 會讓
+        // openMask() 的 `if (!this._maskTarget().loaded) return;` 在最常見路徑上永久擋下、
+        // focal 按鈕點了沒反應且無任何錯誤訊息（[[feedback_guards_cant_prove_usable]] 原型，
+        // v0.12.1 全綠但功能不可用）。$refs.pickerCoverImg 在 <template x-if="currentLightboxActress">
+        // 內（G3），切走後可能已 undefined，null-safe。identity 凍結（captured）防 await 後
+        // 已切走的女優誤寫本次結果。
+        // 100c-T2（CD-5）：兩旗標（_actressPhotoLoaded / _actressPhotoWideEnough）的完整生命
+        // 週期收成兩個 helper，結構上不可能只寫其中一個——不是「記得兩邊都寫」，是只有一個
+        // 地方能寫。呼叫者恰為二：_refreshActressPhotoLoaded() 起手（本檔）、_resetMask()（本檔）。
+        // 🔴 _maskTeardown() 絕不可呼叫本 helper（Fix A 病灶：confirm/cancel 收尾不等於「這張
+        // 燈箱照片」的生命週期，見 _maskTeardown 內既有註解）。
+        _clearActressPhotoState() {
+            this._actressPhotoLoaded = false;
+            this._actressPhotoWideEnough = false;
+        },
+
+        // 100c-T2（CD-5/CD-7）：從已載入的 img 同時算出兩旗標並寫入 this。呼叫者恰為二：
+        // showcase.html 的 @load（未快取路徑，$el 即已觸發 load 事件的 img）、
+        // _refreshActressPhotoLoaded() 的 $nextTick（已快取路徑，下方）。imgEl 必須是已連接
+        // DOM 的元素——detached 元素 getComputedStyle 讀 CSS var 回空字串，parseFloat 得
+        // NaN，computeMaskDragRoom 對非有限輸入 fail-closed 回 0（mask-geometry.js），
+        // 0 >= MASK_MIN_DRAG_ROOM 為 false，讀不到 ratio 時 _actressPhotoWideEnough 自然
+        // 落在 false，不需額外 NaN 特判（CD-7 內建 fail-closed 契約）。
+        _readyActressPhotoState(imgEl) {
+            const a = imgEl.naturalWidth / imgEl.naturalHeight;
+            const r = parseFloat(getComputedStyle(imgEl).getPropertyValue('--actress-crop-ratio'));
+            this._actressPhotoLoaded = imgEl.complete && imgEl.naturalWidth > 0;
+            this._actressPhotoWideEnough = Number.isFinite(r) && r > 0 && computeMaskDragRoom(a, r) >= MASK_MIN_DRAG_ROOM;
+        },
+
+        _refreshActressPhotoLoaded() {
+            this._clearActressPhotoState();
+            var self = this;
+            var captured = this.currentLightboxActress?.name;
+            this.$nextTick(function () {
+                if (self.currentLightboxActress?.name !== captured) return;
+                var img = self.$refs && self.$refs.pickerCoverImg;
+                if (img && img.complete && img.naturalWidth > 0) {
+                    self._readyActressPhotoState(img);
+                }
+            });
+        },
+
+        // 100c-T2：女優 focal icon 的五條件判斷收成 method，不在 showcase.html 直接寫
+        // `x-show="a && b && c && d && e"` 字面 && 鏈。病灶：Alpine 的 effect 依賴收集是
+        // 「這次求值實際讀了哪些屬性」，JS `&&` 短路時，一旦前段某條件為 false，後段條件
+        // **完全不會被讀取**，Alpine 因此不會訂閱它們的變化——之後那些漏訂閱的旗標翻真時
+        // effect 不會重跑，icon 可能卡在錯的顯示狀態。
+        // 修法：method 內用獨立陳述式**無條件**讀出全部 5 個旗標存成區域變數，讓 Alpine 的
+        // effect 每次呼叫本 method 都保證訂閱到全部依賴，不受 && 短路影響——回傳值仍是同一個
+        // && 鏈，語意不變，只是把「讀取」與「短路組合」拆開兩步。showcase.html 仍用 x-show
+        // 綁定本 method（與影片版一致）。
+        _focalIconVisible() {
+            const notEditing = !this._maskVisible;
+            const hasPhoto = !!this.currentLightboxActress?.photo_url;
+            const loaded = this._actressPhotoLoaded;
+            const wideEnough = this._actressPhotoWideEnough;
+            const pickerClosed = !this._pickerOpen;
+            return notEditing && hasPhoto && loaded && wideEnough && pickerClosed;
         },
 
         // F1: helper — 更新 lightboxIndex + currentLightboxVideo 一致性
@@ -293,6 +381,11 @@ export function stateLightbox() {
             document.body.classList.add('overflow-hidden');
             // T3: fire-and-forget 即時查 aliases（hero card 路徑無 grid index）
             this._fetchLiveAliases(this._matchedActress?.name, null);
+            // 100b-T2a（§B-2b，實作者判斷新增）：hero card 是繞過 _setActressLightboxIndex()
+            // 的第三種「actress 變為可見」入口（直接賦值，非經 helper）——若不在此呼叫，快取
+            // 命中時 _actressPhotoLoaded 可能殘留上一次瀏覽的值，讓 focal 按鈕在 hero card
+            // 路徑上行為不可預期。呼叫本身冪等、無副作用風險。
+            this._refreshActressPhotoLoaded();
 
             // B19: 進場動畫（fire-and-forget，generation-guarded）
             var lbGen = ++this._lightboxGeneration;
@@ -568,10 +661,16 @@ export function stateLightbox() {
                 var self = this;
                 // B19: state-first
                 this.lightboxIndex = -1;
+                // 100b-T2a（發現1 橋接點①，裁決2）：video→actress 橋接不經 _setActressLightboxIndex()，
+                // 是這裡的直接賦值。x-if="currentLightboxActress" 分支即將由 false 翻 true（重新
+                // 掛載），必須在賦值前同步 _resetMask()——姊妹 $watch 是非同步 effect flush，
+                // 對掛載那一幀擋不住（gotchas-frontend §8b／T1 CDP 2/2 重現）。
+                this._resetMask();
                 this.currentLightboxActress = this._matchedActress;
                 this.currentLightboxVideo = null;
                 this.addingLbTag = false;
                 this._videoChipsExpanded = false;
+                this._refreshActressPhotoLoaded();   // §B-2b：hero card 橋接同樣是 actress 變為可見的入口
 
                 var lbGen = ++this._lightboxGeneration;
                 this.$nextTick(function () {
@@ -624,6 +723,11 @@ export function stateLightbox() {
             if (this.lightboxIndex === -1) {
                 if (_filteredVideos.length === 0) return;
                 var self = this;
+                // 100b-T2a（發現1 橋接點②，裁決2）：actress→video 橋接。_setLightboxIndex(0)
+                // 內部賦值 currentLightboxVideo + 清 currentLightboxActress=null，讓
+                // video 分支 x-if="currentLightboxVideo && !currentLightboxActress" 由 false
+                // 翻 true（重新掛載）。同上，reset 必須排在賦值（此呼叫）之前同步執行。
+                this._resetMask();
                 // B19: state-first
                 this._setLightboxIndex(0);
 
@@ -760,12 +864,58 @@ export function stateLightbox() {
         // 生命週期對稱：openMask（遞增 _maskSession，內建 force-detect）↔ confirmMask/cancelMask
         // （經共用 _maskTeardown 收尾）↔ _resetMask（換片 / 關燈箱，遞增 session、丟棄未提交態）。
 
+        // 100b-T1（CD-4/§B-1b）：video/actress 兩分支識別資訊統一出口。_maskKind 已由 openMask()
+        // 起手凍結（G4，不在此重判）。actress 分支目前結構性不可達（T1 DoD ③：女優分支無 focal
+        // icon，openMask 永不在 currentLightboxActress 有值時觸發），此處仍完整定義兩分支欄位
+        // 供 T2 銜接（§B-1b 表）。detectEndpoint/focalEndpoint 各自完整字面 URL（Opus 裁決 C：
+        // 不可拼接 base，否則 static_guard_lint.mjs:147 的 detect-focal 規則因字面字串消失而
+        // 靜默 RED）。imgEl 對 actress 分支须 null-safe（G3：$refs.pickerCoverImg 在 x-if 內）。
+        _maskTarget() {
+            if (this._maskKind === 'actress') {
+                return {
+                    obj: this.currentLightboxActress,
+                    imgEl: this.$refs && this.$refs.pickerCoverImg,   // G3：x-if 內，null-safe
+                    loaded: this._actressPhotoLoaded,   // T2 才宣告；未宣告的 this.xxx property access 回 undefined，非 ReferenceError
+                    identity: this.currentLightboxActress?.name,
+                    ratio: '--actress-crop-ratio',
+                    detectEndpoint: `/api/actresses/${encodeURIComponent(this.currentLightboxActress?.name || '')}/detect-focal`,
+                    focalEndpoint: `/api/actresses/${encodeURIComponent(this.currentLightboxActress?.name || '')}/focal`,
+                    focalBody: (focal) => ({ focal }),   // v3：無 token，只此一欄
+                    handles409: false,   // spec §3.5：女優無背景 writer、無 409
+                };
+            }
+            return {
+                obj: this.currentLightboxVideo,
+                imgEl: this.$refs.lightboxCoverFull,
+                loaded: this._lbFullLoaded,
+                identity: this.currentLightboxVideo?.path,
+                ratio: '--poster-crop-ratio',
+                detectEndpoint: '/api/showcase/video/detect-focal',
+                focalEndpoint: '/api/showcase/video/focal',
+                focalBody: (focal) => ({
+                    path: this.currentLightboxVideo?.path,
+                    focal,
+                    expected_cover_path: this._maskExpectedCoverPath,
+                }),
+                handles409: true,   // 封面已變更時的 compare-and-store 409
+            };
+        },
+
         async openMask() {
             if (this._maskVisible) return;   // 98b-T6：re-entry guard——按鈕在遮罩開啟時仍可見，
                                              // 再點不重複裝 resize listener。
-            if (!this.currentLightboxVideo?.path) return;
+            // 100b-T1（CD-4/§B-1b，G4）：凍結 kind，_maskTarget() 內部不得重判。
+            // 🔴 位置是承重的，必須夾在 re-entry guard 之後、第一個 _maskTarget() 消費者之前：
+            //   • 排 re-entry guard「之前」→ 遮罩已開時再次進入會覆寫 in-flight session 的 kind，
+            //     才 return——「凍結」語意當場破功（T1 恆 'video' 故無影響，但 T2 女優可達後，
+            //     kind 被改成別的分支會讓後續 _maskDragStart 抓到錯的 $refs 元素）。
+            //   • 排 `_maskTarget().identity` 之後 → helper 讀到未凍結的 kind，dispatch 到錯分支。
+            // 用排序讓該類 race 結構上不可能發生，而非事後補旗標（feedback_order_over_flag_guards）。
+            // T1 階段唯一觸發入口（.lb-mask-btn）只在 video 分支渲染，故此刻恆為 'video'。
+            this._maskKind = this.currentLightboxActress ? 'actress' : 'video';
+            if (!this._maskTarget().identity) return;
             // 98b-T6 防线：圖未就緒不開（按鈕也 gate _lbFullLoaded，此為 defense-in-depth）。
-            if (!this._lbFullLoaded) return;
+            if (!this._maskTarget().loaded) return;
 
             // 99a-T3：_maskFocalX 暫時設 null（幾何尚未解出的極短暫態，見 state 宣告處註解）。
             // _computeMaskWinStyle 讀到 null 即貼右裁基準（D2）——99a-T5：此值只作為「detect
@@ -776,21 +926,44 @@ export function stateLightbox() {
             // JSON body 都沒拿到」時沿用上一支影片/上一個 session 殘留的 cover_path
             // 誤配到這支影片（confirmMask 的 fail-closed 判斷才有意義）。
             this._maskExpectedCoverPath = null;
-            const s = this._computeMaskWinStyle();
-            if (!s) {
-                // 幾何算不出（rect=0 / naturalWidth=0）→ 不開、不留「全灰無窗」死態，toast 提示。
+
+            // 初始焦點基準在此一次性解出並凍結，_computeMaskWinStyle()/pointermove 內不得
+            // 重判。el/rect/r 的讀取與 _computeMaskWinStyle 內部刻意重複（Opus correction B
+            // 既有註解：ratio 讀取受 static guard 錨定在 _computeMaskWinStyle 本體內，不可
+            // 抽成共用 helper）。
+            const gEl = this._maskTarget().imgEl;
+            if (!gEl || !gEl.naturalWidth) {
                 this.showToast(window.t('showcase.lightbox.mask_detect_failed'), 'error');
                 return;
             }
-            // Opus correction B：幾何一旦解出，_maskFocalX 收斂為具體數字（右裁基準 x），不留 null
-            // 終態——_computeMaskWinStyle 的 getComputedStyle/--poster-crop-ratio 讀取受 static guard
-            // 錨定在該函式本體內（不可抽成共用 helper），此處小段重算幾何是該限制下的刻意重複，
-            // 非隨手複製；`s` 成功即代表 el/rect/r 皆已驗證合法，這裡不需再驗一次。
-            const el = this.$refs.lightboxCoverFull;
-            const rect = el.getBoundingClientRect();
-            const r = parseFloat(getComputedStyle(el).getPropertyValue('--poster-crop-ratio'));
-            const winW = Math.min(rect.width, rect.height * r);
-            this._maskFocalX = (rect.width - winW / 2) / rect.width;
+            const gRect = gEl.getBoundingClientRect();
+            if (!gRect.width || !gRect.height) {
+                this.showToast(window.t('showcase.lightbox.mask_detect_failed'), 'error');
+                return;
+            }
+            const gR = parseFloat(getComputedStyle(gEl).getPropertyValue(this._maskTarget().ratio));
+            if (!Number.isFinite(gR) || gR <= 0) {
+                this.showToast(window.t('showcase.lightbox.mask_detect_failed'), 'error');
+                return;
+            }
+            if (this._maskKind === 'actress') {
+                // spec §3.4/§3.7-6：女優基準恆 3/4 置中（非右裁）。
+                this._maskFocalX = 0.5;
+            } else {
+                // Opus correction B：幾何一旦解出，_maskFocalX 收斂為具體數字（右裁基準 x），
+                // 不留 null 終態；`s` 成功即代表 el/rect/r 皆已驗證合法，這裡不需再驗一次。
+                const winW = Math.min(gRect.width, gRect.height * gR);
+                this._maskFocalX = (gRect.width - winW / 2) / gRect.width;
+            }
+
+            const s = this._computeMaskWinStyle();
+            if (!s) {
+                // 幾何算不出（rect=0 / naturalWidth=0 / ratio CSS var 讀不到 → NaN）→ 不開、
+                // 不留「全灰無窗」死態，toast 提示。兩個 ratio var（--poster-crop-ratio /
+                // --actress-crop-ratio）皆已定義於 theme.css :root，此處為防禦性 fallback。
+                this.showToast(window.t('showcase.lightbox.mask_detect_failed'), 'error');
+                return;
+            }
 
             this._maskSession++;         // 98b P2 fix：新開 session，讓任何舊 session 的 await 後寫入失效
             this._maskDetecting = false; // 98b P2 fix(二)：清舊 session 遺留的偵測態——舊 detect await 的
@@ -804,7 +977,13 @@ export function stateLightbox() {
             // 那一刻起才第一次畫出來，畫出來就已是終值——不再有「先貼右裁基準再滑到偵測位置」的
             // 過渡態，拖曳入口（@pointerdown）在 detect 完成前也不存在，Bug 1 的 race 結構性消失。
             const session = this._maskSession;
-            const targetVideo = this.currentLightboxVideo;
+            const targetVideo = this._maskTarget().obj;   // 100b-T1：identity 統一走 helper（video 分支＝currentLightboxVideo）
+            // 100b-T2a：actress 分支 targetVideo = currentLightboxActress（無 .path）——下方
+            // fetch body 的 `targetVideo.path` 對 actress 恆 undefined，JSON.stringify 會直接
+            // drop 該 key（body 變 {}）。女優 detect-focal 端點簽名為
+            // `async def detect_actress_focal(name: str)`（web/routers/actress.py:950），無
+            // request body model，name 全靠 URL path segment（detectEndpoint 已含編碼後的
+            // name），送空 body 不影響行為，故此處沿用 T1 既有寫法、不需 kind-aware 分流。
             // 99a-T5（headless self-verify 實測抓到，非理論推測）：_maskDetecting 必須先翻 true，
             // 才能設 _maskVisible=true——Alpine 的 x-show reactive effect 對每次同步賦值都立即
             // 重新求值（非批次到下個 microtask 才跑），若順序顛倒（先 _maskVisible=true，
@@ -829,14 +1008,14 @@ export function stateLightbox() {
             // 保證仍渲染不轉，不留死白）。
             const isPRM = !!(window.OpenAver && window.OpenAver.prefersReducedMotion);
             if (!isPRM) {
-                const coverEl = this.$refs.lightboxCoverFull && this.$refs.lightboxCoverFull.closest('.lightbox-cover');
+                const coverEl = this._maskTarget().imgEl?.closest('.lightbox-cover');
                 if (coverEl && window.GhostFly && window.GhostFly.playFocalDetectWait) {
                     this._maskWaitTl = window.GhostFly.playFocalDetectWait(coverEl);
                 }
             }
 
             try {
-                const resp = await fetch('/api/showcase/video/detect-focal', {
+                const resp = await fetch(this._maskTarget().detectEndpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ path: targetVideo.path }),
@@ -855,13 +1034,16 @@ export function stateLightbox() {
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 if (!data || !data.success) throw new Error((data && data.error) || 'API failed');
                 if (session === this._maskSession) {
-                    const parsed = parseFocal(data.auto_focal);   // '' / 畸形 → null，維持右裁基準
+                    const parsed = parseFocal(data.auto_focal);   // '' / 畸形 → null，維持起手基準
                     if (parsed) {
+                        // 女優基準恆 3/4 置中（spec §3.4）：僅更新 X 焦點，Y 分量已無讀寫點
+                        // （恆 0.5000，見 CD-11／confirmMask 硬編 ,0.5000）。
                         this._maskFocalX = parsed.x;
                         // 99a-T5：|| fallback 同 resize handler——null 不可流進 :style 綁定。
                         this._maskWinStyle = this._computeMaskWinStyle() || this._maskWinStyle;
                     }
-                    // else：無臉——_maskFocalX 維持右裁基準（openMask 起手已算好），不動它。
+                    // else：無臉——維持起手基準（video：右裁 x；actress：3/4 置中 0.5，
+                    // openMask 起手已算好），不動它。逃生口仍可拖曳 + ✓ 存入（spec §3.7-6）。
                 }
             } catch (e) {
                 // 偵測失敗只 toast，_maskFocalX 維持右裁基準，不讓 UI 卡在半套態。
@@ -888,19 +1070,20 @@ export function stateLightbox() {
             // 直接忽略——否則會覆寫 _maskDragMoveHandler/_maskDragUpHandler 參考，讓第一組
             // document listener 永遠移不掉（洩漏 + 並發 stale 寫入）。
             if (this._maskDragging) return;
-            const el = this.$refs.lightboxCoverFull;
+            const el = this._maskTarget().imgEl;   // 100b-T1：G3 null-safe（x-if 內 $refs 可能 undefined）
             if (!el || !el.naturalWidth) return;
             const rect = el.getBoundingClientRect();
             const W = rect.width;
             const H = rect.height;
             if (!W || !H) return;
-            const r = parseFloat(getComputedStyle(el).getPropertyValue('--poster-crop-ratio'));
+            const r = parseFloat(getComputedStyle(el).getPropertyValue(this._maskTarget().ratio));
             if (!Number.isFinite(r) || r <= 0) return;
             const winW = Math.min(W, H * r);
             const startClientX = evt.clientX;
             // 起手左緣必須與「視覺上看到的窗位置」一致＝比照 _computeMaskWinStyle 一樣 clamp
-            // （99a Gemini P2）。raw _maskFocalX 貼邊時（臉在封面極左/極右）未鉗的 startLeft 會
-            // 落在 [0, W-winW] 外，窗子停在邊界但拖曳從界外起算 → 反向拖曳有死區、不跟手。
+            // （99a Gemini P2）。raw _maskFocalX 貼邊時未鉗的 start 值會落在邊界外，窗子停在
+            // 邊界但拖曳從界外起算 → 反向拖曳有死區、不跟手。clampMaskWinLeft 是數學軸無關的純量
+            // clamp（B-4：只改 JSDoc 參數名，不改實作），(left,W,winW) 傳法完全正確。
             const startLeft = clampMaskWinLeft(
                 (this._maskFocalX !== null && this._maskFocalX !== undefined)
                     ? this._maskFocalX * W - winW / 2
@@ -919,8 +1102,9 @@ export function stateLightbox() {
                 const dx = e.clientX - startClientX;
                 const left = clampMaskWinLeft(startLeft + dx, W, winW);   // clamp 進封面邊界
                 this._maskFocalX = (left + winW / 2) / W;
-                // 99a-T5：恆 object（同 _computeMaskWinStyle，見 _maskWinStyle 宣告處註解）。
-                this._maskWinStyle = { width: `${winW}px`, height: `${H}px`, transform: `translateX(${left}px)` };
+                // 99a-T5：恆 object——委派 computeMaskWinGeometry（同 _computeMaskWinStyle 的
+                // writer 來源，見 _maskWinStyle 宣告處註解與 shared/mask-geometry.js 開頭說明）。
+                this._maskWinStyle = computeMaskWinGeometry(W, H, r, this._maskFocalX);
             };
             const onUp = () => {
                 if (session === this._maskSession) this._maskDragging = false;
@@ -951,39 +1135,52 @@ export function stateLightbox() {
         // ✓ 確認：存手動焦點 → POST /video/focal，同參考 mutate targetVideo（lightbox + grid 即時對臉）。
         async confirmMask() {
             // _maskFocalX null 只應發生在極短暫態（geometry 尚未解出）；openMask 一旦幾何解出即收斂
-            // 為具體值（correction B），此處 null-guard 純防禦（幾何失敗 / path 遺失等異常態才會觸發）。
-            if (this._maskFocalX === null || this._maskFocalX === undefined || !this.currentLightboxVideo?.path) {
+            // 為具體值（correction B），此處 null-guard 純防禦（幾何失敗 / identity 遺失等異常態才會觸發）。
+            if (this._maskFocalX === null || this._maskFocalX === undefined || !this._maskTarget().identity) {
                 this._maskTeardown();
                 return;
             }
-            // Codex PR#107 第二輪 P2 fail-closed guard：從未拿到 server 端 cover_path
-            // token（openMask 的 /detect-focal 連 JSON body 都沒解析成功，例如純網路層
-            // 失敗）→ 拒絕送出，不可用猜的 cover_path 打穿 compare-and-store 守衛的保護
-            // 意圖（寧可這次存不進、逼使用者重開遮罩，也不可能誤配錯封面）。
-            if (this._maskExpectedCoverPath === null || this._maskExpectedCoverPath === undefined) {
+            // 100b-T2a（§B-1b）：token guard 只在 handles409（video）成立時檢查——女優無 token、
+            // 無 409（v3 契約），不得因缺 token 被 fail-closed 擋下。await 前捕獲：_maskKind 若
+            // 因中途換片被 _resetMask 清空，_maskTarget() 之後會 dispatch 回預設（video）分支，
+            // 捕獲值才能忠實反映「這次送出的到底是哪個 kind 的請求」。
+            const handlesToken = this._maskTarget().handles409;
+            // Codex PR#107 第二輪 P2 fail-closed guard（video-only）：從未拿到 server 端
+            // cover_path token（openMask 的 /detect-focal 連 JSON body 都沒解析成功，例如
+            // 純網路層失敗）→ 拒絕送出，不可用猜的 cover_path 打穿 compare-and-store 守衛的
+            // 保護意圖（寧可這次存不進、逼使用者重開遮罩，也不可能誤配錯封面）。
+            if (handlesToken && (this._maskExpectedCoverPath === null || this._maskExpectedCoverPath === undefined)) {
                 this.showToast(window.t('showcase.lightbox.mask_save_failed'), 'error');
                 this._maskTeardown();
                 return;
             }
             const session = this._maskSession;
-            const targetVideo = this.currentLightboxVideo;
-            const focal = `${this._maskFocalX.toFixed(4)},0.5000`;   // y 恆 0.5（render 只用 X，spec §3.3）
+            const targetObj = this._maskTarget().obj;   // 捕獲：await 期間可能已換片/切走
+            // Codex 本地 review 修正（Fix B）：與 targetObj 同時捕獲 kind——本函式下方所有對
+            // 「這次送出的到底是哪個 kind」的判斷（含下面組 focal 字串、下方 _syncActressesArray
+            // 的 gate）一律讀這個捕獲值，不讀 this._maskKind 即時值。換片路徑
+            // （nextActressLightbox → _setActressLightboxIndex → _resetMask）會把 this._maskKind
+            // 清空，若 await 之後才判斷即時值，使用者在存檔 request resolve 前切走女優就會讓判斷
+            // 誤判成 video 分支、跳過牆格同步。
+            const kind = this._maskKind;
+            // Y 分量恆 0.5000（video 恆右裁 X 定基準，render 只用 X，spec §3.3；actress 恆
+            // 3/4 置中，Y 軸讀寫已移除，見 CD-11）。
+            const focal = `${this._maskFocalX.toFixed(4)},0.5000`;
             try {
-                const resp = await fetch('/api/showcase/video/focal', {
+                const resp = await fetch(this._maskTarget().focalEndpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        path: targetVideo.path,
-                        focal,
-                        // Codex PR#107 第二輪 P2：原樣帶回 openMask 期間 server 給的 cover_path，
-                        // 讓 update_manual_focal 的 compare-and-store 守衛比對「使用者觀察當下」
-                        // 與「存檔當下」的封面是否一致，擋掉 rescan/rescrape 換封面的 race。
-                        expected_cover_path: this._maskExpectedCoverPath,
-                    }),
+                    // Codex PR#107 第二輪 P2：video 分支原樣帶回 openMask 期間 server 給的
+                    // cover_path，讓 update_manual_focal 的 compare-and-store 守衛比對「使用者
+                    // 觀察當下」與「存檔當下」的封面是否一致，擋掉 rescan/rescrape 換封面的
+                    // race；actress 分支只送 {focal}（v3：無 token，_maskTarget().focalBody 內
+                    // 已 dispatch，此處統一呼叫不裸組 body）。
+                    body: JSON.stringify(this._maskTarget().focalBody(focal)),
                 });
                 const data = await resp.json().catch(() => null);
-                if (resp.status === 409) {
+                if (handlesToken && resp.status === 409) {
                     // 封面已變更（compare-and-store 守衛擋下）：與一般失敗分開給更明確的提示。
+                    // actress 無此分支（handlesToken=false，v3 無 409，spec §3.5）。
                     if (session === this._maskSession) {
                         this.showToast(window.t('showcase.lightbox.mask_cover_changed'), 'error');
                     }
@@ -991,8 +1188,35 @@ export function stateLightbox() {
                 }
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 if (!data || !data.success) throw new Error((data && data.error) || 'API failed');
-                targetVideo.auto_focal = data.auto_focal;   // 同參考 → lightbox + grid 立即重算（T2 applyCellFocal $watch 接手）
-                targetVideo.crop_mode = 'manual';
+                // 燈箱主圖：video 走 T2 既有 applyCellFocal $watch 接手；actress 直接寫
+                // targetObj（= 這次送出時捕獲的 currentLightboxActress，await 前已凍結）。
+                targetObj.auto_focal = data.auto_focal;
+                targetObj.crop_mode = 'manual';
+                // 100b-T4（Opus 審核裁決 1，CDP 實測背書）：牆上小格側寫入。
+                // 🔴 上面兩行原本的舊註解主張「actress 分支的 targetObj 與 paginatedActresses[idx]
+                // 恆為同一物件參考、改一邊即改兩邊」——這個前提已被推翻，此處曾經是全函式唯一的
+                // 缺口：`_fetchLiveAliases`（state-actress.js:791-793）
+                // 在 alias fetch resolve 時，若該女優 alias 端點回 200（21 位中 3 位），會執行
+                // `currentLightboxActress = Object.assign({}, currentLightboxActress, {aliases})`
+                // ——把 currentLightboxActress 換成脫鉤副本、不寫回 paginatedActresses。此時只寫
+                // 上面的 targetObj 只改到脫鉤副本，牆上小格永遠停在存檔前的裁法（必須重載才會
+                // 更新，違反 spec §3.4「✓ 存入後焦點立即生效」）。alias 回 404 的 18 位因前提
+                // 僥倖成立而正常 ⇒ 資料相依的間歇失敗，抽測/CDP 抽樣都可能整批放行。詳見
+                // plan-100b.md 的 CD-10 訂正框。
+                // 與 _uploadActressPhoto／_onPickerSelect 對稱：改資料一律 by-name 呼叫
+                // _syncActressesArray；用 targetObj.name（await 前捕獲值）而非
+                // this.currentLightboxActress?.name，防使用者在 await 期間切走女優時寫錯格。
+                // gate 在 kind 為 'actress' 時才做：video 分支 targetObj 是 currentLightboxVideo，
+                // 沒有 paginatedActresses 可查（那是 paginatedVideos），video/actress 是正交的
+                // 兩條資料，不可讓這段在 video 分支被誤觸發。
+                // Codex 本地 review 修正（Fix B）：gate 讀上方捕獲的 kind（await 前凍結值），不讀
+                // this._maskKind 的即時值——切走 → _resetMask 清掉 kind 欄位 → 若讀即時值會誤判
+                // 成 video 分支而跳過本次同步，牆格停在存檔前的裁法。與 _onPickerSelect／
+                // _uploadActressPhoto 一致：改資料（by captured name）無條件做，只有「改當前畫面」
+                // 才需要 gate 在使用者還留在原處。
+                if (kind === 'actress') {
+                    this._syncActressesArray(targetObj.name, { auto_focal: data.auto_focal, crop_mode: 'manual' });
+                }
             } catch (e) {
                 if (session === this._maskSession) {
                     this.showToast(window.t('showcase.lightbox.mask_save_failed'), 'error');   // 沿用既有 key
@@ -1020,6 +1244,19 @@ export function stateLightbox() {
             // （✓/✗ 只在 _maskDetecting===false 才可見/可點），星空動畫應該已由 openMask 的
             // finally 停過；比照上面 _maskRemoveDragListeners 的「再保險一次」寫法補一次 kill。
             this._maskStopWaitAnim();
+            // Codex 本地 review 修正（Fix A）：本函式刻意**不**在此清女優圖已載入旗標。
+            // 該旗標的生命週期屬於「燈箱這張照片」（writer 只有 @load handler +
+            // _refreshActressPhotoLoaded() 的 4 個呼叫點），不屬於「這次遮罩編輯 session」。
+            // confirmMask/cancelMask 收尾走到本函式之後，沒有任何路徑會把它重新判定回真值
+            // ——URL 未變的已載入 img 不會重觸發 @load——在此清掉會讓 showcase.html 的
+            // focal 按鈕 x-show 判斷永久失效（confirm/cancel 各一次即消失），直到關燈箱重開
+            // 或切換女優才恢復。真正該清（且會被重新判定）的收尾路徑是換片/關燈箱的
+            // _resetMask()（下方）——其後必經 _setActressLightboxIndex 呼叫
+            // _refreshActressPhotoLoaded() 重新判定，兩者語意不同，不可為了對稱一併刪除。
+            // 100b-T1（裁決 D-3）：kind 收尾排最後——本函式內以上收尾皆不依賴 _maskTarget()（皆
+            // 直接操作 handler/listener 參考），故順序本身不影響現有行為；仍照裁決排最後，
+            // 避免未來新增依賴 _maskTarget() 的收尾時誤踩「先清 kind 查到錯元素」。
+            this._maskKind = null;
         },
 
         // 換片 / 關燈箱：丟棄未提交態（不 commit，不把前片焦點帶到下一片）。
@@ -1042,6 +1279,11 @@ export function stateLightbox() {
                 window.removeEventListener('resize', this._maskResizeHandler);
                 this._maskResizeHandler = null;
             }
+            // 100c-T2（CD-5）：兩旗標同步清除收斂進 helper，語意不變（換片/關燈箱必須清，
+            // 之後必經 _refreshActressPhotoLoaded() 重新判定）。
+            this._clearActressPhotoState();
+            // 100b-T1（裁決 D-3）：kind 收尾排最後，理由同 _maskTeardown。
+            this._maskKind = null;
         },
 
         // 99a-T5：星空等待動畫對稱停止 helper——openMask finally（正常結束，session-gated）、
@@ -1064,25 +1306,30 @@ export function stateLightbox() {
         // 保留前值（見 openMask 內 _maskResizeHandler 定義）。
         // 亮窗以外由 CSS box-shadow spotlight 壓暗；transform 變化時 CSS transition 左右滑動（拖曳中停用，見 showcase.css）。
         // 98b-T6：純 compute（原 _maskWindowStyle 邏輯不變），由 openMask/drag/resize imperative 呼叫。
+        // 100b-T2a（§B-3）：el 改走 _maskTarget().imgEl（G3 null-safe，dispatch 兩分支）；
+        // 窗幾何建構（winW/winH）委派 computeMaskWinGeometry（shared/mask-geometry.js，
+        // 可測試性 + G1 收斂單一 writer 來源，見該檔開頭說明）——ratio 讀取仍留在本函式體內
+        // （裁決3，見下）。
         _computeMaskWinStyle() {
-            const el = this.$refs.lightboxCoverFull;
+            const el = this._maskTarget().imgEl;
             // C17/#10：圖 render 前 rect=0 → 不畫（naturalWidth 未就緒）
             if (!el || !el.naturalWidth) return null;
             const rect = el.getBoundingClientRect();
             const W = rect.width;
             const H = rect.height;
             if (!W || !H) return null;
-            const r = parseFloat(getComputedStyle(el).getPropertyValue('--poster-crop-ratio'));
+            // 100b-T2a（裁決3）：兩個字面 CSS var 名保留在本函式體內、不委派 _maskTarget().ratio——
+            // static_guard_lint.mjs 有 4 條 scope-anchor 規則錨定本函式本體（getComputedStyle
+            // required／--poster-crop-ratio required／兩條硬編比例常數 forbidden）。改成
+            // getComputedStyle(el).getPropertyValue(this._maskTarget().ratio) 會讓
+            // --poster-crop-ratio 字面字串離開此函式 scope，required 規則靜默 RED（T5-② 才是
+            // 調整這 4 條 scope rule 的正式責任 task，T2 不搶做）。三元式是刻意重複，不可「清理」
+            // 成委派寫法。
+            const r = parseFloat(getComputedStyle(el).getPropertyValue(
+                this._maskKind === 'actress' ? '--actress-crop-ratio' : '--poster-crop-ratio'
+            ));
             if (!Number.isFinite(r) || r <= 0) return null;
-            const winW = Math.min(W, H * r);
-            let left;
-            if (this._maskFocalX !== null && this._maskFocalX !== undefined) {
-                left = this._maskFocalX * W - winW / 2;   // 窗中心對焦點，raw x，不套 deadzone（編輯顯示真實落點）
-            } else {
-                left = W - winW;                          // 無焦點（尚未偵測完成/偵測不到臉）→ 右裁基準（D2）
-            }
-            left = clampMaskWinLeft(left, W, winW);           // clamp 進 [0, W-winW]
-            return { width: `${winW}px`, height: `${H}px`, transform: `translateX(${left}px)` };
+            return computeMaskWinGeometry(W, H, r, this._maskFocalX);
         },
 
         // ==================== User Tags in Lightbox (T4) ====================
@@ -1267,6 +1514,18 @@ export function stateLightbox() {
         async openActressPicker() {
             const name = this.currentLightboxActress?.name;
             if (!name) return;
+
+            // 100b Codex P2-3 fix：_pickerSelected===true 代表換候選／上傳照片正在等 fetch
+            // resolve（CD-8 承重前提：_pickerOpen 全程恆 true，見 _uploadActressPhoto #4 註解）。
+            // 此時真正可達的入口是 .picker-refresh-btn（showcase.html :picker-refresh-btn，
+            // 原本只用 :disabled="_pickerLoading" 擋，未含 _pickerSelected——burst 完成後
+            // loading=false 但 selected=true 的視窗內仍可點；CDP 實測 2026-07-16 重現：點擊後
+            // _resetPicker() 把正在等待中的 fetch 變孤兒 callback，與新一輪 SSE 競爭改寫
+            // _pickerOpen/_candidates，原 fetch resolve 時的 _closePicker() 會把使用者剛開的
+            // 新 picker session 一併關掉）。guard 放在此處（函式唯一入口）覆蓋兩個既有
+            // callsite，沿用既有互斥鎖慣例（_onPickerHoverIn／_onPickerHoverOut／
+            // _onPickerSelect 皆同款 early-return，裁決 5）。
+            if (this._pickerSelected) return;
 
             // Tear down any in-flight SSE before starting a new one
             if (this._pickerSSE) { this._pickerSSE.close(); this._pickerSSE = null; }
@@ -1456,6 +1715,19 @@ export function stateLightbox() {
                     this.currentLightboxActress.photo_source = data.photo_source;
                 }
 
+                // 100b-T2b（§B-2b 第四呼叫點，Opus 2026-07-16 裁決）：換候選成功換 URL 後
+                // 亦須刷新 _actressPhotoLoaded——photo_url 一變就要重新等載入，與上傳同形
+                // （同一個 lifecycle 契約的另一個入口）。
+                // 🔴 gate：本行受上方 :1673-1677 的 stale early-return 保護（「已切走 → 同步完
+                // 資料就 return」），與 _uploadActressPhoto 的 #6 下半是同一個機制——1670 的
+                // await 之後到此處無任何 await，故執行到這裡即保證「仍是同一位女優」。依
+                // §B-1f #6 判別法：本函式碰的是當前畫面（$refs.pickerCoverImg），屬「改當前
+                // 畫面 ⇒ 要 gate」，不可挪到 early-return 之上變成無條件執行。
+                // 位置在兩條成功子路徑（reduce-motion 直接關 / 完整動畫）之前，兩者共用；
+                // 此刻 photo_url 已 mutate 完 → Alpine 已排程 :src patch → helper 內的
+                // $nextTick 讀到的是新 URL（不依賴下方 imperative 的 coverImg.src 賦值）。
+                this._refreshActressPhotoLoaded();
+
                 // Reduced-motion 或 BurstPicker 未載入 → 直接更新 src + 關閉
                 if (reduceMotion || typeof window.BurstPicker === 'undefined') {
                     if (coverImg && data.photo_url) {
@@ -1495,14 +1767,126 @@ export function stateLightbox() {
         },
 
         /**
-         * Helper: 換照片成功後同步 _actresses 陣列對應 entry
+         * Helper: by-name 同步 `paginatedActresses[idx]`（100b-T4 擴四欄）。
+         * ⚠️ docstring 更正（CD-10）：舊版寫「同步 `_actresses` 陣列」是錯的——`_actresses`/
+         * `_filteredActresses` 是 `state-base.js:24-25` 的 module-level 純陣列、非 Alpine
+         * reactive prop，寫它們不會觸發任何重算（絕不可去「同步」那兩個）。本函式改的一律是
+         * `this.paginatedActresses[idx]`（reactive）。
+         * 四欄邏輯已抽至 `shared/actress-sync.js`（node:test 可測，見 __tests__/
+         * sync-actress-fields.test.mjs；本檔用 `@/showcase/...` importmap alias，plain Node
+         * 無法直接 import，同 mask-geometry.js 先例）。呼叫契約不變：三個呼叫點
+         * （confirmMask／_uploadActressPhoto／_onPickerSelect）皆 by-name 傳入部分欄位。
          */
         _syncActressesArray(name, data) {
-            if (!data || !data.photo_url) return;
-            const idx = this.paginatedActresses.findIndex(a => a.name === name);
-            if (idx >= 0) {
-                this.paginatedActresses[idx].photo_url = data.photo_url;
-                this.paginatedActresses[idx].photo_source = data.photo_source;
+            syncActressFields(this.paginatedActresses, name, data);
+        },
+
+        /**
+         * 100b-T2b（§B-1f，spec §2 故事 1／§3.1）：上傳女優自己的照片，直接變主圖
+         * （唯一入口，全程不跑偵測——spec §3.7-7「零偵測成本」by-construction：本函式
+         * 不呼叫任何 detect-focal 端點；全程不碰 `_candidates`，故上傳的圖不進候選列，
+         * spec §3.7-1 同樣 by-construction）。
+         *
+         * 互斥鎖沿用既有 `_pickerSelected`（CD-8，不發明新機制）——:disabled 綁定／
+         * G2 boolean coercion 是 T4 的 DoD（picker 內兩入口互斥 UI 側），本函式只需
+         * 正確接上同一個 flag。
+         *
+         * 六個必踩點（§B-1f）：
+         * #1 evt.target.value = '' 排在 await 之前——同一檔案連選兩次 change 不會
+         *    再觸發，await 後 evt.target 可能已被拆掉。
+         * #2 fetch 帶 FormData 絕不手動設 Content-Type（會蓋掉 boundary → 後端一律 415）。
+         * #3 失敗時 picker 不關、只解鎖——🔴 刻意與既有候選換圖的 catch（_onPickerSelect）
+         *    分歧（後者呼叫 _closePicker()），spec §3.1+§C 明訂失敗要留在 picker 顯示 toast。
+         * #4 成功才關 picker，且關在 _syncActressesArray 之後（CD-8 承重前提：_pickerOpen
+         *    在 resolve 前恆 true，本函式不主動關，_cancelPicker() 既有 guard 已擋住
+         *    Esc／outside-click）。
+         * #5 capturedName 在 await 前凍結（比照全檔既有 captured* 慣例）。
+         * #6 stale-success 兩層拆：_syncActressesArray（改資料）無條件執行（by captured
+         *    name，與當前 lightbox 是誰無關）；currentLightboxActress 兩欄顯式同步／
+         *    _refreshActressPhotoLoaded／關 picker／成功 toast（改當前畫面）僅在仍是同一位
+         *    女優時執行。
+         *    ⚠️ 「currentLightboxActress 顯式同步是冗餘」的舊說法已作廢（CD-10 前提被
+         *    _fetchLiveAliases 的 Object.assign 打破，CDP 實測證實）——理由見函式內註解。
+         */
+        async _uploadActressPhoto(evt) {
+            const file = evt.target.files?.[0];
+            if (!file) return;             // 使用者取消 → 什麼都不做
+            evt.target.value = '';         // #1：必須在 await 之前，見上方註解
+
+            if (this._pickerSelected) return;
+            this._pickerSelected = true;
+
+            const capturedName = this.currentLightboxActress?.name;   // #5：identity 凍結
+            if (!capturedName) {
+                this._pickerSelected = false;
+                return;
+            }
+
+            const fd = new FormData();
+            fd.append('file', file);
+
+            try {
+                const resp = await fetch(`/api/actresses/${encodeURIComponent(capturedName)}/photo/upload`, {
+                    method: 'POST',
+                    body: fd,   // #2：不可自設 Content-Type，見上方註解
+                });
+
+                if (!resp.ok) {
+                    // CD-9：依 HTTP status 分流，不依 body code（無 409）。413/415 共用桶
+                    // 見 HANDOFF status 分流表，其餘（400/404/500）統一走 upload_failed。
+                    let key = 'showcase.actress.picker.upload_failed';
+                    if (resp.status === 413) key = 'showcase.actress.picker.upload_too_large';
+                    else if (resp.status === 415) key = 'showcase.actress.picker.upload_bad_format';
+                    this.showToast(window.t(key), 'error');
+                    this._pickerSelected = false;   // #3：失敗時只解鎖，不關 picker
+                    return;
+                }
+
+                const data = await resp.json();
+
+                // #6 上半：改資料，無條件執行（by-name 定位，與當前 lightbox 是誰無關）
+                this._syncActressesArray(capturedName, data);
+
+                if (!this.currentLightboxActress || this.currentLightboxActress.name !== capturedName) {
+                    // 已切走：牆上已同步完畢，不碰當前這位（B），僅解鎖
+                    this._pickerSelected = false;
+                    return;
+                }
+
+                // #6 下半：改當前畫面，僅在仍是同一位女優時執行（gate ＝上方 early-return）
+
+                // 🔴 這不是冗餘同步，是承重的——沒有它，燈箱主圖不會換（CDP 2026-07-16 實測）。
+                // Why：`_syncActressesArray` 改的是 `paginatedActresses[idx]`（by-name 定位陣列
+                // 元素）。CD-10 原本主張「它與 currentLightboxActress 是同一個物件、改一邊即改
+                // 兩邊」，但 `_fetchLiveAliases`（state-actress.js:791）在 alias fetch resolve 後
+                // 執行 `currentLightboxActress = Object.assign({}, currentLightboxActress, {aliases})`
+                // ——把 currentLightboxActress 換成**脫鉤的新副本**且不寫回陣列。CDP 實測該同一性
+                // 在開燈箱後 **+17ms** 就翻 false（與 aliases 落地同一幀）⇒ 該前提實務上恆不成立。
+                // 此後 `_syncActressesArray` 只碰得到牆上小格，碰不到燈箱主圖：實測 alias 回 200
+                // 的女優（21 位中 3 位）上傳後「牆上換了、燈箱主圖沒換」＝ DoD ⓪ 失敗；alias 回
+                // 404 的 18 位則因前提僥倖成立而正常 ⇒ **資料相依的間歇失敗**，這正是它躲過所有
+                // 先前驗證的原因。詳見 plan-100b.md 的 CD-10 訂正框。
+                // ⚠️ 只同步這兩欄，非漏改：燈箱大圖（spec §3.4）恆顯示完整原圖、不裁，
+                // currentLightboxActress.auto_focal/.crop_mode 不影響這裡的 render，只有
+                // 牆上小格（paginatedActresses[idx]）的 applyCellFocal 會消費這兩欄——已由
+                // 上方 _syncActressesArray（100b-T4 擴四欄）處理。
+                this.currentLightboxActress.photo_url = data.photo_url;
+                this.currentLightboxActress.photo_source = data.photo_source;
+
+                // 順序＝比照 _onPickerSelect 的既有前例（顯式同步 → 刷新旗標），與鄰居一致。
+                // ⚠️ 這個順序是否「承重」（＝反轉會不會壞）**未經實測，不要據此宣稱因果**：
+                // 直覺說法是「$nextTick 要讀到 Alpine 已 patch 的新 :src」，但兩行之間無 await、
+                // 同屬一個同步區塊，Alpine 3.15.12 的 microtask 批次 flush 下**可能等價**。
+                // 而「讀源碼推論 flush 時機」在本 branch 已被實證打臉過一次——CDP 實測發現
+                // x-show(display) 走 rAF flush、:style 走 microtask flush，**兩者並不同步**
+                // （gotchas-frontend §8d）⇒ Alpine 的 flush 時機不是統一的，源碼推論不可靠。
+                // 要動這個順序 → 先用 CDP 實測，別靠推理。
+                this._refreshActressPhotoLoaded();   // §B-2b 第三呼叫點
+                this._closePicker();                 // #4：成功才關，且排在同步之後
+                this.showToast(window.t('showcase.actress.picker.replaced'), 'success');
+            } catch (e) {
+                this._pickerSelected = false;
+                this.showToast(window.t('showcase.actress.picker.upload_failed'), 'error');
             }
         },
 

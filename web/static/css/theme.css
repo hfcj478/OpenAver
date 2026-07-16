@@ -559,6 +559,14 @@ body {
  */
 :root {
     --poster-crop-ratio: 0.71;
+    /* 女優 3/4 置中窗比例的【單一真理】（100b CD-3，v0.12.2 微調點，改這一行即可）。
+     * 與上方 --poster-crop-ratio(0.71) 各自獨立：0.71 是 JAV 橫式封面右裁的影片比例、
+     * 0.75 是女優直式照片 3/4 置中窗的比例（spec-100 §3.4）——**絕不可互相代入**。
+     * 消費端：state-lightbox.js `_computeMaskWinStyle()` 依 _maskKind 三元讀取（該函式
+     * 內兩個字面 var 名受 static_guard_lint.mjs scope-anchor 規則要求，不可委派 helper）。
+     * 🔴 後端對齊：web/routers/actress.py `_FOCAL_DETECT_RATIO = 0.75` 是同一個數字的另一份
+     * 真理（偵測時的軸向選擇），兩邊無任何機制強制同步——改此值務必同時檢查該常數。 */
+    --actress-crop-ratio: 0.75;
     /* grid 封面 action 圓鈕尺寸【單一真理】（US-8 / CD-7）：桌面 48px，
      * ≤480px 於下方 @media 一處 override 即驅動三 grid（showcase 影片/女優、search）統一縮小。 */
     --grid-action-btn-size: 48px;

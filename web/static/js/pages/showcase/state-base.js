@@ -293,6 +293,13 @@ export function stateBase() {
             // 98b-T4：換片 reset 遮罩（結構性涵蓋四條換片路徑——皆最終改 currentLightboxVideo）。
             // A 片開遮罩翻 auto → 不關直接換 B → 舊片未提交態不落 B 的 DB（_maskSession guard + 此 reset）。
             this.$watch('currentLightboxVideo?.path', () => { if (this._maskVisible) this._resetMask(); })
+            // 100b-T2a（§B-1c 姊妹 watcher）：actress→actress 切換用（x-if 不重新掛載，watcher
+            // 夠用）。video→actress／actress→video 的掛載瞬間已由 _setActressLightboxIndex()／
+            // prevLightboxVideo()／nextLightboxVideo() 內的同步 _resetMask() 擋住（gotchas-frontend
+            // §8b：watcher 是非同步 effect flush，對掛載那一幀擋不住），本 watcher 是 actress→actress
+            // 場景的主力 + 其餘場景的 defense-in-depth。既有 gate 寫法照抄，不「修正」
+            // （state-lightbox.js:1027-1029 一類註解落差屬影片路徑既有碼，範圍外）。
+            this.$watch('currentLightboxActress?.name', () => { if (this._maskVisible) this._resetMask(); })
         },
 
         clearSearch() {

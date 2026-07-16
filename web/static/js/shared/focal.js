@@ -98,18 +98,18 @@ export function focalObjectPosition(video) {
 }
 
 /**
- * 小格 cover-fit object-position（aspect-aware，99a-T2 §1）。與 focalObjectPosition 的差異：
- * 多吃 imgAspect / r 兩參數，套公式把「raw focal x（沿整張原圖寬度的比例）」換算成「CSS
- * object-position 百分比（沿 cover-fit 溢出區間的比例）」，讓小格顯示與遮罩預覽所見即所得。
+ * 小格 cover-fit object-position（aspect-aware，99a-T2 §1；100c-T3b 砍 Y 軸——收斂回單一行為，
+ * 與 fd48295a~1（100b-T3 之前）逐字等價）。與 focalObjectPosition 的差異：多吃 imgAspect / r
+ * 兩參數，套公式把「raw focal 座標（沿整張原圖寬/高的比例）」換算成「CSS object-position
+ * 百分比（沿 cover-fit 溢出區間的比例）」，讓小格顯示與遮罩預覽所見即所得。
  *
- * 公式（a > r 且未被 gate 擋下時）：
- *   v = r / a（cover-fit 下可見寬度佔原圖寬度比例）
- *   objPos = clamp((x − v/2) / (1 − v), 0, 1)
+ * imgAspect > r（寬圖，水平溢出）→ 只調 X：v = r/a，輸出 "N% center"；
+ * 否則（imgAspect <= r，含相等）→ null（cover-fit 下小格不需裁切，或反向公式除以零，不吃 Y 軸）。
  *
  * @param {{crop_mode: string, auto_focal: string}|null|undefined} video
  * @param {number} imgAspect naturalWidth/naturalHeight（呼叫端算好傳入，本函式不碰 DOM）
- * @param {number} r --poster-crop-ratio（呼叫端讀好傳入，不裸寫 0.71）
- * @returns {string|null} 如 "11.79% center"；crop_mode gate / parse 失敗 / a≤r / (auto) deadzone 內 → null
+ * @param {number} r --poster-crop-ratio / --actress-crop-ratio（呼叫端讀好傳入，不裸寫字面值）
+ * @returns {string|null} 如 "11.79% center"；crop_mode gate / parse 失敗 / a<=r / deadzone 內 → null
  */
 export function focalCellObjectPosition(video, imgAspect, r) {
   if (!video || (video.crop_mode !== 'auto' && video.crop_mode !== 'manual')) {
@@ -122,10 +122,15 @@ export function focalCellObjectPosition(video, imgAspect, r) {
   if (video.crop_mode === 'auto' && p.x >= FOCAL_X_DEADZONE) {
     return null;
   }
-  // a ≤ r（含相等）→ null：cover-fit 下小格不需裁切（或反向公式無意義），避免除以零/負值（Codex P2）。
-  if (!(Number.isFinite(imgAspect) && Number.isFinite(r) && imgAspect > r)) {
+  if (!(Number.isFinite(imgAspect) && Number.isFinite(r) && r > 0)) {
     return null;
   }
+  if (imgAspect <= r) {
+    // a <= r（含相等）：cover-fit 下小格不需裁切，或反向公式在此退化/除以零
+    // （Codex 當初補的除零防護，不是垃圾值；與 fd48295a~1 逐字等價）。
+    return null;
+  }
+  // 寬圖：水平溢出，只調 X（既有公式，數值零回歸）。
   const v = r / imgAspect;
   const raw = (p.x - v / 2) / (1 - v);
   const clamped = Math.max(0, Math.min(1, raw));

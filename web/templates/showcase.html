@@ -511,7 +511,16 @@
                         <!-- Photo -->
                         <div class="actress-card-photo">
                             <template x-if="actress.photo_url">
-                                <img :src="actress.photo_url" :alt="actress.name" loading="lazy">
+                                <!-- 100b-T4（§A／CD-6）：比照 video 牆格三件套（:330-333），ratioVar
+                                     傳 '--actress-crop-ratio'（CD-3）。x-if 只在 photo_url 從無到有時
+                                     掛載一次（女優已有照片、換照片/焦點的常態路徑不重新掛載）——
+                                     @load 蓋首次掛載，$watch 蓋之後所有欄位變動（applyCellFocal.js
+                                     開頭註解：node:test 測不到「resolve 後寫哪個變數」，這裡靠
+                                     paginatedActresses[idx] 本身是 reactive 物件，$watch 才追蹤得到）。 -->
+                                <img :src="actress.photo_url" :alt="actress.name" loading="lazy"
+                                     @load="applyCellFocal($el, actress, '--actress-crop-ratio')"
+                                     x-init="$watch('actress.auto_focal', () => applyCellFocal($el, actress, '--actress-crop-ratio'));
+                                             $watch('actress.crop_mode', () => applyCellFocal($el, actress, '--actress-crop-ratio'))">
                             </template>
                             <template x-if="!actress.photo_url">
                                 <div class="actress-no-photo">
@@ -576,18 +585,62 @@
                     <div style="display:contents">
                         <!-- Actress Cover -->
                         <div class="lightbox-cover">
-                            <img x-ref="pickerCoverImg"
-                                 x-show="currentLightboxActress?.photo_url"
-                                 :src="currentLightboxActress?.photo_url"
-                                 :alt="currentLightboxActress?.name">
-                            <div class="actress-lb-cover-placeholder"
-                                 x-show="!currentLightboxActress?.photo_url">
-                                <i class="bi bi-person-circle" style="font-size:4rem; opacity:0.3"></i>
+                            <!-- 100b-T2b（§B-2b lifecycle 契約的另一半，見下）：@load 是
+                                 _actressPhotoLoaded 在「圖未快取」路徑上的唯一 writer，鏡射
+                                 video 側 lightboxCoverFull 的 @load="_lbFullLoaded=true"（:733）。
+                                 🔴 兩個 writer 各司其職、缺一即靜默死掉：
+                                   • $nextTick complete-check（_refreshActressPhotoLoaded）→ 已快取路徑
+                                     （@load 對快取圖不觸發）＝開燈箱／切換女優的常態；
+                                   • @load（本行）→ 未快取路徑＝上傳／換候選成功後的新 cache-bust
+                                     URL（?v={mtime_ns}-{size}，必然 cache miss），此時 $nextTick
+                                     讀到 complete=false，只有 @load 能把旗標翻回 true。
+                                 缺本行 ⇒ 上傳/換候選成功後 focal 按鈕（x-show 綁 _actressPhotoLoaded）
+                                 永久消失到使用者切走再切回為止。同型前例見 :1476 註解
+                                 「讓 cover_full_url（已 bust）重新觸發 @load」。 -->
+                            <!-- 100b Codex P2-2 fix：新增 frame wrapper——.lightbox-cover 對女優分支
+                                 恆有 min-width:min(60vw,600px) 的固定地板（不像 video 分支的
+                                 .has-cover 讓 cover AR 貼合圖片 AR），img 本身用 height:60vh;
+                                 width:auto 置中，寬圖以外（近方形/窄圖）render 後比 cover 窄，
+                                 兩側留白 gutter。舊版遮罩 overlay 直接 include 在 .lightbox-cover
+                                 內、inset:0 貼齊「cover 的」矩形——W/H 卻是用「圖片」的
+                                 getBoundingClientRect() 算（_computeMaskWinStyle），兩套座標系不
+                                 一致：CDP 實測（2026-07-16）佐々木さき（a=1.0 方形）gutter 各
+                                 86px，亮窗中心偏移量與 gutter 完全相等，亮窗近半跑進留白、與圖片
+                                 內容完全不對齊。
+                                 本 wrapper 只包 img/placeholder/遮罩三者（.cover-actions 不動——
+                                 按鈕位置沿用舊版、相對整個 cover 置中，非本次範圍），position:relative
+                                 且不設寬高，作為 flex item 隨內容 shrink-to-fit——img 是裡面唯一
+                                 貢獻版面尺寸的內容，wrapper 版面尺寸=img 實際 render 尺寸（無 x-if/
+                                 x-show 切換問題：img/placeholder 互斥顯示，wrapper 隨當前顯示者定
+                                 尺寸）。遮罩 overlay 的 inset:0 從此貼齊 wrapper＝貼齊圖片本身，
+                                 座標系統一，不動 JS 幾何（_computeMaskWinStyle／
+                                 computeMaskWinGeometry／transform 數學不變，G1 不變量不受影響）；
+                                 video 分支（.has-cover 貼合 AR、無 gutter）完全未觸碰，零回歸。 -->
+                            <div class="actress-lb-photo-frame">
+                                <img x-ref="pickerCoverImg"
+                                     x-show="currentLightboxActress?.photo_url"
+                                     :src="currentLightboxActress?.photo_url"
+                                     @load="_readyActressPhotoState($el)"
+                                     :alt="currentLightboxActress?.name">
+                                <div class="actress-lb-cover-placeholder"
+                                     x-show="!currentLightboxActress?.photo_url">
+                                    <i class="bi bi-person-circle" style="font-size:4rem; opacity:0.3"></i>
+                                </div>
+
+                                <!-- 100b-T2a（§B-1a/§B-1c）：遮罩 DOM 第二次 include（女優分支）。
+                                     T1 曾試著先做這個 include、被 CDP 實測推翻（2026-07-16，2/2 重現閃現）；
+                                     T2a 已同批補上「賦值前同步 _resetMask()」（見 state-actress.js
+                                     _setActressLightboxIndex()／state-lightbox.js prevLightboxVideo()／
+                                     nextLightboxVideo() 三處，gotchas-frontend §8b），兩者必須同批落地
+                                     才安全，故此刻才 include。 -->
+                                {% include '_macros/focal_mask.html' %}
                             </div>
+
                             <div class="cover-actions"
-                                 :data-picker-open="_pickerOpen">
+                                 :data-picker-open="_pickerOpen"
+                                 :class="{'cover-actions--focal-edit': _maskVisible}">
                                 <button class="lb-action-btn"
-                                        x-show="actressLightboxSource === 'grid'"
+                                        x-show="actressLightboxSource === 'grid' && !_maskVisible"
                                         @click.stop="searchActressFilms(currentLightboxActress?.name, $el)"
                                         :disabled="_ghostFlyInFlight"
                                         :class="{ 'opacity-50 cursor-not-allowed': _ghostFlyInFlight }"
@@ -596,7 +649,7 @@
                                     <i class="bi bi-camera-reels"></i>
                                 </button>
                                 <button class="lb-action-btn lb-action-btn--danger"
-                                        x-show="showFavoriteActresses"
+                                        x-show="showFavoriteActresses && !_maskVisible"
                                         @click.stop="openRemoveActressModal()"
                                         :data-tooltip="t('showcase.actress.remove')"
                                         :aria-label="t('showcase.actress.remove')">
@@ -604,11 +657,27 @@
                                 </button>
                                 <!-- 換照片按鈕（49b T4cd）-->
                                 <button class="lb-action-btn"
-                                        x-show="currentLightboxActress?.is_favorite"
+                                        x-show="currentLightboxActress?.is_favorite && !_maskVisible"
                                         @click.stop="openActressPicker()"
                                         :data-tooltip="t('showcase.actress.change_photo')"
                                         :aria-label="t('showcase.actress.change_photo')">
                                     <i class="bi bi-arrow-clockwise" :class="{ spin: _pickerLoading }"></i>
+                                </button>
+                                <!-- 100b-T2a：✓/✗ 鏡射影片版（:754-767），複用既有 5 個
+                                     showcase.lightbox.mask_* i18n key（裁決4，不新增 key）。 -->
+                                <button class="lb-action-btn lb-action-btn--success"
+                                        x-show="_maskVisible && !_maskDetecting"
+                                        @click.stop="confirmMask()"
+                                        :data-tooltip="t('showcase.lightbox.mask_confirm')"
+                                        :aria-label="t('showcase.lightbox.mask_confirm')">
+                                    <i class="bi bi-check-lg"></i>
+                                </button>
+                                <button class="lb-action-btn lb-action-btn--danger"
+                                        x-show="_maskVisible && !_maskDetecting"
+                                        @click.stop="cancelMask()"
+                                        :data-tooltip="t('showcase.lightbox.mask_cancel')"
+                                        :aria-label="t('showcase.lightbox.mask_cancel')">
+                                    <i class="bi bi-x-lg"></i>
                                 </button>
                             </div>
                         </div>
@@ -621,6 +690,30 @@
                                 <span class="lb-name-en"
                                       x-show="currentLightboxActress?.name_en"
                                       x-text="currentLightboxActress?.name_en"></span>
+                                <!-- 100c-T2（CD-1/CD-2/CD-3，spec-100c §3.1 推翻 spec-100 §4-5）：
+                                     女優 focal icon 從 .cover-actions 搬進名字行末，鏡射影片版
+                                     .lb-mask-btn 的位置與 class（非再照抄 .lb-action-btn 的封面
+                                     玻璃鈕樣式——那是為疊在封面圖上設計，純文字列裡尺寸/對比
+                                     皆不搭）。五條件：!_maskVisible ＋ photo_url ＋
+                                     _actressPhotoLoaded ＋ _actressPhotoWideEnough（新，CD-7
+                                     20% 可拖幅度門檻）＋ !_pickerOpen（新，CD-1：picker 開啟時
+                                     CSS opacity gate 鎖死在 .cover-actions，搬出後不受影響，
+                                     必須顯式擋）。:title=（非 :data-tooltip=，CD-2 陷阱：
+                                     .lb-action-btn[data-tooltip]::after 只認 .lb-action-btn，
+                                     換 class 不換屬性 tooltip 會靜默消失）。
+                                     🔴 五條件收成 _focalIconVisible() method（不直接寫成 x-show
+                                     的 && 字面鏈）：JS `&&` 短路求值下，一旦前段條件為 false，
+                                     後段條件不會被讀取，Alpine 的 effect 依賴收集因此漏訂閱鏈末
+                                     條件（見該函式定義處說明）。method 內用獨立陳述式無條件讀完
+                                     全部 5 個旗標再組合，保證每次求值都完整訂閱依賴——與影片版
+                                     一樣用 x-show，只是把「讀取」與「短路組合」拆開兩步。 -->
+                                <button class="lb-mask-btn"
+                                        x-show="_focalIconVisible()"
+                                        @click="openMask()"
+                                        :title="t('showcase.lightbox.mask_toggle')"
+                                        :aria-label="t('showcase.lightbox.mask_toggle')">
+                                    <i class="bi bi-person-bounding-box"></i>
+                                </button>
                             </div>
                             <!-- Row 2: Core metadata (age · birth · height · cup · BWH) -->
                             <div class="lb-actress-core"
@@ -698,36 +791,8 @@
                                  alt=""
                                  aria-hidden="true">
 
-                            <!-- 99a-T3：焦點裁切遮罩 overlay（亮窗＝小格保留區；窗外 box-shadow spotlight 壓暗；
-                                 一律 force-detect 預覽，左右拖曳微調，✓/✗ 於 .cover-actions 提交/取消；
-                                 點窗外 = ✗）。 -->
-                            <!-- 98b-T6：移除 x-transition.opacity——實測其 enter transition 會卡在 opacity:0
-                                 (_x_transitioning 永真) 使遮罩雖 display:block 卻全透明看不見。功能性遮罩
-                                 不需淡入，x-show 即時顯示更可靠（亦符 owner 克制取向）。 -->
-                            <div class="lb-mask-overlay"
-                                 x-show="_maskVisible"
-                                 @click.self="cancelMask()">
-                                <!-- 99a-T5：detect-first——窗只在偵測完成（_maskDetecting 翻 false）
-                                     後才第一次渲染，畫出來即終值，無「先貼右裁基準再滑動」過渡態。 -->
-                                <div class="lb-mask-window"
-                                     x-show="_maskVisible && !_maskDetecting"
-                                     :style="_maskWinStyle"
-                                     :class="{'lb-mask-window--dragging': _maskDragging}"
-                                     @pointerdown="_maskDragStart($event)"></div>
-                                <!-- 99a-T5：detect 期間星空等待迴圈（start/stop 可控 repeat:-1，
-                                     非 .sparkle-burst 的 0.4s 一次性）。PRM 時 openMask 不觸發 GSAP，
-                                     本容器留在 DOM 但視覺不出現（CSS 預設 opacity:0）。 -->
-                                <div class="lb-mask-wait-burst" x-show="_maskDetecting" aria-hidden="true">
-                                    <svg class="sparkle-star" data-sparkle-size="md" style="--cx: 30%; --cy: 24%;" viewBox="-12 -12 24 24"><polygon points="0,-10 2,-2 10,0 2,2 0,10 -2,2 -10,0 -2,-2"/></svg>
-                                    <svg class="sparkle-star" data-sparkle-size="sm" style="--cx: 66%; --cy: 30%;" viewBox="-12 -12 24 24"><polygon points="0,-10 2,-2 10,0 2,2 0,10 -2,2 -10,0 -2,-2"/></svg>
-                                    <svg class="sparkle-star" data-sparkle-size="sm" style="--cx: 46%; --cy: 66%;" viewBox="-12 -12 24 24"><polygon points="0,-10 2,-2 10,0 2,2 0,10 -2,2 -10,0 -2,-2"/></svg>
-                                    <svg class="sparkle-star" data-sparkle-size="md" style="--cx: 76%; --cy: 70%;" viewBox="-12 -12 24 24"><polygon points="0,-10 2,-2 10,0 2,2 0,10 -2,2 -10,0 -2,-2"/></svg>
-                                    <svg class="sparkle-star" data-sparkle-size="sm" style="--cx: 18%; --cy: 58%;" viewBox="-12 -12 24 24"><polygon points="0,-10 2,-2 10,0 2,2 0,10 -2,2 -10,0 -2,-2"/></svg>
-                                </div>
-                                <div class="lb-mask-spinner" x-show="_maskDetecting" aria-hidden="true">
-                                    <i class="bi bi-arrow-clockwise spin"></i>
-                                </div>
-                            </div>
+                            <!-- T1（CD-4/§B-1a）：遮罩 DOM 抽共用 partial，逐字搬移自舊 707-730（含 99a-T3/98b-T6 註解，見 partial 檔案開頭） -->
+                            {% include '_macros/focal_mask.html' %}
 
                             <!-- 56c-T3fix: Sparkle burst overlay（10 顆四角星，ring 分佈在封面區） -->
                             <div class="sparkle-burst"
@@ -953,6 +1018,16 @@
                      x-show="_pickerCurrentSource">
                     <span x-text="t('showcase.actress.picker.current_source').replace('{source}', t('showcase.actress.picker.source_' + _pickerCurrentSource) || _pickerCurrentSource)"></span>
                 </div>
+                <!-- 100b-T4（CD-8／裁決 5）：.picker-candidate-card 是 <div>，HTML `disabled`
+                     只對 form control 生效——掛在 div 上會被瀏覽器靜默忽略（看起來鎖了、其實
+                     沒鎖，不像 G2 的「一開始就死」）。不可比照 .picker-upload-btn 抄 :disabled。
+                     互斥改走 @click guard：_onPickerHoverIn/_onPickerHoverOut/_onPickerSelect
+                     三者開頭皆 `if (this._pickerSelected) return;`（49c-era 既有碼，見各自
+                     函式定義），此為對 <div> 真的有效的機制之一（裁決 5 列出的三選項之一）。
+                     不新增視覺態（opacity/pointer-events class）：資料正確性已由上述 guard
+                     保證，純 UX 錦上添花與 owner「UI 退位、克制材質」的一貫取向不符
+                     （plan-100b.md 技術要點 4b 選項 a）。三處既有 guard 已補 lint 回歸鎖
+                     （static_guard_lint.mjs，防未來重構誤刪）。 -->
                 <div class="picker-candidates-grid" x-ref="pickerGrid">
                     <template x-for="(c, i) in _candidates" :key="i">
                         <div class="picker-candidate-card"
@@ -982,23 +1057,64 @@
                 <button class="picker-refresh-btn"
                         x-show="_pickerBurstFired"
                         @click.stop="openActressPicker()"
-                        :disabled="_pickerLoading"
+                        :disabled="_pickerLoading || !!_pickerSelected"
                         :title="t('showcase.actress.change_photo')"
                         :aria-label="t('showcase.actress.change_photo')">
                     <i class="bi bi-arrow-clockwise" :class="{ spin: _pickerLoading }"></i>
                 </button>
+                <!-- 100b-T2b（spec §3.1／裁決 5）：上傳 icon，⟳ 重新整理旁同排。位置/視覺
+                     逐項比照 .picker-refresh-btn 的 §6 5 檢查點（見 showcase.css）。
+                     100b-T4：:disabled 接上互斥鎖（CD-8／G2）——_pickerSelected 初值雖為
+                     false（非 undefined，state-lightbox.js:133），仍一律 !! 強制 boolean，
+                     防未來初始化方式改動時無感死掉（gotchas-frontend「Alpine boolean-attribute
+                     的 undefined 陷阱」）。 -->
+                <button class="picker-upload-btn"
+                        :disabled="!!_pickerSelected"
+                        @click.stop="$refs.actressPhotoUploadInput.click()"
+                        :title="t('showcase.actress.picker.upload_btn')"
+                        :aria-label="t('showcase.actress.picker.upload_btn')">
+                    <i class="bi bi-upload"></i>
+                </button>
+                <!-- 100b-T2b（裁決 6）：隱藏 file input，用 inline display:none 樣式避開
+                     .hidden 的 specificity 坑（gotchas-frontend「CSS .hidden 陷阱」）。
+                     x-ref 掛在 pickerArea 內、不在任何 <template x-if> 分支中（G3），
+                     $refs.actressPhotoUploadInput 永遠可取。圖片限定 accept 值：後端四格式
+                     （JPEG/PNG/WebP/GIF）皆收，spec §3.7-3。 -->
+                <input type="file"
+                       accept="image/*"
+                       x-ref="actressPhotoUploadInput"
+                       style="display:none"
+                       @change="_uploadActressPhoto($event)">
             </div>
 
             <!-- Navigation Arrows OUTSIDE lightbox-content (44a T4: dispatch based on showFavoriteActresses) -->
+            <!-- 100c PR#108 nit-1：女優分支的 `!_pickerOpen &&` 是 prev/nextActressLightbox
+                 開頭 `if (this._pickerOpen) return;`（P2-A guard）的**視覺對應**——沒有它，
+                 picker 開著時箭頭仍可見卻點了完全沒反應（不換人也不關 picker：nav 的
+                 @click.stop 壓掉 overlay 的 @click.outside，Alpine .outside 是 bubble-phase），
+                 違反 repo「絕不點了沒反應」。使用者仍可用 Esc／點 overlay 外關 picker，不會被困。
+                 運算元順序（`!_pickerOpen` 在左）純粹是對齊 JS guard 的可讀性選擇，**不承重**：
+                 Alpine effect 每次執行都重新收集依賴，短路未讀到的運算元只在已訂閱的左側
+                 運算元翻轉時才可能改變結果 ⇒ 兩種順序都不會產生 stale 畫面（兩向皆已推演）。
+                 ⚠️ 影片分支（hasVisiblePrev/hasVisibleNext）刻意零改動，理由**僅止於**：影片
+                 模式 hero-card 開 picker 後按箭頭走 prev/nextLightboxVideo（無 P2-A guard）＝
+                 真的會換片、不是死點擊，加可見性 guard 反而藏掉一顆能用的箭頭。
+                 🔴 但那條路徑**並非無恙**（PR#108 fresh review 查證、既有問題非本 PR 引入）：
+                 prev/nextLightboxVideo 未呼叫 _closePicker()（只有 closeLightbox() 有，
+                 state-lightbox.js:413-416）⇒ 切走後 overlay 因 x-show 綁 currentLightboxActress
+                 而隱藏，但 _pickerOpen 永遠停在 true ⇒ SSE 未關、手機 swipe 死、對焦鈕永久隱藏、
+                 Esc 被 _cancelPicker 攔截。正解是在 prev/nextLightboxVideo 開頭補
+                 _closePicker()（用排序讓壞狀態不可能，非加旗標），屬**影片路徑改動、需獨立
+                 CDP 驗證**，已列 follow-up，不在本 PR 範圍。 -->
             <button class="lightbox-nav lightbox-nav-prev"
                     @click.stop="showFavoriteActresses ? prevActressLightbox() : prevLightboxVideo()"
-                    x-show="showFavoriteActresses ? actressLightboxIndex > 0 : hasVisiblePrev()"
+                    x-show="showFavoriteActresses ? (!_pickerOpen && actressLightboxIndex > 0) : hasVisiblePrev()"
                     title="{{ t('showcase.lightbox.prev') }}">
                 <i class="bi bi-chevron-left"></i>
             </button>
             <button class="lightbox-nav lightbox-nav-next"
                     @click.stop="showFavoriteActresses ? nextActressLightbox() : nextLightboxVideo()"
-                    x-show="showFavoriteActresses ? actressLightboxIndex < filteredActressCount - 1 : hasVisibleNext()"
+                    x-show="showFavoriteActresses ? (!_pickerOpen && actressLightboxIndex < filteredActressCount - 1) : hasVisibleNext()"
                     title="{{ t('showcase.lightbox.next') }}">
                 <i class="bi bi-chevron-right"></i>
             </button>

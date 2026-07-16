@@ -2,6 +2,8 @@
 Unit tests for core/actress_photo.py
 Tests cover: download, rescrape, exception handling, HTTP errors, delete, special chars
 """
+import os
+
 import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -422,6 +424,39 @@ def test_download_actress_photo_failure_preserves_old(gfriends_dir):
     assert old_file.read_bytes() == b"old_data"
 
 
+def test_download_actress_photo_replace_failure_preserves_old(gfriends_dir):
+    """🔴 Codex P1 回歸鎖：os.replace 失敗時，舊照片必須原封不動。
+
+    上面那條只 mock requests.get 失敗——那發生在刪舊檔**之前**，抓不到本 bug。
+    原本的順序是「下載成功 → 刪舊檔 → os.replace」，若 replace 拋例外，舊檔已經
+    沒了、finally 又清掉 tmp → **新舊照片全部消失**，違反 spec-100 §3.3 失敗矩陣
+    「寫檔失敗仍保留舊圖、最壞只退回置中裁」的硬保證。
+
+    不是理論極端 case：Windows 上防毒即時掃描／檔案總管縮圖快取持有 final_path 的
+    handle，就會讓 os.replace 拋 PermissionError——Windows 桌面版是本專案主力族群。
+    同型 bug 已於 TASK-100a-T2 在 _write_actress_photo 修掉，此處是漏掉的雙胞胎。
+
+    mutation：把刪舊檔迴圈移回 os.replace 之前 → 本測試必紅。
+    """
+    gfriends_dir.mkdir(parents=True, exist_ok=True)
+    old_file = gfriends_dir / "田中美久.jpg"
+    old_file.write_bytes(b"old_data")
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.headers = {"Content-Type": "image/jpeg"}
+    mock_resp.content = b"new_data"
+
+    with patch("core.actress_photo.requests.get", return_value=mock_resp), \
+         patch("core.actress_photo.os.replace", side_effect=PermissionError("被防毒鎖住")):
+        result = download_actress_photo("田中美久", "https://www.graphis.ne.jp/photo.jpg", "graphis")
+
+    assert result is False
+    # 🔴 承重斷言：replace 失敗 → 舊照片還在、bytes 一個位元都沒變
+    assert old_file.exists(), "os.replace 失敗卻把舊照片刪了 —— spec §3.3 失敗矩陣不成立"
+    assert old_file.read_bytes() == b"old_data"
+
+
 def test_download_actress_photo_success_overwrites_old(gfriends_dir):
     """下載成功時舊檔被刪、新檔寫入（副檔名依 Content-Type）"""
     gfriends_dir.mkdir(parents=True, exist_ok=True)
@@ -467,3 +502,59 @@ def test_download_actress_photo_accepts_data_graphis_subdomain(gfriends_dir):
     mock_get.assert_called_once()
 
 
+
+
+# ===================================================================
+# PR#108 Codex 三審 P2：清舊檔失敗留下殘檔時，解析必須挑「剛寫入的新檔」
+# ===================================================================
+
+def test_get_local_photo_path_prefers_newest_when_stale_sibling_survives(gfriends_dir):
+    """兩個 {safe}.* 並存（Windows 鎖檔導致清舊檔 warn-and-continue）時，
+    必須解析到剛寫入的新檔，不可回字母序在前的舊殘檔。
+
+    🔴 為什麼要強制 glob 順序：`Path.glob` 回 scandir 序——NTFS 是名稱序 B-tree
+    （.jpg < .png ⇒ 舊檔必先），ext4 卻是 name-hash 序（約 50/50）。不 patch 就是
+    在 dev/CI(ext4) 擲硬幣，mutation 只有一半機率紅＝假綠。這裡固定成 NTFS 序，
+    讓 mutation 必紅。（patch glob 的先例：test_api_actress.py 同檔既有做法）
+
+    mutation：`get_local_photo_path` 改回 `return matches[0]` → 本條必紅。
+    """
+    gfriends_dir.mkdir(parents=True, exist_ok=True)
+    old = gfriends_dir / "テスト女優C.jpg"
+    old.write_bytes(b"STALE")
+    os.utime(old, (1_000_000, 1_000_000))   # 明確拉老，不靠 wall-clock 粒度
+    new = gfriends_dir / "テスト女優C.png"
+    new.write_bytes(b"FRESH")
+
+    # NTFS 序：舊 .jpg 排第一（matches[0] 就會踩雷）
+    with patch.object(type(gfriends_dir), "glob", lambda self, pat: [old, new]):
+        found = get_local_photo_path("テスト女優C")
+
+    assert found == new, f"應解析到新寫入的 .png，實得 {found}"
+    assert found.read_bytes() == b"FRESH"
+
+
+def test_get_local_photo_path_single_file_unaffected(gfriends_dir):
+    """對照組（regression control，非 mutation 標的）：正常單檔路徑語意不變。
+
+    ⚠️ 誠實揭露：本條在 `return matches[0]` 的 mutation 下**仍會綠**——它不驗
+    fast-path 或 stat 次數，只驗「修正沒有弄壞絕大多數情境」。抓 mutation 的是
+    上一條（prefers_newest）。"""
+    gfriends_dir.mkdir(parents=True, exist_ok=True)
+    only = gfriends_dir / "テスト女優D.jpg"
+    only.write_bytes(b"ONLY")
+
+    assert get_local_photo_path("テスト女優D") == only
+    assert get_local_photo_path("不存在的女優") is None
+
+
+def test_get_local_photo_path_survives_sibling_vanishing_midway(gfriends_dir):
+    """良性 TOCTOU：glob 之後、stat 之前殘檔被清掉 → 不可拋、且不可讓幽靈檔勝出。"""
+    gfriends_dir.mkdir(parents=True, exist_ok=True)
+    ghost = gfriends_dir / "テスト女優E.gif"     # 字母序在前
+    real = gfriends_dir / "テスト女優E.png"
+    real.write_bytes(b"FRESH")
+    # ghost 從未實際建立 ⇒ stat() 拋 FileNotFoundError
+
+    with patch.object(type(gfriends_dir), "glob", lambda self, pat: [ghost, real]):
+        assert get_local_photo_path("テスト女優E") == real

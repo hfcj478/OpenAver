@@ -335,7 +335,12 @@
        cover 填滿僅輕裁上下、無 letterbox），覆蓋 hero 既有 contain（L2342）。
        selector 帶 :is(#id,…) scope → (1,4,0) 勝 theme.css 基準 (1,0,1)；showcase 的 ds-gallery-composition
        在 .showcase-container 祖先 → 用後代 :is(…) .showcase-grid（與 L313 同 pattern）。
-       hero 在女優收藏模式不存在（showFavoriteActresses gate），故只影響 video-mode grid。 */
+       hero 在女優收藏模式不存在（showFavoriteActresses gate），故只影響 video-mode grid。
+       🔴 100b（plan-100b §A ⚠️，theme.css 另有 --actress-crop-ratio: 0.75 供女優收藏牆/燈箱編輯用）：
+       這裡刻意**不**改用 --actress-crop-ratio。此 hero 卡是「video-mode grid 裡精準匹配到的女優卡」，
+       要跟同一列的一般影片卡對齊裁窗、不然這一格會比鄰卡窄/高造成 row 錯位；影片卡用的是
+       --poster-crop-ratio，故 hero 卡也必須用同一個值才能對齊，跟「女優本人是不是 3/4 比例」無關。
+       範圍外、本 plan 不動這行，純補這條註解防下個人以為是漏改。 */
     :is(#ds-gallery-components, .ds-gallery-composition) .showcase-grid .av-card-preview.hero-card .av-card-preview-img {
         aspect-ratio: var(--poster-crop-ratio, 0.71);
         height: auto;
@@ -669,6 +674,16 @@
     /* 無封面時保留 floor — placeholder SVG 不塌陷、cover-actions absolute 仍能撐盒 */
     min-width: min(60vw, 600px);
     min-height: min(58vh, 460px);
+}
+
+/* 100b Codex P2-2 fix：女優分支 img/placeholder/遮罩 frame wrapper——只設 position:relative，
+ * 不設寬高，讓它作為 .lightbox-cover 的 flex item 隨內容 shrink-to-fit（img 是裡面唯一貢獻
+ * 版面尺寸的內容）。目的：讓 .lb-mask-overlay 的 inset:0 貼齊「這個 wrapper」＝貼齊圖片實際
+ * render 矩形，而非貼齊 .lightbox-cover 的固定地板矩形（min-width:600px 在窄/方形照片上會
+ * 產生兩側留白 gutter，見 showcase.html 內 wrapper 開頭大段註解）。無 z-index → 不建立新
+ * stacking context，.lb-mask-overlay／.cover-actions 兩者 z-index 比較不受影響。 */
+.actress-lb-photo-frame {
+    position: relative;
 }
 
 /* 83a-T3-fix P1: metadata 可變高 → modal 整體捲動修正。
@@ -1016,7 +1031,7 @@
     box-shadow: 0 0 0 100vmax var(--lb-mask-scrim);   /* 窗外壓暗 spotlight，隨 transform 一起滑 */
     transition: transform var(--fluent-duration-medium) var(--ease-out);
     touch-action: none;   /* 99a-T3：拖曳時防手機系統手勢（頁面捲動/swipe-to-back/左右換片）搶走 */
-    cursor: grab;
+    cursor: ew-resize;    /* 100c-T3a：Y 軸砍除後（CD-6）唯一可拖方向恆為橫向，游標契約併回基礎規則 */
 }
 
 /* 99a-T3：拖曳中停用 transition——連續 1:1 跟手，套著 transition 會有橡皮筋延遲感，
@@ -2647,6 +2662,13 @@ body.sidebar-collapsed .showcase-footer {
 
 /* ==================== Phase 44a T4: Actress Lightbox ==================== */
 .actress-lightbox-meta .actress-lb-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 100c-T2（CD-3）：focal icon 推到 .actress-lb-header 行末（靠右），比照 .lb-delete-btn 先例
+ * （showcase.css:1586）。女優限定選擇器（非共用 .lightbox-metadata .lb-mask-btn）——影片版
+ * .lb-header 是 justify-content:space-between + .lb-title flex:1，加在共用選擇器上有機會
+ * 改變短標題時的 flex 自由空間分配；女優 .actress-lb-header 無 justify-content，加在此處
+ * 語意單純、零風險，完全不接觸影片版 CSS 規則。30px 圓鈕樣式靠 .lightbox-metadata .lb-mask-btn
+ * 祖先鏈自動命中（:962），本規則只加 margin-left。 */
+.actress-lightbox-meta .lb-mask-btn { margin-left: auto; }
 .actress-lightbox-meta .lb-name-en { font-size: 0.9em; opacity: 0.7; }
 .actress-lightbox-meta .lb-actress-core { font-size: 0.95em; margin: 8px 0; opacity: 0.85; }
 .actress-lightbox-meta .lb-chips-row { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
@@ -2980,6 +3002,61 @@ body.sidebar-collapsed .showcase-footer {
 }
 
 .picker-refresh-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 100b-T2b（spec §3.1／裁決 5，選項 A）：picker-upload-btn——逐項複製 .picker-refresh-btn
+ * 的 §6 5 檢查點（不自創按鈕視覺，owner 取向：UI 退位、拒環境光/玻璃卡/鮮藍 primary/裝飾 noise）。
+ * .picker-refresh-btn 是 position:absolute 單顆定位、非 flex row（見發現 4），故「同排」靠
+ * right 向左偏移一個按鈕寬度+間距達成，不新建 flex 容器（不動既有 .picker-refresh-btn）。
+ * Radius: var(--fluent-radius-md) ✅
+ * Surface: rgba(255,255,255,0.1) 白 tint（同 .picker-refresh-btn）
+ * Stroke: 1px solid rgba(255,255,255,0.2)
+ * Shadow: dual-layer inset + var(--fluent-shadow-2)；hover 升 var(--fluent-shadow-4)
+ * Focus: 2px outline + 4px glow
+ */
+.picker-upload-btn {
+    position: absolute;
+    top: 12px;
+    /* Micro 級間距註記（ui-conventions §4）：52px = .picker-refresh-btn 的 12px right 起點
+       + 32px 按鈕寬 + 8px gap，讓上傳鈕緊貼在其左側同排，非任意值。 */
+    right: 52px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: var(--fluent-radius-md);
+    /* stylelint-disable-next-line declaration-property-value-disallowed-list -- inset highlight composed with Fluent shadow token (default state), 100b-T2b */
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), var(--fluent-shadow-2);
+    cursor: pointer;
+    color: var(--text-inverse);
+    transition: all var(--fluent-duration-fast) var(--fluent-ease-standard);
+}
+
+.picker-upload-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.3);
+    /* stylelint-disable-next-line declaration-property-value-disallowed-list -- inset highlight composed with Fluent shadow token (hover state), 100b-T2b */
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), var(--fluent-shadow-4);
+    transform: translateY(-1px);
+}
+
+.picker-upload-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    /* stylelint-disable-next-line declaration-property-value-disallowed-list -- inset highlight + Fluent shadow + glow ring (focus-visible), 100b-T2b */
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), var(--fluent-shadow-2), 0 0 0 4px var(--glow-primary);
+}
+
+.picker-upload-btn:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.picker-upload-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }

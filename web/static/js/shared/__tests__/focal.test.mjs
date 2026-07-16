@@ -179,14 +179,17 @@ test('focalCellObjectPosition〔auto 套 deadzone〕同一 x=0.70/a/r，crop_mod
   assert.equal(result, null);
 });
 
-test('focalCellObjectPosition〔a<r〕a=0.60 < r=0.71 → null（Codex P2，避免除以零/反向公式）', () => {
-  assert.equal(
-    focalCellObjectPosition({ crop_mode: 'auto', auto_focal: '0.3000,0.5000' }, 0.60, 0.71),
+// ── CD-7〔空操作證明〕女優型資料（manual 模式）在 x 分支不會被 deadzone 攔下 ──
+// 不改 focal.js 的 deadzone 邏輯（:94 維持原樣）——本節只證明現有結構已保證「女優打不到它」。
+
+test('CD-7〔空操作證明 x 分支〕crop_mode=manual, x=0.90（深入 deadzone 範圍）, a>r → 非 null（deadzone 結構上打不到女優）', () => {
+  assert.notEqual(
+    focalCellObjectPosition({ crop_mode: 'manual', auto_focal: '0.9000,0.5000' }, 1.49, 0.71),
     null,
   );
 });
 
-test('focalCellObjectPosition〔a==r〕a=0.71 == r=0.71 → null（<= 非 <，邊界含等號）', () => {
+test('focalCellObjectPosition〔a==r〕a=0.71 == r=0.71 → null（a<=r 恆 null 的子情況，函式須顯式擋下，不可讓反向公式意外算出 NaN%）', () => {
   assert.equal(
     focalCellObjectPosition({ crop_mode: 'auto', auto_focal: '0.3000,0.5000' }, 0.71, 0.71),
     null,
