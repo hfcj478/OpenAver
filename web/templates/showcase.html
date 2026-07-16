@@ -518,9 +518,9 @@
                                      開頭註解：node:test 測不到「resolve 後寫哪個變數」，這裡靠
                                      paginatedActresses[idx] 本身是 reactive 物件，$watch 才追蹤得到）。 -->
                                 <img :src="actress.photo_url" :alt="actress.name" loading="lazy"
-                                     @load="applyCellFocal($el, actress, '--actress-crop-ratio', 'auto')"
-                                     x-init="$watch('actress.auto_focal', () => applyCellFocal($el, actress, '--actress-crop-ratio', 'auto'));
-                                             $watch('actress.crop_mode', () => applyCellFocal($el, actress, '--actress-crop-ratio', 'auto'))">
+                                     @load="applyCellFocal($el, actress, '--actress-crop-ratio')"
+                                     x-init="$watch('actress.auto_focal', () => applyCellFocal($el, actress, '--actress-crop-ratio'));
+                                             $watch('actress.crop_mode', () => applyCellFocal($el, actress, '--actress-crop-ratio'))">
                             </template>
                             <template x-if="!actress.photo_url">
                                 <div class="actress-no-photo">

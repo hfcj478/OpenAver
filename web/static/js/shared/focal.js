@@ -98,38 +98,20 @@ export function focalObjectPosition(video) {
 }
 
 /**
- * 小格 cover-fit object-position（aspect-aware，99a-T2 §1；CD-6 100b-T3 加軸向支援；
- * Codex 本地 review 修正（Fix C）收回為顯式 axisMode 參數）。與 focalObjectPosition 的差異：
- * 多吃 imgAspect / r 兩參數，套公式把「raw focal 座標（沿整張原圖寬/高的比例）」換算成
- * 「CSS object-position 百分比（沿 cover-fit 溢出區間的比例）」，讓小格顯示與遮罩預覽所見即所得。
+ * 小格 cover-fit object-position（aspect-aware，99a-T2 §1；100c-T3b 砍 Y 軸——收斂回單一行為，
+ * 與 fd48295a~1（100b-T3 之前）逐字等價）。與 focalObjectPosition 的差異：多吃 imgAspect / r
+ * 兩參數，套公式把「raw focal 座標（沿整張原圖寬/高的比例）」換算成「CSS object-position
+ * 百分比（沿 cover-fit 溢出區間的比例）」，讓小格顯示與遮罩預覽所見即所得。
  *
- * 軸向由 axisMode 顯式宣告（不再由 imgAspect 與 r 的大小關係自判——Fix C 修正）：
- *   - axisMode === 'x'（預設，video 既有行為，與 fd48295a~1 逐字等價）：
- *       imgAspect > r（寬圖，水平溢出）→ 只調 X：v = r/a，輸出 "N% center"；
- *       否則（含 imgAspect === r、imgAspect < r）→ null（不吃 Y 軸）。
- *   - axisMode === 'auto'（actress）：
- *       imgAspect > r → 同上 X 軸公式；
- *       imgAspect === r（cover-fit 下兩軸皆無裁切餘裕，v 恆為 1、(1-v) 除以零）→ null；
- *       imgAspect < r（窄圖，垂直溢出）→ 只調 Y：v = a/r，輸出 "center N%"。
- *
- * 預設為何是 'x'、不是 'auto'：本函式是 video 與 actress 共用的純函式，無法從
- * imgAspect/r 反推呼叫者是誰（video 的窄圖封面「罕見但非不可能」，見
- * state-lightbox.js:917 既有原則）。讓 video 也走 Y 軸是**行為擴張**，必須是呼叫端的
- * 明確宣告（spec 決策 + 影片路徑 CDP 重驗），不可由共用函式自行「智慧判斷」代為決定
- * ——這是影片零回歸的**結構性**保證，不是「反正兩邊算出來也一樣」的簡化。
- *
- * y 分支 v=a/r 推導（與 x 分支 v=r/a 對稱互換，見 plan-100b §1）：cover-fit 下窗高佔全高比例
- * winH/H；editor 側 winH = min(H, W/r)，a<r 時 W<Hr ⇒ min(H,W/r)=W/r ⇒ winH/H=(W/r)/H=a/r。
+ * imgAspect > r（寬圖，水平溢出）→ 只調 X：v = r/a，輸出 "N% center"；
+ * 否則（imgAspect <= r，含相等）→ null（cover-fit 下小格不需裁切，或反向公式除以零，不吃 Y 軸）。
  *
  * @param {{crop_mode: string, auto_focal: string}|null|undefined} video
  * @param {number} imgAspect naturalWidth/naturalHeight（呼叫端算好傳入，本函式不碰 DOM）
  * @param {number} r --poster-crop-ratio / --actress-crop-ratio（呼叫端讀好傳入，不裸寫字面值）
- * @param {'x'|'auto'} [axisMode='x'] 軸向宣告：'x' 只調 X 軸（video 既有行為，零回歸預設）；
- *   'auto' 依 imgAspect/r 判斷 X 或 Y 軸（actress）。呼叫端必須顯式宣告，不可省略推斷。
- * @returns {string|null} 如 "11.79% center" 或 "center 11.79%"；crop_mode gate / parse 失敗 /
- *   a===r / (axisMode='x' 時 a<r) / (auto) deadzone 內 → null
+ * @returns {string|null} 如 "11.79% center"；crop_mode gate / parse 失敗 / a<=r / deadzone 內 → null
  */
-export function focalCellObjectPosition(video, imgAspect, r, axisMode = 'x') {
+export function focalCellObjectPosition(video, imgAspect, r) {
   if (!video || (video.crop_mode !== 'auto' && video.crop_mode !== 'manual')) {
     return null;
   }
@@ -143,26 +125,14 @@ export function focalCellObjectPosition(video, imgAspect, r, axisMode = 'x') {
   if (!(Number.isFinite(imgAspect) && Number.isFinite(r) && r > 0)) {
     return null;
   }
-  if (imgAspect > r) {
-    // 寬圖：水平溢出，只調 X（兩種 axisMode 皆走此分支，既有公式，數值零回歸）。
-    const v = r / imgAspect;
-    const raw = (p.x - v / 2) / (1 - v);
-    const clamped = Math.max(0, Math.min(1, raw));
-    return `${(clamped * 100).toFixed(2)}% center`;
-  }
-  if (axisMode !== 'auto') {
-    // axisMode==='x'（video 既有行為）：imgAspect <= r 一律 null，不吃 Y 軸
-    // （與 fd48295a~1 逐字等價——Codex 當初補的除零防護，不是垃圾值）。
+  if (imgAspect <= r) {
+    // a <= r（含相等）：cover-fit 下小格不需裁切，或反向公式在此退化/除以零
+    // （Codex 當初補的除零防護，不是垃圾值；與 fd48295a~1 逐字等價）。
     return null;
   }
-  if (imgAspect === r) {
-    // a===r：cover-fit 下兩軸皆無裁切餘裕（v 恆為 1，兩分支 (1-v) 皆為 0，除以零）。
-    // 對應 editor 側 CD-2 的凍結模式（dragExtentX==dragExtentY==0）——render 側無需套用任何修正。
-    return null;
-  }
-  // 窄圖：垂直溢出，只調 Y（axisMode==='auto' 專屬；v 對稱推導見上方 docstring）。
-  const v = imgAspect / r;
-  const raw = (p.y - v / 2) / (1 - v);
+  // 寬圖：水平溢出，只調 X（既有公式，數值零回歸）。
+  const v = r / imgAspect;
+  const raw = (p.x - v / 2) / (1 - v);
   const clamped = Math.max(0, Math.min(1, raw));
-  return `center ${(clamped * 100).toFixed(2)}%`;
+  return `${(clamped * 100).toFixed(2)}% center`;
 }

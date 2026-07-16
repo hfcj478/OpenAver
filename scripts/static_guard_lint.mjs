@@ -577,13 +577,13 @@ const RULES = [
   // 傳 --actress-crop-ratio（CD-3）。count:3 涵蓋 @load 呼叫本身 + 兩個 $watch callback 內
   // 各自呼叫一次，缺一即代表接線不全（例如漏改成不帶 ratioVar 的 2-arg 呼叫，會誤用
   // 預設 --poster-crop-ratio）。
-  // Codex 本地 review 修正（Fix C）：pattern 錨完整引數列（含結尾 'auto')）,比照 :2997-3003
-  // 「錨完整 @load 值」慣例——只認到 '--actress-crop-ratio' 這一段會被舊 3-arg 呼叫（缺
-  // axisMode，退回吃預設 'x'，女優小格會靜默丟失 Y 軸修正）假綠放行，證不出第 4 引數還在。
+  // 100c-T3b：砍 axisMode 後三處呼叫收斂為 3-arg，pattern 錨完整引數列（比照 :2997-3003
+  // 「錨完整 @load 值」慣例）——只認到 '--actress-crop-ratio' 這一段會被誤刪掉 ratioVar 的
+  // 2-arg 呼叫（退回吃預設 --poster-crop-ratio，女優小格誤用影片比例）假綠放行。
   {
     file: 'web/templates/showcase.html', kind: 'required-string', count: 3,
-    pattern: "applyCellFocal($el, actress, '--actress-crop-ratio', 'auto')",
-    note: '[TestMaskToggleGuard] 100b-T4／Fix C：女優牆格 @load + 兩條 $watch 三件套皆傳 --actress-crop-ratio + axisMode=auto（CD-3／CD-6，比照 video 三件套；錨完整引數列防第 4 引數被砍掉假綠）',
+    pattern: "applyCellFocal($el, actress, '--actress-crop-ratio')",
+    note: '[TestMaskToggleGuard] 100c-T3b：女優牆格 @load + 兩條 $watch 三件套皆傳 --actress-crop-ratio（CD-3，比照 video 三件套；錨完整引數列防 ratioVar 被砍掉假綠。axisMode 已於 100c-T3b 隨 Y 軸一起收斂移除）',
   },
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
@@ -669,6 +669,16 @@ const RULES = [
     file: 'web/static/js/shared/mask-geometry.js', kind: 'forbidden-string',
     pattern: ['translateY', 'computeMaskAxis'],
     note: '[TestMaskToggleGuard] 100c-T3a／CD-11：Y 軸 transform 輸出與軸向判定函式不得復活（spec-100c §3.3）——加入本規則前已改寫 file header 與 computeMaskDragRoom JSDoc 中提及被刪函式的文字，避免規則自我毒殺',
+  },
+
+  // ---- [TestMaskToggleGuard] 100c-T3b：CD-11 focalCellObjectPosition 的 Y 軸輸出字面不得復活 ----
+  // 鎖輸出而非 axisMode 參數：100b-T3 的原始事故是「自判軸向、不加參數」，鎖參數擋不住這個
+  // 復活形狀；docstring 純文字描述輸出格式不含此 template literal 語法，不會誤中（加規則前已
+  // grep -c '`center ${' focal.js = 0，核實不假紅）。
+  {
+    file: 'web/static/js/shared/focal.js', kind: 'forbidden-string',
+    pattern: '`center ${',
+    note: '[TestMaskToggleGuard] 100c-T3b／CD-11：focalCellObjectPosition 的 Y 軸 object-position 輸出字面不得復活（spec-100c §3.3）——鎖輸出而非 axisMode 參數：100b-T3 的原始事故是「自判軸向、不加參數」，鎖參數擋不住這個復活形狀；docstring 純文字描述輸出格式不含此 template literal 語法，不會誤中',
   },
 
   // ---- [TestMaskToggleGuard] 100c-T2：女優 focal icon 搬家 + 五條件顯示邏輯 + 20% 門檻接線 ----
