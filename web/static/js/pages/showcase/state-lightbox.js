@@ -16,7 +16,7 @@ import { parseFocal, clampMaskWinLeft } from '@/shared/focal.js';
 // 100b-T2a：CD-2 軸向/凍結判定 + 亮窗幾何純函式抽至 shared/mask-geometry.js（可測試性——
 // 本檔的 `@/showcase/...` importmap alias 只有瀏覽器認得，node:test 無法直接 import 本檔；
 // mask-geometry.js 只用相對路徑 import，node:test 可直接驗證，見該檔開頭說明）。
-import { computeMaskAxis, computeMaskWinGeometry } from '@/shared/mask-geometry.js';
+import { computeMaskAxis, computeMaskWinGeometry, computeMaskDragRoom, MASK_MIN_DRAG_ROOM } from '@/shared/mask-geometry.js';
 import { syncActressFields } from '@/shared/actress-sync.js';
 
 export function stateLightbox() {
@@ -62,6 +62,12 @@ export function stateLightbox() {
         // 契約見 _refreshActressPhotoLoaded()——女優牆與燈箱同 URL，開燈箱時圖幾乎必然已快取，
         // 只靠 @load 會讓 focal 按鈕在最常見路徑上永久打不開（[[feedback_guards_cant_prove_usable]]）。
         _actressPhotoLoaded: false,
+
+        // 100c-T2（CD-5/CD-7）：橫向可拖幅度 ≥ MASK_MIN_DRAG_ROOM（20%）門檻旗標，生命週期
+        // 與 _actressPhotoLoaded 完全鏡射（同一對「清空/就緒」helper 同步設值/清除，見下方
+        // 兩 helper 定義）。openMask() 的 focal icon x-show 五條件之一：窄圖（無意義的可拖
+        // 空間）恆 false，icon 不顯示。
+        _actressPhotoWideEnough: false,
 
         // 99a-T3：焦點裁切遮罩 — 一律 force-detect 預覽 + 左右拖曳微調 + ✓/✗ 提交（Alpine 短狀態，
         // 單一提交生命週期 CD-98b-8 沿用）。98b 的 default⇄auto toggle 已整條移除（見 CHANGELOG）。
@@ -190,17 +196,59 @@ export function stateLightbox() {
         // v0.12.1 全綠但功能不可用）。$refs.pickerCoverImg 在 <template x-if="currentLightboxActress">
         // 內（G3），切走後可能已 undefined，null-safe。identity 凍結（captured）防 await 後
         // 已切走的女優誤寫本次結果。
-        _refreshActressPhotoLoaded() {
+        // 100c-T2（CD-5）：兩旗標（_actressPhotoLoaded / _actressPhotoWideEnough）的完整生命
+        // 週期收成兩個 helper，結構上不可能只寫其中一個——不是「記得兩邊都寫」，是只有一個
+        // 地方能寫。呼叫者恰為二：_refreshActressPhotoLoaded() 起手（本檔）、_resetMask()（本檔）。
+        // 🔴 _maskTeardown() 絕不可呼叫本 helper（Fix A 病灶：confirm/cancel 收尾不等於「這張
+        // 燈箱照片」的生命週期，見 _maskTeardown 內既有註解）。
+        _clearActressPhotoState() {
             this._actressPhotoLoaded = false;
+            this._actressPhotoWideEnough = false;
+        },
+
+        // 100c-T2（CD-5/CD-7）：從已載入的 img 同時算出兩旗標並寫入 this。呼叫者恰為二：
+        // showcase.html 的 @load（未快取路徑，$el 即已觸發 load 事件的 img）、
+        // _refreshActressPhotoLoaded() 的 $nextTick（已快取路徑，下方）。imgEl 必須是已連接
+        // DOM 的元素——detached 元素 getComputedStyle 讀 CSS var 回空字串，parseFloat 得
+        // NaN，computeMaskDragRoom 對非有限輸入 fail-closed 回 0（mask-geometry.js），
+        // 0 >= MASK_MIN_DRAG_ROOM 為 false，讀不到 ratio 時 _actressPhotoWideEnough 自然
+        // 落在 false，不需額外 NaN 特判（CD-7 內建 fail-closed 契約）。
+        _readyActressPhotoState(imgEl) {
+            const a = imgEl.naturalWidth / imgEl.naturalHeight;
+            const r = parseFloat(getComputedStyle(imgEl).getPropertyValue('--actress-crop-ratio'));
+            this._actressPhotoLoaded = imgEl.complete && imgEl.naturalWidth > 0;
+            this._actressPhotoWideEnough = Number.isFinite(r) && r > 0 && computeMaskDragRoom(a, r) >= MASK_MIN_DRAG_ROOM;
+        },
+
+        _refreshActressPhotoLoaded() {
+            this._clearActressPhotoState();
             var self = this;
             var captured = this.currentLightboxActress?.name;
             this.$nextTick(function () {
                 if (self.currentLightboxActress?.name !== captured) return;
                 var img = self.$refs && self.$refs.pickerCoverImg;
                 if (img && img.complete && img.naturalWidth > 0) {
-                    self._actressPhotoLoaded = true;
+                    self._readyActressPhotoState(img);
                 }
             });
+        },
+
+        // 100c-T2：女優 focal icon 的五條件判斷收成 method，不在 showcase.html 直接寫
+        // `x-show="a && b && c && d && e"` 字面 && 鏈。病灶：Alpine 的 effect 依賴收集是
+        // 「這次求值實際讀了哪些屬性」，JS `&&` 短路時，一旦前段某條件為 false，後段條件
+        // **完全不會被讀取**，Alpine 因此不會訂閱它們的變化——之後那些漏訂閱的旗標翻真時
+        // effect 不會重跑，icon 可能卡在錯的顯示狀態。
+        // 修法：method 內用獨立陳述式**無條件**讀出全部 5 個旗標存成區域變數，讓 Alpine 的
+        // effect 每次呼叫本 method 都保證訂閱到全部依賴，不受 && 短路影響——回傳值仍是同一個
+        // && 鏈，語意不變，只是把「讀取」與「短路組合」拆開兩步。showcase.html 仍用 x-show
+        // 綁定本 method（與影片版一致）。
+        _focalIconVisible() {
+            const notEditing = !this._maskVisible;
+            const hasPhoto = !!this.currentLightboxActress?.photo_url;
+            const loaded = this._actressPhotoLoaded;
+            const wideEnough = this._actressPhotoWideEnough;
+            const pickerClosed = !this._pickerOpen;
+            return notEditing && hasPhoto && loaded && wideEnough && pickerClosed;
         },
 
         // F1: helper — 更新 lightboxIndex + currentLightboxVideo 一致性
@@ -1303,7 +1351,9 @@ export function stateLightbox() {
             // 100b-T2a（§B-2）：軸向/凍結/女優圖就緒旗標同步清除（比照 _maskFocalX 模式）。
             this._maskAxis = null;
             this._maskFrozen = false;
-            this._actressPhotoLoaded = false;
+            // 100c-T2（CD-5）：兩旗標同步清除收斂進 helper，語意不變（換片/關燈箱必須清，
+            // 之後必經 _refreshActressPhotoLoaded() 重新判定）。
+            this._clearActressPhotoState();
             // 100b-T1（裁決 D-3）：kind 收尾排最後，理由同 _maskTeardown。
             this._maskKind = null;
         },

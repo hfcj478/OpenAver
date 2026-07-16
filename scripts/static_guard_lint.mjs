@@ -397,11 +397,18 @@ const RULES = [
   // 按鈕的 x-show 因而永久消失，直到關燈箱重開或切換女優才恢復。回歸鎖：禁止在 _maskTeardown
   // 函式體內出現「清掉此旗標」的字面組合；真正該清（且會被 _refreshActressPhotoLoaded 重新
   // 判定）的收尾路徑是 _resetMask，兩者語意不同不可一併刪除。
+  // 🔴 100c-T2（CD-5）：pattern 擴成陣列——新增的 _actressPhotoWideEnough 若被「為了對稱」
+  // 加進 _maskTeardown()，會讓 Fix A 的病灶重新可達（icon 在 confirm/cancel 後永久消失），
+  // 而純字面 '_actressPhotoLoaded = false' 抓不到 '_actressPhotoWideEnough = false' 這個
+  // 不同字面（已實證）。同理禁止呼叫 _clearActressPhotoState(（兩旗標同焚的 helper，呼叫
+  // 它等同直接寫兩行清除字面，繞過前兩條字面禁令）。evalForbiddenString 原生把 pattern
+  // 正規化成陣列逐一檢查（陣列先例：main.js:1214 / state-lightbox.js 等 forbidden-string
+  // 規則），語意是「陣列內任一命中即報錯」。
   {
     file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'forbidden-string',
-    pattern: '_actressPhotoLoaded = false',
+    pattern: ['_actressPhotoLoaded = false', '_actressPhotoWideEnough = false', '_clearActressPhotoState('],
     scope: { anchor: /_maskTeardown\s*\(\s*\)\s*\{/, braceBalanced: true },
-    note: '[TestMaskToggleGuard] Fix A：_maskTeardown 不可再清 _actressPhotoLoaded（旗標生命週期屬燈箱照片本身，清在此會讓 focal 按鈕 confirm/cancel 後永久消失、無自我修復路徑；真正該清的收尾是 _resetMask，其後必經 _refreshActressPhotoLoaded 重新判定）',
+    note: '[TestMaskToggleGuard] Fix A（100c-T2 擴陣列）：_maskTeardown 不可再清 _actressPhotoLoaded / _actressPhotoWideEnough，亦不可呼叫 _clearActressPhotoState()（旗標生命週期屬燈箱照片本身，清在此會讓 focal 按鈕 confirm/cancel 後永久消失、無自我修復路徑；真正該清的收尾是 _resetMask，其後必經 _refreshActressPhotoLoaded 重新判定）',
   },
 
   // ---- Codex 本地 review 修正（Fix B）：confirmMask 的 actress-sync gate 須讀 await 前捕獲值 ----
@@ -505,16 +512,19 @@ const RULES = [
     scope: { anchor: /async\s+_onPickerSelect\s*\(\s*candidate\s*,\s*i\s*\)\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T2b：_onPickerSelect 換候選成功後呼叫 _refreshActressPhotoLoaded（§B-2b 第四呼叫點，photo_url 一變就要重新等載入）',
   },
-  // 🔴 §B-2b lifecycle 契約的「未快取路徑」唯一 writer。_actressPhotoLoaded 有且只有兩個
-  // writer：$nextTick complete-check（已快取路徑）與本 @load（未快取路徑）。上傳/換候選回的
-  // 是 cache-bust URL（?v={mtime_ns}-{size}，必然 cache miss）⇒ 拿掉本行，focal 按鈕在
-  // 上傳成功後永久消失（x-show 綁 _actressPhotoLoaded，且無任何錯誤訊息）＝典型
-  // 「全綠但功能不可用」（feedback_guards_cant_prove_usable）。鏡射 video 側 :733 的同型
-  // 寫入點。CDP 另有未快取路徑的真機驗收（守衛只證「寫入點存在」，證不出「圖載完旗標真的翻」）。
+  // 🔴 §B-2b lifecycle 契約的「未快取路徑」唯一 writer。100c-T2（CD-5）：_actressPhotoLoaded
+  // 與 _actressPhotoWideEnough 兩旗標的完整生命週期收成兩個 helper（_clearActressPhotoState/
+  // _readyActressPhotoState），有且只有兩個地方能設值：$nextTick complete-check（已快取
+  // 路徑，呼叫 _readyActressPhotoState）與本 @load（未快取路徑）。上傳/換候選回的是
+  // cache-bust URL（?v={mtime_ns}-{size}，必然 cache miss）⇒ 拿掉本行，focal 按鈕在上傳
+  // 成功後永久消失（x-show 綁 _actressPhotoLoaded/_actressPhotoWideEnough，且無任何錯誤
+  // 訊息）＝典型「全綠但功能不可用」（feedback_guards_cant_prove_usable）。鏡射 video 側
+  // :733 的同型寫入點。CDP 另有未快取路徑的真機驗收（守衛只證「寫入點存在」，證不出
+  // 「圖載完旗標真的翻」）。
   {
     file: 'web/templates/showcase.html', kind: 'required-string',
-    pattern: '@load="_actressPhotoLoaded = true"',
-    note: '[TestMaskToggleGuard] 100b-T2b：女優封面 img 的 @load 是 _actressPhotoLoaded 在未快取路徑（上傳/換候選的 cache-bust URL）的唯一 writer',
+    pattern: '@load="_readyActressPhotoState($el)"',
+    note: '[TestMaskToggleGuard] 100c-T2：女優封面 img 的 @load 是兩旗標在未快取路徑（上傳/換候選的 cache-bust URL）的唯一 writer',
   },
 
   // ---- [TestMaskToggleGuard] 100b-T4：狀態同步 + 前端序列化 ----
@@ -686,6 +696,108 @@ const RULES = [
     file: 'web/static/css/pages/showcase.css', kind: 'required-string', pattern: 'ew-resize',
     scope: { anchor: /\.lb-mask-window--axis-x\s*\{/, braceBalanced: true },
     note: '[TestMaskToggleGuard] 100b-T5：.lb-mask-window--axis-x 的 cursor: ew-resize 覆寫存在（軸向拖曳提示，scope 錨定防同檔規劃註解假綠）',
+  },
+
+  // ---- [TestMaskToggleGuard] 100c-T2：女優 focal icon 搬家 + 五條件顯示邏輯 + 20% 門檻接線 ----
+  // CD-8：全庫零守衛在看這顆鈕（實查——:97 的 @click="openMask 規則無 scope/count，兩分支各一
+  // 顆鈕都能滿足它，未錨定女優鈕的 DOM 位置/class/x-show 條件）。本節新增機械可檢部分；
+  // icon 到底出不出現／tooltip 是否真的浮現／picker 開啟時是否真的按不到——這些行為性質
+  // lint 語法表達不了，唯一手段是 CDP（見 TASK-100c-T2.md DoD 3）。
+  //
+  // 🔴 五條件收成 _focalIconVisible() method（不直接寫成 x-show 的 && 字面鏈）：JS `&&`
+  // 短路求值下，一旦前段條件為 false，後段條件不會被讀取，Alpine 的 effect 依賴收集因此
+  // 漏訂閱鏈末條件（見 showcase.html 按鈕上方註解 + _focalIconVisible() 定義處完整說明）。
+  // method 內用獨立陳述式無條件讀完全部 5 個旗標再組合，保證每次求值都完整訂閱依賴——
+  // showcase.html 仍用 x-show 綁定本 method（與影片版一致）。
+  // x-show 綁定點（scope 錨 .actress-lb-header，鎖最終形＝method + x-show）：
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: 'x-show="_focalIconVisible()"',
+    scope: { anchor: /<div class="actress-lb-header">/, window: 3200 },
+    note: '[TestMaskToggleGuard] 100c-T2（CD-1/CD-8）：女優 focal icon x-show 綁定 _focalIconVisible()（五條件收成 method 避開 && 短路漏訂閱），不得寫回裸 && 字面鏈',
+  },
+  // method 本體：五個「無條件讀取」陳述式 + 完整 return 組合（CD-1 五條件，逐一獨立 required
+  // ⇒ card DoD 1 的「拿掉每條條件」逐一對應到這 6 條規則其中之一單獨紅，比原本單一大字面
+  // required-string 更精準——任何一條被拿掉都直接對應到它自己的守衛，不會混在一起判讀）。
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'const notEditing = !this._maskVisible;',
+    scope: { anchor: /_focalIconVisible\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 100c-T2（CD-1）：_focalIconVisible 條件① !_maskVisible 無條件讀取',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'const hasPhoto = !!this.currentLightboxActress?.photo_url;',
+    scope: { anchor: /_focalIconVisible\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 100c-T2（CD-1）：_focalIconVisible 條件② photo_url 無條件讀取',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'const loaded = this._actressPhotoLoaded;',
+    scope: { anchor: /_focalIconVisible\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 100c-T2（CD-1）：_focalIconVisible 條件③ _actressPhotoLoaded 無條件讀取',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'const wideEnough = this._actressPhotoWideEnough;',
+    scope: { anchor: /_focalIconVisible\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 100c-T2（CD-1/CD-7）：_focalIconVisible 條件④ _actressPhotoWideEnough 無條件讀取（20% 門檻）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'const pickerClosed = !this._pickerOpen;',
+    scope: { anchor: /_focalIconVisible\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 100c-T2（CD-1）：_focalIconVisible 條件⑤ !_pickerOpen 無條件讀取（picker 開啟保護，搬出 .cover-actions 後 CSS gate 不再涵蓋，必須顯式擋）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'return notEditing && hasPhoto && loaded && wideEnough && pickerClosed;',
+    scope: { anchor: /_focalIconVisible\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 100c-T2（CD-1）：_focalIconVisible 完整五條件組合（錨完整 return 字面，防片段假綠）',
+  },
+  // DOM 位置：icon 必須在 .actress-lb-header 內（搬遷目的地），不得殘留在 .cover-actions。
+  // scope-anchor 到 .actress-lb-header 的 brace-balanced 視窗內斷言 class/click/title 三個
+  // 屬性同時存在——三者同 scope 命中即代表「搬對地方了」，任一個字面單獨存在別處都不會通過。
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string', pattern: 'class="lb-mask-btn"',
+    scope: { anchor: /<div class="actress-lb-header">/, window: 3200 },
+    note: '[TestMaskToggleGuard] 100c-T2（CD-1/CD-8）：.lb-mask-btn 必須在 .actress-lb-header 視窗內（DOM 位置鎖，防搬回 .cover-actions）',
+  },
+  {
+    file: 'web/templates/showcase.html', kind: 'forbidden-string', pattern: 'class="lb-action-btn"\n                                        x-show="!_maskVisible && !!currentLightboxActress?.photo_url',
+    note: '[TestMaskToggleGuard] 100c-T2（CD-2）：女優 focal icon 不得沿用舊 .lb-action-btn class + 舊三條件 x-show 組合（回歸鎖：防搬遷被 revert 回 .cover-actions 內的舊寫法）',
+  },
+  // CD-2：:title=（非 :data-tooltip=）——.lb-action-btn[data-tooltip]::after 只認 .lb-action-btn，
+  // 换 class 不換屬性會讓 tooltip 靜默消失（零 lint 可抓「CSS 規則沒被觸發」，只能鎖屬性字面本身）。
+  {
+    file: 'web/templates/showcase.html', kind: 'required-string',
+    pattern: ':title="t(\'showcase.lightbox.mask_toggle\')"\n                                        :aria-label="t(\'showcase.lightbox.mask_toggle\')">\n                                    <i class="bi bi-person-bounding-box"></i>',
+    scope: { anchor: /<div class="actress-lb-header">/, window: 3200 },
+    note: '[TestMaskToggleGuard] 100c-T2（CD-2）：女優 focal icon 用原生 :title=（非 :data-tooltip=），鏡射影片版 .lb-mask-btn（:849）',
+  },
+
+  // 兩個 helper 的呼叫點接線鎖（CD-5）。改用 scope-anchored required-string 精確鎖各呼叫點，
+  // 不用 count：required-string 的 count 是**下限**（n < count → 紅），抓不到「多加一個非法
+  // 呼叫者」，且純字面 count 會被註解子字串一起命中而虛增 → 假綠。真正的「唯一 writer」保護
+  // 靠設計本身（只有 helper 寫旗標）＋ Fix A forbidden 擋 _maskTeardown，已足夠；此處只需
+  // 正向鎖「該接的呼叫點都在」，不需反向鎖「別處不准呼叫」（那是 over-engineering）。
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'this._clearActressPhotoState()',
+    scope: { anchor: /_refreshActressPhotoLoaded\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 100c-T2（CD-5）：_refreshActressPhotoLoaded() 起手呼叫 _clearActressPhotoState()（切換/開啟女優先清兩旗標）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: 'this._clearActressPhotoState()',
+    scope: { anchor: /_resetMask\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 100c-T2（CD-5）：_resetMask() 呼叫 _clearActressPhotoState()（換片/關燈箱清兩旗標，其後必經 _refreshActressPhotoLoaded 重新判定）',
+  },
+  {
+    file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string',
+    pattern: '_readyActressPhotoState(',
+    scope: { anchor: /_refreshActressPhotoLoaded\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 100c-T2（CD-5）：_refreshActressPhotoLoaded() 的 $nextTick 內呼叫 _readyActressPhotoState()（已快取路徑；未快取路徑那次由 showcase.html @load required 規則鎖）',
   },
 
   // ---- [TestSearchLightboxMetadataGuard] search.html：5 個 required ----

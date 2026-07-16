@@ -2672,6 +2672,13 @@ body.sidebar-collapsed .showcase-footer {
 
 /* ==================== Phase 44a T4: Actress Lightbox ==================== */
 .actress-lightbox-meta .actress-lb-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 100c-T2（CD-3）：focal icon 推到 .actress-lb-header 行末（靠右），比照 .lb-delete-btn 先例
+ * （showcase.css:1586）。女優限定選擇器（非共用 .lightbox-metadata .lb-mask-btn）——影片版
+ * .lb-header 是 justify-content:space-between + .lb-title flex:1，加在共用選擇器上有機會
+ * 改變短標題時的 flex 自由空間分配；女優 .actress-lb-header 無 justify-content，加在此處
+ * 語意單純、零風險，完全不接觸影片版 CSS 規則。30px 圓鈕樣式靠 .lightbox-metadata .lb-mask-btn
+ * 祖先鏈自動命中（:962），本規則只加 margin-left。 */
+.actress-lightbox-meta .lb-mask-btn { margin-left: auto; }
 .actress-lightbox-meta .lb-name-en { font-size: 0.9em; opacity: 0.7; }
 .actress-lightbox-meta .lb-actress-core { font-size: 0.95em; margin: 8px 0; opacity: 0.85; }
 .actress-lightbox-meta .lb-chips-row { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }

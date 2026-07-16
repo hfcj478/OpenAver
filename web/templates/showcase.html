@@ -600,7 +600,7 @@
                             <img x-ref="pickerCoverImg"
                                  x-show="currentLightboxActress?.photo_url"
                                  :src="currentLightboxActress?.photo_url"
-                                 @load="_actressPhotoLoaded = true"
+                                 @load="_readyActressPhotoState($el)"
                                  :alt="currentLightboxActress?.name">
                             <div class="actress-lb-cover-placeholder"
                                  x-show="!currentLightboxActress?.photo_url">
@@ -642,17 +642,6 @@
                                         :aria-label="t('showcase.actress.change_photo')">
                                     <i class="bi bi-arrow-clockwise" :class="{ spin: _pickerLoading }"></i>
                                 </button>
-                                <!-- 100b-T2a（§B-1d，spec §4-5）：女優 focal icon——不照抄影片版
-                                     .lb-mask-btn 的位置（.lb-header 行末），照抄行為：放進
-                                     .cover-actions、與其他 action 鈕同 gate 隱藏，鏡射 .lb-action-btn。
-                                     photo_url 存在 + _actressPhotoLoaded 就緒才顯示（§B-2b lifecycle）。 -->
-                                <button class="lb-action-btn"
-                                        x-show="!_maskVisible && !!currentLightboxActress?.photo_url && _actressPhotoLoaded"
-                                        @click="openMask()"
-                                        :data-tooltip="t('showcase.lightbox.mask_toggle')"
-                                        :aria-label="t('showcase.lightbox.mask_toggle')">
-                                    <i class="bi bi-person-bounding-box"></i>
-                                </button>
                                 <!-- 100b-T2a：✓/✗ 鏡射影片版（:754-767），複用既有 5 個
                                      showcase.lightbox.mask_* i18n key（裁決4，不新增 key）。 -->
                                 <button class="lb-action-btn lb-action-btn--success"
@@ -680,6 +669,30 @@
                                 <span class="lb-name-en"
                                       x-show="currentLightboxActress?.name_en"
                                       x-text="currentLightboxActress?.name_en"></span>
+                                <!-- 100c-T2（CD-1/CD-2/CD-3，spec-100c §3.1 推翻 spec-100 §4-5）：
+                                     女優 focal icon 從 .cover-actions 搬進名字行末，鏡射影片版
+                                     .lb-mask-btn 的位置與 class（非再照抄 .lb-action-btn 的封面
+                                     玻璃鈕樣式——那是為疊在封面圖上設計，純文字列裡尺寸/對比
+                                     皆不搭）。五條件：!_maskVisible ＋ photo_url ＋
+                                     _actressPhotoLoaded ＋ _actressPhotoWideEnough（新，CD-7
+                                     20% 可拖幅度門檻）＋ !_pickerOpen（新，CD-1：picker 開啟時
+                                     CSS opacity gate 鎖死在 .cover-actions，搬出後不受影響，
+                                     必須顯式擋）。:title=（非 :data-tooltip=，CD-2 陷阱：
+                                     .lb-action-btn[data-tooltip]::after 只認 .lb-action-btn，
+                                     換 class 不換屬性 tooltip 會靜默消失）。
+                                     🔴 五條件收成 _focalIconVisible() method（不直接寫成 x-show
+                                     的 && 字面鏈）：JS `&&` 短路求值下，一旦前段條件為 false，
+                                     後段條件不會被讀取，Alpine 的 effect 依賴收集因此漏訂閱鏈末
+                                     條件（見該函式定義處說明）。method 內用獨立陳述式無條件讀完
+                                     全部 5 個旗標再組合，保證每次求值都完整訂閱依賴——與影片版
+                                     一樣用 x-show，只是把「讀取」與「短路組合」拆開兩步。 -->
+                                <button class="lb-mask-btn"
+                                        x-show="_focalIconVisible()"
+                                        @click="openMask()"
+                                        :title="t('showcase.lightbox.mask_toggle')"
+                                        :aria-label="t('showcase.lightbox.mask_toggle')">
+                                    <i class="bi bi-person-bounding-box"></i>
+                                </button>
                             </div>
                             <!-- Row 2: Core metadata (age · birth · height · cup · BWH) -->
                             <div class="lb-actress-core"
