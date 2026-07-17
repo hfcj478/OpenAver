@@ -15,7 +15,8 @@ from typing import Optional, Dict, Any, List, Tuple
 
 from core.config import _STEM_IMAGE_MODES
 from core.path_utils import normalize_path
-from core.scrapers.utils import has_chinese, check_subtitle, strip_subtitle_markers
+from core.scrapers.utils import has_chinese, check_subtitle, strip_subtitle_markers, normalize_number_impl
+from core.focal import requires_face_detection, detect_focal, crop_image_position
 from core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -463,7 +464,26 @@ def format_string(template: str, data: Dict[str, Any], use_fallback: bool = Fals
     return sanitize_filename(result.strip())
 
 
-def crop_to_poster(src_path: str, dst_path: str) -> bool:
+def _poster_window_ratio(w: int, h: int) -> Optional[float]:
+    """算出 crop_to_poster 分支2/3 的裁切窗比例（餵給 detect_focal / crop_image_position 用）。
+
+    分支1（h/w >= 1.4，已直向、不裁）回 None。
+    分支2（1.0 <= h/w < 1.4，方形/無碼）：置中窗寬 int(h/1.5)，比例化為 int(h/1.5)/h。
+    分支3（h/w < 1.0，標準橫向/有碼）：右裁起點 int(w/1.9)，窗比例化為 (w-int(w/1.9))/h。
+
+    只負責算「要餵給偵測/平移的比例」，不參與退化路（gate False／無臉）實際裁切算式
+    ——那條路徑維持既有原碼一字不動，避免 float round-trip 造成 byte-for-byte 位移。
+    """
+    ratio = h / w
+    if ratio >= 1.4:
+        return None
+    elif ratio >= 1.0:
+        return int(h / 1.5) / h
+    else:
+        return (w - int(w / 1.9)) / h
+
+
+def crop_to_poster(src_path: str, dst_path: str, number: str = '', maker: str = '') -> bool:
     """
     從橫向封面裁切直向海報（Jellyfin poster）。
 
@@ -471,6 +491,10 @@ def crop_to_poster(src_path: str, dst_path: str) -> bool:
     - h/w >= 1.4 → 已是直向，直接複製
     - h/w >= 1.0 → 方形（FC2/無碼），裁中間（寬度 = h/1.5，置中）
     - h/w <  1.0 → 標準橫向（有碼），裁右側（起點 = w/1.9 ≈ 右47%）
+
+    無碼片（gate 命中）會 inline 跑一次 pigo 人臉偵測，把上述裁切窗平移到臉的位置
+    （CD-5：只平移既有窗，不改窗寬）；有碼／偵測不到臉／未傳 number 三條退化路
+    完全落回既有裁法，poster 位元級不變（spec-101 §3.2 stateless：不讀寫 DB 焦點）。
     """
     try:
         with Image.open(src_path) as img:
@@ -480,6 +504,15 @@ def crop_to_poster(src_path: str, dst_path: str) -> bool:
             if ratio >= 1.4:
                 shutil.copy2(src_path, dst_path)
                 return True
+
+            r_window = _poster_window_ratio(w, h)
+
+            focal = None
+            if requires_face_detection(normalize_number_impl(number), maker):
+                focal = detect_focal(src_path, r_window)
+
+            if focal is not None:
+                cropped = crop_image_position(img.convert("RGB"), r_window, focal[0])
             elif ratio >= 1.0:
                 crop_w = int(h / 1.5)
                 x0 = (w - crop_w) // 2
