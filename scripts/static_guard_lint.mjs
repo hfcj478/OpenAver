@@ -399,6 +399,30 @@ const RULES = [
     note: '[TestMaskToggleGuard] 101b-T2（CD-4b）：GhostFly public object 必須 export handoffFocalDetectWait',
   },
 
+  // 101b-T3（§A-5）：_maskStopSettleAnim 對稱停止 helper——T2 只落地了實作，未替它建任何
+  // static_guard 規則（改鎖的 :359-365 借走的是 _maskStopWaitAnim 的 anchor）。比照星空
+  // 家族（:352 起）「定義存在 + 生命週期端點各自呼叫」的既有形狀補齊。
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '_maskStopSettleAnim() {',
+    note: '[TestMaskToggleGuard] 101b-T3：收斂補間對稱停止 helper 函式定義存在' },
+
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '_maskStopSettleAnim()',
+    scope: { anchor: /_maskDragStart\s*\(\s*evt\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 101b-T3（CD-10）：_maskDragStart 拖曳接管呼叫 _maskStopSettleAnim' },
+
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '_maskStopSettleAnim()',
+    scope: { anchor: /_maskTeardown\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 101b-T3（§A-5）：_maskTeardown 防禦性再保險呼叫 _maskStopSettleAnim' },
+
+  { file: 'web/static/js/pages/showcase/state-lightbox.js', kind: 'required-string', pattern: '_maskStopSettleAnim()',
+    scope: { anchor: /_resetMask\s*\(\s*\)\s*\{/, braceBalanced: true },
+    note: '[TestMaskToggleGuard] 101b-T3（§A-5）：_resetMask 中斷路徑（換片/關燈箱/ESC）呼叫 _maskStopSettleAnim' },
+
+  { file: 'web/templates/_macros/focal_mask.html', kind: 'required-string', pattern: "'lb-mask-window--settling': _maskSettling",
+    note: '[TestMaskToggleGuard] 101b-T3（CD-5）：.lb-mask-window :class 綁 --settling guard class' },
+
+  { file: 'web/static/css/pages/showcase.css', kind: 'required-string', pattern: '.lb-mask-window--settling',
+    note: '[TestMaskToggleGuard] 101b-T3（CD-5/C21）：--settling class 停用 transition 規則存在' },
+
   // ---- Codex 本地 review 修正（Fix A）：_actressPhotoLoaded 不該被 _maskTeardown 清掉 ----
   // 病灶：_maskTeardown 原本會把此旗標設回 false，但 confirmMask/cancelMask → _maskTeardown
   // 之後沒有任何路徑會把它重新判定回真值（URL 未變的已載入 img 不會重觸發 @load）——focal

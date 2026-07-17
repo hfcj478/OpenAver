@@ -1035,8 +1035,10 @@
 }
 
 /* 99a-T3：拖曳中停用 transition——連續 1:1 跟手，套著 transition 會有橡皮筋延遲感，
- * 不符 spec §3.3「拖曳即時預覽」。拖曳結束（_maskDragging=false）恢復，讓 force-detect
- * 完成後「滑到偵測位置」的效果繼續享受這條 transition。 */
+ * 不符 spec §3.3「拖曳即時預覽」。拖曳結束（_maskDragging=false）恢復；101b-T2 後
+ * detect resolve 的收斂已改由獨立 GSAP tween 逐 tick 寫 :style（停用同一條 transition
+ * 的理由見下方 --settling 規則，C21），這條 transition 如今只在拖曳結束後的殘留路徑上
+ * 有意義，不再服務「滑到偵測位置」那個已不存在的過渡態。 */
 .lb-mask-window--dragging {
     transition: none;
     cursor: grabbing;

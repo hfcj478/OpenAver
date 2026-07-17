@@ -15,8 +15,9 @@
                             <div class="lb-mask-overlay"
                                  x-show="_maskVisible"
                                  @click.self="cancelMask()">
-                                <!-- 99a-T5：detect-first——窗只在偵測完成（_maskDetecting 翻 false）
-                                     後才第一次渲染，畫出來即終值，無「先貼右裁基準再滑動」過渡態。 -->
+                                <!-- 99a-T5→101b-T2（CD-2/CD-4a）：窗只在偵測完成（_maskDetecting 翻 false）
+                                     後才第一次渲染；首幀即全幅，隨後由收斂補間滑到偵測終值——收斂全程
+                                     任何一幀都不是「先貼右裁基準」的基準幾何（無基準閃現過渡態）。 -->
                                 <div class="lb-mask-window"
                                      x-show="_maskVisible && !_maskDetecting"
                                      :style="_maskWinStyle"
