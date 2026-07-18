@@ -442,13 +442,15 @@ class TestActressPathMappingsReverse:
 
         with patch('web.routers.actress.ActressRepository') as mock_actress_repo_cls, \
              patch('web.routers.actress.init_db'), \
+             patch('web.routers.actress.AliasRepository') as mock_alias_repo_cls, \
              patch('web.routers.actress.VideoRepository') as mock_video_repo_cls, \
              patch('web.routers.actress.crop_video_cover', return_value=b"fakejpeg") as mock_crop, \
              patch('web.routers.actress._write_actress_photo'), \
              patch('web.routers.actress.get_local_photo_path', return_value=fake_photo):
             mock_actress_repo_cls.return_value.get_by_name.return_value = mock_actress
             mock_actress_repo_cls.return_value.save = MagicMock()
-            mock_video_repo_cls.return_value.get_videos_by_actress.return_value = [mock_video]
+            mock_alias_repo_cls.return_value.resolve.return_value = {"alice"}
+            mock_video_repo_cls.return_value.get_videos_by_actress_names.return_value = [mock_video]
 
             response = client.post(
                 "/api/actresses/alice/photo",

@@ -505,8 +505,15 @@ def _load_actress(name: str):
 
 
 def _get_actress_videos(name: str) -> list:
-    """Threadpool helper: fetch videos for actress (init_db already ran in _load_actress)."""
-    return VideoRepository().get_videos_by_actress(name)
+    """Threadpool helper: fetch videos across the actress's alias set
+    (init_db already ran in _load_actress).
+
+    Part A（spec-102 §3）：與候選端 _get_random_videos_with_covers 同一對
+    API（resolve + get_videos_by_actress_names），兩端對稱——別名片候選
+    才通得過儲存驗證。無 alias 時 resolve 回 {name}，行為等價舊版單名查詢。
+    """
+    names = list(AliasRepository().resolve(name))
+    return VideoRepository().get_videos_by_actress_names(names)
 
 
 def _write_actress_photo(name: str, crop_bytes: bytes, ext: str = ".jpg") -> None:
