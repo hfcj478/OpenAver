@@ -1441,7 +1441,7 @@ class TestSetActressPhoto:
             cover_path=cover_path,
         )
         VideoRepository().upsert(video)
-        video_uri = f"file://{video_path}"
+        video_uri = to_file_uri(video_path)
         fake_jpeg = b"\xff\xd8\xff\xe0FAKE_ALIAS_CROP_JPEG"
 
         gfriends = tmp_path / "gfriends"
@@ -1482,7 +1482,7 @@ class TestSetActressPhoto:
             cover_path=unrelated_cover_path,
         )
         VideoRepository().upsert(video)
-        video_uri = f"file://{unrelated_video_path}"
+        video_uri = to_file_uri(unrelated_video_path)
 
         resp = client.post(
             f"/api/actresses/{ACTRESS_NAME}/photo",
@@ -1500,7 +1500,7 @@ class TestSetActressPhoto:
 
         self._save_actress(client)
         video_path, cover_path = self._save_video_with_cover(tmp_path)
-        video_uri = f"file://{video_path}"
+        video_uri = to_file_uri(video_path)
         fake_jpeg = b"\xff\xd8\xff\xe0FAKE_SYMMETRY_JPEG"
 
         gfriends = tmp_path / "gfriends"
