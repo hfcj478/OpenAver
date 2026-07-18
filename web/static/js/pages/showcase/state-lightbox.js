@@ -1156,6 +1156,11 @@ export function stateLightbox() {
                     this._maskFocalX = (curLeft + curWinW / 2) / W;
                 }
             }
+            // 101b P2（Codex PR#110 二審）：交棒當下立刻把窗重算成「終比例窗、以當前中心落定」，
+            // 不等 onMove。否則「收斂中按下→未拖曳即放開（tap／aborted drag）」時 _maskWinStyle 仍卡在
+            // _maskStopSettleAnim 凍結的中間寬度，比 confirmMask 會存的終窗更寬 → WYSIWYG 破。與 onMove
+            // 同一 writer（computeMaskWinGeometry），第一次 pointermove 再算一次亦一致；非收斂態 no-op。
+            this._maskWinStyle = computeMaskWinGeometry(W, H, r, this._maskFocalX);
             // 起手左緣必須與「視覺上看到的窗位置」一致＝比照 _computeMaskWinStyle 一樣 clamp
             // （99a Gemini P2）。raw _maskFocalX 貼邊時未鉗的 start 值會落在邊界外，窗子停在
             // 邊界但拖曳從界外起算 → 反向拖曳有死區、不跟手。clampMaskWinLeft 是數學軸無關的純量
