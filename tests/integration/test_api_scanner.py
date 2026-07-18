@@ -4,6 +4,7 @@ import threading
 from pathlib import Path
 from urllib.parse import quote
 from core.path_utils import to_file_uri
+from tests.conftest import MOCK_FOCAL_XY
 
 class TestScannerAPI:
     """測試 scanner.py 相關 endpoints"""
@@ -590,6 +591,278 @@ class TestJellyfinCheck:
         # T3(40c) Codex fix 後應有 4 處：
         #   clear_cache + generate_jellyfin_images_stream + generate_avlist(done) + generate_avlist(except)
         assert scanner_src.count('_jellyfin_cache_result = None') >= 4
+
+
+_STATION4_FOCAL_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "actress_photos"
+
+
+def _station4_oracle_poster_bytes(focal_xy=MOCK_FOCAL_XY):
+    """獨立 oracle：不經過 crop_to_poster / generate_jellyfin_images /
+    generate_jellyfin_images_stream，直接呼叫底層 primitive 算出期望 bytes。
+    不可用「呼叫同一站流程兩次自我比對」（gotchas-backend.md #9，101a-T1 已踩過）。
+
+    TASK-102c-T1：改吃 focal_xy 參數（預設 MOCK_FOCAL_XY），不再自己呼叫真
+    detect_focal——呼叫端須確保 patch `core.organizer.detect_focal` 用同一個值，
+    否則 production 端與 oracle 端會對不上。
+    """
+    from core.organizer import _poster_window_ratio
+    from core.focal import crop_image_position
+    from PIL import Image
+    import io
+
+    fixture_path = _STATION4_FOCAL_FIXTURES_DIR / "wide_offcenter_face.jpg"
+    with Image.open(fixture_path) as img:
+        w, h = img.size
+    r_window = _poster_window_ratio(w, h)
+    assert r_window is not None
+    focal = focal_xy
+    with Image.open(fixture_path) as img:
+        expected_cropped = crop_image_position(img.convert("RGB"), r_window, focal[0])
+    buf = io.BytesIO()
+    expected_cropped.save(buf, "JPEG", quality=95, subsampling=0)
+    return buf.getvalue()
+
+
+class TestJellyfinUpdateStationWiring:
+    """DoD①：站4（web/routers/scanner.py check_jellyfin_images_needed() +
+    generate_jellyfin_images_stream()）接線——真跑完整流程（真 DB row，不 mock
+    generate_jellyfin_images），fixture A（番號驅動）/ B（maker-only 驅動）各一次。
+
+    Opus 追加 (b)：站4 有 module-level 全域快取 _jellyfin_cache_result /
+    _jellyfin_cache_time，每個案例前後必須顯式重置，否則第二個 fixture 案例會
+    吃到第一個案例的快取結果（假綠）。
+    """
+
+    _FIXTURE_A = {"number": "FC2-1234567", "maker": "S1 NO.1 STYLE"}
+    _FIXTURE_B = {"number": "SSIS-001", "maker": "10musume"}
+
+    # 註：本 class 不需要重置 module-level 的 _jellyfin_cache_result/_jellyfin_cache_time。
+    # generate_jellyfin_images_stream() 只「清空」快取（scanner.py:1699/1731），從不讀取；
+    # 讀取只發生在 /jellyfin-check 端點（:1764）。故此處既無 setup 需求（不讀）也無
+    # teardown 需求（stream 自己已清空）。原本寫過一個 autouse reset fixture，經 review
+    # ablation 實測拿掉後測試仍全綠 ⇒ 無效防禦，留著只會讓人誤以為站4 有處理快取污染。
+    def _run_station4(self, tmp_path, tag, fixture, monkeypatch):
+        from core.database import init_db, VideoRepository, Video
+        from core.path_utils import to_file_uri
+        from unittest.mock import patch
+        from web.routers.scanner import generate_jellyfin_images_stream
+
+        movie_dir = tmp_path / f"{fixture['number']}_{tag}"
+        movie_dir.mkdir()
+        cover = movie_dir / "cover.jpg"
+        src = _STATION4_FOCAL_FIXTURES_DIR / "wide_offcenter_face.jpg"
+        cover.write_bytes(src.read_bytes())
+
+        db_path = tmp_path / f"t_{tag}.db"
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+        # video path 是虛構 DB key（scanner 端只讀 cover_path 反解的封面 FS 路徑，從不
+        # 反解 path 本身指向的檔案是否存在）——但仍須經 to_file_uri() 產生，不可手拼
+        # file URI 字面值（CLAUDE.md 路徑三區模型 + tests/unit/test_frontend_lint.py
+        # TestPathContract.test_no_manual_uri_construct 守衛；101a-T3 review 抓到）。
+        repo.upsert_batch([
+            Video(path=to_file_uri(str(movie_dir / f"{tag}.mp4")), mtime=1.0,
+                  number=fixture["number"], maker=fixture["maker"],
+                  cover_path=to_file_uri(str(cover))),
+        ])
+
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {"gallery": {"path_mappings": {}}})
+
+        with patch("core.organizer.detect_focal", return_value=MOCK_FOCAL_XY):
+            events = list(generate_jellyfin_images_stream())
+        assert any('"type": "done"' in e for e in events), f"SSE 應完成: {events}"
+
+        poster_path = cover.with_name("cover-poster.jpg")
+        assert poster_path.exists(), "station4 應產生 poster"
+        expected = _station4_oracle_poster_bytes()
+        assert poster_path.read_bytes() == expected, "station4 poster 應對準焦點（獨立 oracle 比對）"
+
+    def test_station4_fixture_a(self, tmp_path, monkeypatch):
+        self._run_station4(tmp_path, "a", self._FIXTURE_A, monkeypatch)
+
+    def test_station4_fixture_b(self, tmp_path, monkeypatch):
+        self._run_station4(tmp_path, "b", self._FIXTURE_B, monkeypatch)
+
+
+def _station4_manual_oracle_poster_bytes(manual_x):
+    """DoD⑤ 反向斷言用的獨立 oracle：鏡射 _station4_oracle_poster_bytes，差異只在
+    跳過 detect_focal、直接用 manual_x 當 crop_image_position 的 pos——模擬「若程式碼
+    改採 DB manual 值」時應該產生的 bytes。用來證明真跑結果「不等於」這個值。
+    """
+    from core.organizer import _poster_window_ratio
+    from core.focal import crop_image_position
+    from PIL import Image
+    import io
+
+    fixture_path = _STATION4_FOCAL_FIXTURES_DIR / "wide_offcenter_face.jpg"
+    with Image.open(fixture_path) as img:
+        w, h = img.size
+    r_window = _poster_window_ratio(w, h)
+    assert r_window is not None
+    with Image.open(fixture_path) as img:
+        expected_cropped = crop_image_position(img.convert("RGB"), r_window, manual_x)
+    buf = io.BytesIO()
+    expected_cropped.save(buf, "JPEG", quality=95, subsampling=0)
+    return buf.getvalue()
+
+
+def _seed_station4_row(tmp_path, tag, *, number, maker, auto_focal='', crop_mode='auto'):
+    """建真 cover 檔 + DB row（auto_focal/crop_mode 可控），回傳
+    (db_path, repo, video_uri, cover_uri, cover_fs, movie_dir)。
+
+    `upsert_batch` 對全新 path（無衝突）是單純 INSERT，`_FOCAL_PRESERVE` 的
+    `ON CONFLICT` CASE 邏輯不觸發——傳入的 auto_focal/crop_mode 會原樣落地。
+    """
+    from core.database import init_db, VideoRepository, Video
+    from core.path_utils import to_file_uri
+
+    movie_dir = tmp_path / f"{number}_{tag}"
+    movie_dir.mkdir()
+    cover = movie_dir / "cover.jpg"
+    cover.write_bytes((_STATION4_FOCAL_FIXTURES_DIR / "wide_offcenter_face.jpg").read_bytes())
+    db_path = tmp_path / f"t_{tag}.db"
+    init_db(db_path)
+    repo = VideoRepository(db_path)
+    # video path 是虛構 DB key，仍須經 to_file_uri() 產生、不可手拼 file URI 字面值
+    # （同 _run_station4 的理由，見上方註解；101a-T3 review 抓到的既有回歸，一併修）。
+    video_uri = to_file_uri(str(movie_dir / f"{tag}.mp4"))
+    cover_uri = to_file_uri(str(cover))
+    repo.upsert_batch([Video(path=video_uri, mtime=1.0, number=number, maker=maker,
+                              cover_path=cover_uri, auto_focal=auto_focal, crop_mode=crop_mode)])
+    return db_path, repo, video_uri, cover_uri, cover, movie_dir
+
+
+class TestPosterBakeStructuralLocks:
+    """TASK-101a-T3 DoD④⑤⑥：把 spec-101 §3.2/§3.6/§3.7 的三條產品邊界（stateless、
+    不讀手動值、fire-and-forget）用測試釘死。三個測試各自獨立建 DB／檔案，不共用 seed
+    （TASK card 邊界條件）。全部走站4（web/routers/scanner.py generate_jellyfin_images_
+    stream），因為它是四站中唯一「純烤圖、零其他 DB 寫入」的路徑（站3 會混進既有 98b
+    背景 focal trigger，污染判定，見 TASK-101a-T3.md 現況分析第 4 節）。
+
+    gate 用 fixture-A（number='FC2-1234567', maker='S1 NO.1 STYLE'）確保真的走到
+    「烤圖 + 偵測」那條路——用 gate=False 的片會提早 no-op，測不出「烤圖有沒有寫 DB」。
+    """
+
+    _GATE_FIXTURE = {"number": "FC2-1234567", "maker": "S1 NO.1 STYLE"}
+
+    def test_bake_does_not_touch_db_focal_fields(self, tmp_path, monkeypatch):
+        """DoD④ spec §3.7-3 結構鎖：烤圖前後該片 DB auto_focal/crop_mode 零變化。"""
+        from unittest.mock import patch
+        from web.routers.scanner import generate_jellyfin_images_stream
+
+        db_path, repo, video_uri, cover_uri, cover_fs, movie_dir = _seed_station4_row(
+            tmp_path, "d4", number=self._GATE_FIXTURE["number"], maker=self._GATE_FIXTURE["maker"],
+        )
+
+        before = repo.get_by_path(video_uri)
+
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {"gallery": {"path_mappings": {}}})
+
+        with patch("core.organizer.detect_focal", return_value=MOCK_FOCAL_XY):
+            events = list(generate_jellyfin_images_stream())
+        assert any('"type": "done"' in e for e in events), f"SSE 應完成: {events}"
+
+        poster_path = cover_fs.with_name("cover-poster.jpg")
+        assert poster_path.exists(), "應真的烤過圖（不是 gate 提早 no-op）"
+
+        after = repo.get_by_path(video_uri)
+        assert after.auto_focal == before.auto_focal
+        assert after.crop_mode == before.crop_mode
+
+    def test_bake_ignores_manual_focal_uses_pigo_result(self, tmp_path, monkeypatch):
+        """DoD⑤ spec §3.7-3 產品邊界鎖（CD-2）：DB 存 crop_mode='manual' + 遠離 pigo
+        真值的 auto_focal，站4真跑烤圖，poster bytes 正向等於獨立 pigo oracle、
+        反向不等於獨立 manual oracle（兩條缺一不可，見 gotchas-backend.md #9）。
+        """
+        from unittest.mock import patch
+        from web.routers.scanner import generate_jellyfin_images_stream
+
+        db_path, repo, video_uri, cover_uri, cover_fs, movie_dir = _seed_station4_row(
+            tmp_path, "d5", number=self._GATE_FIXTURE["number"], maker=self._GATE_FIXTURE["maker"],
+            auto_focal='0.9000,0.5000', crop_mode='manual',   # 刻意遠離 pigo 真值 x≈0.3148
+        )
+
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {"gallery": {"path_mappings": {}}})
+
+        with patch("core.organizer.detect_focal", return_value=MOCK_FOCAL_XY):
+            events = list(generate_jellyfin_images_stream())
+        assert any('"type": "done"' in e for e in events), f"SSE 應完成: {events}"
+
+        poster_path = cover_fs.with_name("cover-poster.jpg")
+        assert poster_path.exists(), "應真的烤過圖"
+        poster_bytes = poster_path.read_bytes()
+
+        assert poster_bytes == _station4_oracle_poster_bytes(), (
+            "poster 應採用 pigo 重跑結果"
+        )
+        assert poster_bytes != _station4_manual_oracle_poster_bytes(0.9000), (
+            "poster 不應採用 DB manual 值"
+        )
+
+    def test_manual_focal_save_does_not_rebake_poster(self, tmp_path, monkeypatch, mocker, client):
+        """DoD⑥ spec §3.7-4 fire-and-forget 正向鎖：先烤一次記下 bytes + st_mtime_ns，
+        經 POST /api/showcase/video/save-focal 存入不同焦點（確認 200 + DB 真的寫入 manual
+        值），poster bytes 與 mtime 逐一比對完全未變。
+
+        不需要插 time.sleep（TASK-101a-T3.md 現況分析第 5 節：mtime tick 粒度 ~3.8ms，
+        本測試真實時間尺度為 pigo ~2s + HTTP round-trip，遠超粒度風險窗口；且斷言方向
+        是「未變」，粒度粗對它無害）。
+
+        🔴 mtime 斷言才是這條測試的真網，不是多餘的保險——bytes 斷言對「重烤」這件事
+        結構性瞎眼：pigo 是確定性演算法，重烤用的是同一張封面 + 同一組 gate 判定用的
+        number/maker，會產生逐位元相同的 poster。實測：套用 DoD⑥ mutation（讓存焦點
+        端點追加呼叫 crop_to_poster 重烤）後，bytes 斷言依然綠、只有 mtime 斷言轉紅。
+        故不可以「bytes 都一樣了、mtime 檢查是多餘的」為由砍掉下面的 st_after 斷言。
+        """
+        from unittest.mock import patch
+        from web.routers.scanner import generate_jellyfin_images_stream
+        from core.path_utils import to_file_uri
+
+        db_path, repo, video_uri, cover_uri, cover_fs, movie_dir = _seed_station4_row(
+            tmp_path, "d6", number=self._GATE_FIXTURE["number"], maker=self._GATE_FIXTURE["maker"],
+        )
+
+        monkeypatch.setattr("web.routers.scanner.get_db_path", lambda: db_path)
+        monkeypatch.setattr("web.routers.scanner.load_config", lambda: {"gallery": {"path_mappings": {}}})
+
+        with patch("core.organizer.detect_focal", return_value=MOCK_FOCAL_XY):
+            events = list(generate_jellyfin_images_stream())  # 先烤一次
+        assert any('"type": "done"' in e for e in events), f"SSE 應完成: {events}"
+
+        poster_path = cover_fs.with_name("cover-poster.jpg")
+        assert poster_path.exists()
+        bytes_before = poster_path.read_bytes()
+        st_before = poster_path.stat().st_mtime_ns
+
+        # directories.path 用 to_file_uri(str(tmp_path))（涵蓋 video_uri 所在的
+        # movie_dir），不可手拼字面值 "/movies" 或 "file:///movies"——手拼與
+        # coerce_to_file_uri() 實際產出的斜線數不保證一致（101a-T3 review 實測踩過：
+        # 手拼 "/movies" 經 coerce_to_file_uri 在本機 WSL 環境變成 4 個斜線
+        # file:////movies，對不上手拼 video_uri 的 3 個斜線，scope 檢查假 403）。
+        # video_uri 與 directories.path 現在兩邊都經 to_file_uri()，斜線數必然一致。
+        mocker.patch("web.routers.showcase.get_db_path", return_value=db_path)
+        mocker.patch("web.routers.showcase.load_config", return_value={
+            "gallery": {"directories": [{"path": to_file_uri(str(tmp_path)), "readonly": False, "output_path": ""}],
+                        "path_mappings": {}}})
+
+        resp = client.post("/api/showcase/video/save-focal",
+                            json={"path": video_uri, "focal": "0.1000,0.9000",
+                                  "expected_cover_path": cover_uri})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        bytes_after = poster_path.read_bytes()
+        st_after = poster_path.stat().st_mtime_ns
+        assert bytes_after == bytes_before, "存焦點不應重烤 poster（bytes 未變）"
+        assert st_after == st_before, "存焦點不應重烤 poster（mtime 未變）"
+
+        # 確認 DB 側真的寫入了（存焦點本身有效，只是沒有回頭碰 poster）
+        after_row = repo.get_by_path(video_uri)
+        assert after_row.crop_mode == 'manual'
+        assert after_row.auto_focal == "0.1000,0.9000"
 
 
 class TestMissingCheckAPI:
@@ -2134,11 +2407,16 @@ class TestGenerateAvlistShouldAbortTopLevel:
         mock_html = mocker.patch("web.routers.scanner.HTMLGenerator")
         mock_notif = mocker.patch("web.routers.scanner._emit_notif")
 
-        # 呼叫序列（1 dir / 1 file）：outer #1、inner #2、orphan gate #3、
-        # HTML gate #4、terminal #5。trigger_after=4 → 前 4 次 False（迴圈跑完、
-        # orphan/HTML gate 都通過），第 5 次（terminal fresh 檢查）才 True。
-        # single-snapshot 版本此情境會誤發 success；fresh 版本應改發 cancelled。
-        fake_should_abort = self._counting_should_abort(trigger_after=4)
+        # 呼叫序列（1 dir / 1 file）：outer #1、inner #2、focal-pass entry gate #3
+        # （TASK-99b-T1 sibling 併修新增）、focal-candidate-loop-top gate #4
+        # （Codex P1 二次修新增——ABC-001 被 get_empty_focal_candidates 撈出、
+        # 迴圈確實執行一圈，只是 requires_face_detection 擋在 submit 前，故
+        # 候選迴圈頂端的 fresh should_abort() 檢查仍會被呼叫一次）、orphan
+        # gate #5、HTML gate #6、terminal #7。trigger_after=6 → 前 6 次 False
+        # （迴圈跑完、focal-pass entry/candidate-loop/orphan/HTML gate 都通過），
+        # 第 7 次（terminal fresh 檢查）才 True。single-snapshot 版本此情境會
+        # 誤發 success；fresh 版本應改發 cancelled。
+        fake_should_abort = self._counting_should_abort(trigger_after=6)
 
         events = list(generate_avlist(should_abort=fake_should_abort))
 
@@ -2214,3 +2492,195 @@ class TestGenerateAvlistShouldAbortTopLevel:
         parsed = self._parse_events(events)
         assert [e for e in parsed if e.get("type") == "done"], \
             "should_abort 從未觸發時仍應照舊發出 done event"
+
+
+# ============ TASK-98b-T2: 掃描 empty-focal gate（scanner.py router 路徑） ============
+
+class TestGenerateAvlistFocalTrigger:
+    """generate_avlist 掃描入庫後的 focal trigger（empty-focal gate，router 路徑）。
+
+    與 gallery_scanner.scan_to_sqlite 對稱：直接 driver generate_avlist()，真 tmp DB +
+    真 requires_face_detection gate；patch use-site `web.routers.scanner.
+    maybe_submit_video_focal` 只驗接線與 gate，不真跑 pigo。
+    """
+
+    def _run(self, tmp_path, num, maker="", seed_auto_focal=None, seed_unchanged=False,
+             should_abort=None, extra_nums=None):
+        """extra_nums: 額外的無碼候選番號列表（都用同一個 maker，全部視為新檔案，
+        全部 requires_face_detection=True）。單檔既有 caller 不傳此參數，行為不變。"""
+        import types
+        from unittest.mock import patch, MagicMock
+        from core.database import init_db, VideoRepository, Video
+        from core.gallery_scanner import VideoInfo
+        from core.path_utils import to_file_uri
+
+        scan_dir = tmp_path / "lib"
+        scan_dir.mkdir()
+        video_fs = str(scan_dir / f"{num}.mp4")
+        cover_fs = scan_dir / f"{num}.jpg"
+        cover_fs.write_bytes(b"x")
+        path_uri = to_file_uri(video_fs)
+        cover_uri = to_file_uri(str(cover_fs))
+
+        db_file = tmp_path / "avlist_focal.db"
+        init_db(db_file)
+        repo = VideoRepository(db_path=db_file)
+        if seed_auto_focal is not None:
+            with patch("core.similar.ranker_cache.SimilarRankerCache"):
+                repo.upsert(Video(path=path_uri, number=num, maker=maker, cover_path=cover_uri))
+            repo.update_auto_focal(path_uri, seed_auto_focal, cover_uri)
+        elif seed_unchanged:
+            # Codex PR#105 P2 回歸釘：既有列 mtime 與本次掃描一致（111）→ 不進
+            # needs_scan/videos_to_upsert，auto_focal 維持 dataclass 預設空字串。
+            with patch("core.similar.ranker_cache.SimilarRankerCache"):
+                repo.upsert(Video(
+                    path=path_uri, number=num, maker=maker, cover_path=cover_uri,
+                    mtime=111, nfo_mtime=0.0,
+                ))
+
+        info = VideoInfo()
+        info.num = num
+        info.path = path_uri
+        info.img = cover_uri
+        info.maker = maker
+        info.title = "T"
+
+        fast_scan_files = [{"path": video_fs, "mtime": 111, "nfo_mtime": 0}]
+        scan_file_infos = {video_fs: info}
+
+        # TASK-99a: 支援多候選（focal 迴圈中途 abort 測試需要 >= 2 個候選才能
+        # 觀察「第 1 個 submit 之後、第 2 個未 submit」）。
+        for extra_num in (extra_nums or []):
+            extra_video_fs = str(scan_dir / f"{extra_num}.mp4")
+            extra_cover_fs = scan_dir / f"{extra_num}.jpg"
+            extra_cover_fs.write_bytes(b"x")
+            extra_path_uri = to_file_uri(extra_video_fs)
+            extra_cover_uri = to_file_uri(str(extra_cover_fs))
+
+            extra_info = VideoInfo()
+            extra_info.num = extra_num
+            extra_info.path = extra_path_uri
+            extra_info.img = extra_cover_uri
+            extra_info.maker = maker
+            extra_info.title = "T"
+
+            fast_scan_files.append({"path": extra_video_fs, "mtime": 111, "nfo_mtime": 0})
+            scan_file_infos[extra_video_fs] = extra_info
+
+        config = {
+            "gallery": {
+                "directories": [str(scan_dir)], "output_dir": "output",
+                "output_filename": "gallery_output.html", "path_mappings": {},
+                "min_size_mb": 0, "default_mode": "image", "default_sort": "date",
+                "default_order": "descending", "items_per_page": 90,
+            },
+            "general": {"theme": "light"},
+            "search": {"proxy_url": ""},
+        }
+        src = types.SimpleNamespace(path=str(scan_dir), readonly=False)
+        mock_scanner = MagicMock()
+        if extra_nums:
+            mock_scanner.scan_file.side_effect = (
+                lambda video_path, base_path=None: scan_file_infos[video_path]
+            )
+        else:
+            mock_scanner.scan_file.return_value = info
+
+        with (
+            patch("web.routers.scanner.load_config", return_value=config),
+            patch("web.routers.scanner.get_gallery_source_paths", return_value=[str(scan_dir)]),
+            patch("web.routers.scanner.iter_gallery_sources", return_value=[src]),
+            patch("web.routers.scanner.get_db_path", return_value=db_file),
+            patch("web.routers.scanner.VideoScanner", return_value=mock_scanner),
+            patch("web.routers.scanner.fast_scan_directory", return_value=fast_scan_files),
+            patch("web.routers.scanner.HTMLGenerator"),
+            patch("web.routers.scanner._run_sample_images_cleanup_pass", return_value=0),
+            patch("web.routers.scanner.check_cache_needs_update",
+                  return_value={"need_update": 0, "paths": []}),
+            patch("web.routers.scanner._emit_notif"),
+            patch("core.similar.ranker_cache.SimilarRankerCache"),
+            patch("web.routers.scanner.maybe_submit_video_focal") as mock_submit,
+        ):
+            from web.routers.scanner import generate_avlist
+            list(generate_avlist(should_abort=should_abort))
+        return mock_submit
+
+    def test_uncensored_empty_focal_submits(self, tmp_path):
+        mock_submit = self._run(tmp_path, "SIRO-1234")
+        mock_submit.assert_called_once()
+        assert mock_submit.call_args[0][0] == "SIRO-1234"
+
+    def test_uncensored_nonempty_focal_no_submit(self, tmp_path):
+        # empty-focal gate：現有 auto_focal 有值 → 不 submit（mutation：拿掉 gate 必 RED）
+        mock_submit = self._run(tmp_path, "SIRO-1234", seed_auto_focal="0.5,0.5")
+        mock_submit.assert_not_called()
+
+    def test_censored_no_submit(self, tmp_path):
+        mock_submit = self._run(tmp_path, "SONE-205", maker="SOD")
+        mock_submit.assert_not_called()
+
+    def test_existing_unchanged_empty_focal_backfilled(self, tmp_path):
+        # Codex PR#105 P2 回歸釘：既有 DB 列、auto_focal=''、mtime 未變（不進
+        # needs_scan/videos_to_upsert）、無碼 → 重掃一次仍要被送偵測，否則「重掃一次
+        # 自動補焦既有庫」的承諾對這批既有片形同虛設。
+        # mutation：focal 來源若改回只迴圈 videos_to_upsert，此列不會被 submit → RED。
+        mock_submit = self._run(tmp_path, "SIRO-1234", seed_unchanged=True)
+        mock_submit.assert_called_once()
+        args = mock_submit.call_args[0]
+        assert args[0] == "SIRO-1234"
+
+    def test_should_abort_before_focal_pass_zero_submits(self, tmp_path):
+        """TASK-99b-T1 DoD ⑥ (CD-99b-8 sibling): should_abort() flips True right
+        before the :533 focal pass (after the single needs_scan file has already
+        been scanned/upserted) → the focal pass itself must be skipped entirely,
+        zero maybe_submit_video_focal calls — mirrors the readonly_producer
+        abort gate, just on the router's inline (non-readonly) scan path.
+        mutation: drop the newly-added `and not (should_abort and should_abort())`
+        gate → this test goes RED (submit fires despite the fresh abort signal)."""
+        call_count = [0]
+
+        def abort_after_two():
+            call_count[0] += 1
+            return call_count[0] > 2  # let the source-level + per-file checks through once each
+
+        mock_submit = self._run(tmp_path, "SIRO-1234", should_abort=abort_after_two)
+        mock_submit.assert_not_called()
+
+    def test_abort_mid_candidate_loop_stops_remaining_submits(self, tmp_path):
+        """Codex P1（:546 focal-candidate-loop-top gate）行為鎖：3 個無碼候選
+        （SIRO-1234/2345/3456，全新檔案、全 requires_face_detection=True），
+        should_abort 在第 1 個候選 submit 之後、第 2 個候選的迴圈頂端檢查才翻
+        True → 迴圈必須 break，第 2、3 個候選都不能被 submit。
+
+        呼叫序列（實測，traceback instrumented probe，3 needs_scan 檔）：
+          #1 :377 outer source-level gate
+          #2-4 :502 per-file gate（needs_scan 3 檔各一次）
+          #5 :539 focal-pass entry gate
+          #6 :546 candidate-loop-top gate（candidate 1 = SIRO-1234）→ False → submit
+          #7 :546 candidate-loop-top gate（candidate 2 = SIRO-2345）→ True → break
+          （candidate 3 = SIRO-3456 的迴圈頂端因 break 完全不會被檢查）
+          #8-10 :571 尾段 _is_aborted()（orphan/HTML/terminal gate）
+        trigger_after=6 → 前 6 次 False、第 7 次 True，恰好落在 candidate 2 的
+        迴圈頂端檢查。
+
+        mutation：拔掉 web/routers/scanner.py 的 `if should_abort and
+        should_abort(): break`（:546 那段）→ 此測試必 RED，因為迴圈不再中途
+        停止，candidate 2、3 都會被 submit（call_count 變 3，不是 1）。
+        """
+        call_count = [0]
+
+        def abort_after_first_submit():
+            call_count[0] += 1
+            return call_count[0] > 6
+
+        mock_submit = self._run(
+            tmp_path, "SIRO-1234",
+            extra_nums=["SIRO-2345", "SIRO-3456"],
+            should_abort=abort_after_first_submit,
+        )
+
+        assert mock_submit.call_count == 1, (
+            f"迴圈中途 abort 應只 submit 第 1 個候選，實得 {mock_submit.call_count} 次: "
+            f"{mock_submit.call_args_list}"
+        )
+        assert mock_submit.call_args[0][0] == "SIRO-1234"

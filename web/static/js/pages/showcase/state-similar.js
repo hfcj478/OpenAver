@@ -43,6 +43,7 @@ import {
 } from '@/shared/constellation/animations.js';
 import { BreathingManager } from '@/shared/constellation/breathing.js';
 import { waitForMount } from '@/shared/dom-timing.js';
+import { applyCellFocal } from '@/shared/focal-cell.js';
 
 // T6 (CD-T6-1)：hover corridor half-width（與 motion-lab host 同值 40px）
 const HOVER_DISTANCE = 40;
@@ -555,6 +556,7 @@ export function stateSimilar() {
         this.similarQueryVideo = newData.query_video;
         if (this._similarMainStatic && clickedItem.cover_url) {
           this._similarMainStatic.src = clickedItem.cover_url;
+          this.applyFocalToImg(this._similarMainStatic, clickedItem);
         }
         if (this._similarActiveHoverSlot !== null) {
           this._resetSimilarHoverCard(this._similarActiveHoverSlot);
@@ -690,6 +692,7 @@ export function stateSimilar() {
             // 避免 Alpine 把中央 clicked slot card 重綁新批圖（codex-fix3 rebind bug）。
             if (this._similarMainStatic && clickedItem.cover_url) {
               this._similarMainStatic.src = clickedItem.cover_url;
+              this.applyFocalToImg(this._similarMainStatic, clickedItem);
             }
           },
           // codex-fix4: 每張 enter/persist slot 在 reset callback（slot--hidden 期）由 host
@@ -704,7 +707,10 @@ export function stateSimilar() {
             const card = this.similarCards[slotId];
             if (!card) return;
             const imgEl = card.querySelector('.similar-slot-img');
-            if (imgEl) imgEl.src = item.cover_url;
+            if (imgEl) {
+              imgEl.src = item.cover_url;
+              this.applyFocalToImg(imgEl, item);
+            }
           },
         }
       );
@@ -858,6 +864,17 @@ export function stateSimilar() {
      * play button z=12 > main static z=11，button 仍在 main static 之上命中正確。
      * @click.stop 防冒泡的責任由 play button 的 Alpine handler 負責（已在 template）。
      */
+    /**
+     * 98b-T3 / 99a-T2: 把 focal object-position 套到 imperative 寫 src 的可見封面 img。
+     * 與每個 `.src=` 成對呼叫（函式名/簽章不變，維持 6 個既有呼叫處零改動）；內部改走
+     * applyCellFocal（load-gated + expected-src guard + aspect-aware 公式，見 focal-cell.js）
+     * 取代舊的同步 focalObjectPosition 呼叫——這 6 個呼叫處都緊跟在 `.src=` 賦值後，
+     * naturalWidth 此刻多半還是 0（decode 未完成），需要 load-gate 才能算對 aspect。
+     */
+    applyFocalToImg(el, item) {
+      applyCellFocal(el, item);
+    },
+
     _buildSimilarMainStatic(src) {
       const stageInner = document.querySelector('.similar-stage-inner');
       if (!stageInner) return null;
@@ -869,7 +886,14 @@ export function stateSimilar() {
       // codex P1-2: 取代已移除的 .similar-main-overlay click handler。
       // closeSimilarMode 會 .remove() 此 element，listener 隨 GC 一起清。
       img.addEventListener('click', (e) => this.onSimilarMainImgClick(e));
+      // Codex PR#107 P2: append 必須在 applyFocalToImg 之前——applyCellFocal 對已快取的封面走
+      // el.complete && el.naturalWidth 同步分支，當場 getComputedStyle 讀 --poster-crop-ratio；
+      // 該變數掛在 :root（theme.css），detached element 沒有 inheritance chain 連到 :root，
+      // getComputedStyle 回空字串 → parseFloat NaN → computeAndApply 誤判「無比例」清掉
+      // objectPosition。用時序排除（先連接 DOM 再套用），不加旗標繞過。
       stageInner.appendChild(img);
+      // 98b-T3 I-c：首建時 currentLightboxVideo == 查詢片 A（similar mode 尚未 drill），focal 正確。
+      this.applyFocalToImg(img, this.currentLightboxVideo);
       return img;
     },
 
@@ -1290,7 +1314,10 @@ export function stateSimilar() {
       // 設中央主圖 src（FlipReplace 落點 + Burst 原點；83b-T3 邊界：enter 前設 src，
       // onComplete 後只 cleanup ghost，不依賴 onComplete 設 src 以支援中途中斷場景）
       const coverEl = this.$refs.mobilePanelCoverImg;
-      if (coverEl) coverEl.src = this.currentLightboxVideo.cover_url || '';
+      if (coverEl) {
+        coverEl.src = this.currentLightboxVideo.cover_url || '';
+        this.applyFocalToImg(coverEl, this.currentLightboxVideo);
+      }
 
       // 顯示面板：flag（trigger x-trap）+ DOM .show（CSS default-hidden → 顯示）
       this.similarModeMobileOpen = true;
@@ -1526,6 +1553,7 @@ export function stateSimilar() {
       // 故只在 no-BurstPicker fallback（flip 退化成 Promise.resolve）才手動補設。
       if (!(window.BurstPicker && coverEl) && coverEl && item.cover_url) {
         coverEl.src = item.cover_url;
+        this.applyFocalToImg(coverEl, item);
       }
       // T2/CD-3：waitForMount 等 swap 後的新卡（非 oldCards）mount。predicate 用 expectedCards
       // = 唯一 video_id 數（非硬編 6、非裸 length——重複 video_id 時 keyed dedup 渲染較少，用

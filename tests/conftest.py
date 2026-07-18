@@ -3,6 +3,15 @@ from pathlib import Path
 import json
 from core import config as core_config
 
+# ── TASK-102c-T1: focal mock 座標共用常數 ──────────────────────────────
+# 刻意選一個偏離中心、x/y 不對稱的值，讓「focal 平移有沒有生效」的斷言在
+# mock 下依然有鑑別力——不可用 (0.5, 0.5)，否則平移後 crop 退化成置中 crop，
+# 反向斷言「應與原碼輸出不同」會失真。各檔按需
+# `from tests.conftest import MOCK_FOCAL_XY` 匯入。
+# 註：x=0.3148 恰與 wide_offcenter_face.jpg 的真 pigo 偵測值重疊——巧合非刻意
+# 逼近，且不影響判別力（patch 整段替換函式，測試期間真偵測不可能被呼叫）。
+MOCK_FOCAL_XY = (0.3148, 0.2000)
+
 # ── LAN access gate（feature/80）測試相容 ──────────────────────────────
 # web.app 的 lan_access_gate middleware 用 request.client.host 判 loopback。
 # Starlette TestClient 預設 client host = "testclient"（非 loopback）→ 單機模式
@@ -88,5 +97,34 @@ def samples_dir():
     """取得 samples 測試目錄"""
     from pathlib import Path
     return Path(__file__).parent.parent / 'samples'
+
+
+# ============ Focal / crop_mode 測試 seed helper（99a-T7：retire update_crop_mode）====
+
+@pytest.fixture
+def seed_crop_mode():
+    """Test-only seed helper：一條 explicit UPDATE 直接寫 crop_mode 欄位，鏡射
+    VideoRepository 端已刪除的同名 mutator（那個一行方法：不碰其他欄位，鏡射
+    update_user_tags）——production 已無呼叫端（plan-99a §B.3 拍板 RETIRE），只剩測試
+    需要「準備一筆 crop_mode 已是非預設值的 row」這個前置狀態，不該為了測試 seed 需求
+    讓已收斂的 mutator 介面再長出一個方法。放在根 conftest（跨 tests/unit 與
+    tests/integration 共用），避免三處各自 copy-paste 同一條 UPDATE。
+
+    Usage: `seed_crop_mode(repo, path, 'default')` — repo 為任一 VideoRepository 實例，
+    直接用 repo.db_path 開連線寫入，回傳值鏡射原 mutator（rowcount > 0 → True）。
+    """
+    def _seed(repo, path: str, mode: str) -> bool:
+        from core.database import get_connection
+        conn = get_connection(repo.db_path)
+        try:
+            cursor = conn.execute(
+                "UPDATE videos SET crop_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE path = ?",
+                (mode, path),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+    return _seed
 
 

@@ -6,21 +6,39 @@ Showcase API 路由 - 影片展示資料端點
 - GET /api/showcase/video?path=   — 取得單筆影片資料（供 T3 enrich 後刷新卡片）
 """
 
+import os
 from urllib.parse import quote
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from core.database import VideoRepository, get_db_path, init_db
 from core.path_utils import is_path_under_dir, uri_to_local_fs_path, coerce_to_file_uri
 from core.logger import get_logger
 from core.config import load_config, get_gallery_source_paths
 from core.readonly_source import is_path_readonly, readonly_source_prefixes, writable_source_prefixes
+from core.focal import detect_focal, format_focal, parse_focal
 from core import thumbnail_cache
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/showcase", tags=["showcase"])
+
+
+class DetectFocalRequest(BaseModel):
+    """POST /video/detect-focal body：path（DB key，Codex P0 絕不當檔案路徑開啟）。"""
+    path: str
+
+
+class ManualFocalRequest(BaseModel):
+    """POST /video/save-focal body：path（DB key）+ focal（'x.xxxx,y.xxxx' 格式字串）+
+    expected_cover_path（Codex PR#107 第二輪 P2：使用者開遮罩當下觀察到的
+    row.cover_path，DB-key file:/// URI 或空字串；必填、不可省略——見
+    VideoRepository.update_manual_focal 的 cover compare-and-store 說明）。"""
+    path: str
+    focal: str
+    expected_cover_path: str
 
 
 def _serialize_video(v, path_mappings: dict, enabled: bool = False, readonly_prefixes: list = None, writable_prefixes: list = None) -> dict:
@@ -71,6 +89,8 @@ def _serialize_video(v, path_mappings: dict, enabled: bool = False, readonly_pre
             # uri-no-reverse: coerce_to_file_uri forward URI build, D2 complement
             coerce_to_file_uri(v.path, path_mappings), readonly_prefixes or [], writable_prefixes or []
         ),
+        "auto_focal": v.auto_focal,                  # canonical "x,y" 4dp 字串或 ''（98b：前端 focalObjectPosition 消費）
+        "crop_mode": v.crop_mode,                    # 'auto' | 'default'（98b：default 退 baseline 右裁）
     }
 
 
@@ -196,3 +216,113 @@ def delete_video(path: str = Query(..., description="file:/// URI")):
     thumbnail_cache.invalidate(path)
 
     return JSONResponse({"deleted": n})
+
+
+@router.post("/video/detect-focal")
+def detect_video_focal(req: DetectFocalRequest):
+    """使用者主動 force-detect 封面焦點預覽（98b-T4 CD-98b-7 / Codex P0；99a-T1a 改純預覽-only）。
+
+    **安全不變式：body `path` 一律當 DB key，絕不當檔案路徑開啟。** 偵測目標是
+    `row.cover_path` 反解的封面 fs（非 body path 的影片 URI）。
+    - 非 DB path → 404（不開任何檔）。
+    - configured-dir scope 外 → 拒（scope 外 force-detect 無意義）。
+    - **不寫 DB**（99a-T1a）：純預覽供前端遮罩顯示，唯讀來源亦放行（D4/CD-7——
+      偵測本身不寫入，不需要可寫權限）。要存入需另呼叫 `POST /video/save-focal` mutator。
+    - row.cover_path 空或檔案不存在 → 固定字串（不崩）。
+    - 無臉 → format_focal(None) = '' 回傳（不存）。
+
+    回應（row 找到、in-scope 之後的所有分支：成功偵測 / 封面檔缺失）皆帶
+    `cover_path`（row 當下的 DB-key `cover_path`，Codex PR#107 第二輪 P2）：
+    前端拿這個值原樣存為 mask session 的 `expected_cover_path`，之後
+    `POST /video/save-focal` 存檔時原樣帶回，讓 `update_manual_focal` 的
+    compare-and-store 守衛比對「使用者觀察當下」與「存檔當下」的封面是否一致，
+    擋掉 rescan/rescrape 換封面卻把舊座標存成新封面 manual 值的 race。
+    `def`（非 async）→ threadpool；detect_focal 同步 ~2.2s。**不進 capabilities（不揭露）。**
+    """
+    try:
+        db_path = get_db_path()
+        if not db_path.exists():
+            return JSONResponse({"success": False, "error": "找不到影片"}, status_code=404)
+
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        row = repo.get_by_path(req.path)
+        if row is None:
+            return JSONResponse({"success": False, "error": "找不到影片"}, status_code=404)
+
+        config = load_config()
+        configured_dir_uris, path_mappings = _get_configured_dirs(config)
+
+        in_scope = any(is_path_under_dir(row.path, uri) for uri in configured_dir_uris)
+        if not in_scope:
+            return JSONResponse({"success": False, "error": "此影片不在收藏範圍，無法偵測焦點"}, status_code=403)
+
+        # ★ Codex P0：取 row.cover_path（非 body path）反解封面 fs
+        cover_fs = uri_to_local_fs_path(row.cover_path, path_mappings) if row.cover_path else ''
+        if not row.cover_path or not os.path.isfile(cover_fs):
+            return JSONResponse({"success": False, "error": "找不到封面檔案",
+                                 "cover_path": row.cover_path}, status_code=400)
+
+        focal = detect_focal(cover_fs, 0.71)     # 同步；無臉 → None
+        auto_focal = format_focal(focal)          # None → ''，純預覽不寫 DB
+        return JSONResponse({"success": True, "auto_focal": auto_focal, "cover_path": row.cover_path})
+
+    except Exception as e:
+        logger.error("偵測焦點失敗: %s", e)
+        return JSONResponse({"success": False, "error": "偵測焦點失敗"}, status_code=500)
+
+
+@router.post("/video/save-focal")
+def set_manual_focal(req: ManualFocalRequest):
+    """使用者手動存入焦點座標（99a-T1a，CD-2 / spec §3.9-2）。
+
+    body {path, focal}；focal 非合法 "x.xxxx,y.xxxx"（[0,1]x[0,1]，含空字串）格式
+    → 400 固定字串，**不碰 DB**（格式驗證先於 scope 檢查，非法輸入不需要多一次
+    DB round-trip）。格式合法才進 scope guard：path 不存在 DB → 404；path 不在
+    任何 configured dir 下 → 403，DB 皆不變。**不判 readonly**（D4/CD-7：唯讀不擋
+    手動存，與 `/detect-focal` 現行為一致——mutator 從一開始就不含 readonly 邏輯）。
+    正規化後存（`format_focal(parse_focal(...))`），與 `/detect-focal` 存
+    `format_focal(focal)` 的既有慣例一致。原子單一 UPDATE 同時寫 auto_focal +
+    crop_mode='manual'（`VideoRepository.update_manual_focal`）。
+
+    body 另帶必填 `expected_cover_path`（Codex PR#107 第二輪 P2）：使用者開遮罩當下
+    觀察到的 `cover_path`，原樣帶回與存檔當下的 `row.cover_path` 比對——不符（rescan/
+    rescrape 期間換了封面）→ 409，DB 不變，前端應提示使用者重新開啟裁切工具。
+    `def`（非 async）→ Starlette threadpool。**不進 capabilities（不揭露）。**
+    """
+    parsed = parse_focal(req.focal)
+    if parsed is None:
+        return JSONResponse({"success": False, "error": "無效的焦點座標格式"}, status_code=400)
+
+    try:
+        db_path = get_db_path()
+        if not db_path.exists():
+            return JSONResponse({"success": False, "error": "找不到影片"}, status_code=404)
+
+        init_db(db_path)
+        repo = VideoRepository(db_path)
+
+        row = repo.get_by_path(req.path)
+        if row is None:
+            return JSONResponse({"success": False, "error": "找不到影片"}, status_code=404)
+
+        config = load_config()
+        configured_dir_uris, _path_mappings = _get_configured_dirs(config)
+
+        in_scope = any(is_path_under_dir(row.path, uri) for uri in configured_dir_uris)
+        if not in_scope:
+            return JSONResponse({"success": False, "error": "此影片不在收藏範圍，無法存入焦點"}, status_code=403)
+
+        normalized = format_focal(parsed)
+        written = repo.update_manual_focal(req.path, normalized, req.expected_cover_path)
+        if not written:
+            return JSONResponse(
+                {"success": False, "error": "封面已變更，請重新開啟裁切工具再試一次"},
+                status_code=409,
+            )
+        return JSONResponse({"success": True, "auto_focal": normalized})
+
+    except Exception as e:
+        logger.error("存入手動焦點失敗: %s", e)
+        return JSONResponse({"success": False, "error": "存入手動焦點失敗"}, status_code=500)

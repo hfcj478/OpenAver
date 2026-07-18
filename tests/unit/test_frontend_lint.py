@@ -3054,10 +3054,17 @@ class TestCoverLoadingUx67Guard:
     # ---- Track A: grid 卡片三態（A2）----
 
     def test_grid_img_has_load_and_imgloaded_fade(self):
-        """A2/DoD A-1: grid <img> 含 @load 旗標 + .cover-loaded 淡入 class（綁在 img 上）"""
+        """A2/DoD A-1: grid <img> 含 @load 旗標 + .cover-loaded 淡入 class（綁在 img 上）
+
+        99a-T2：@load 現同時設 _imgLoaded 旗標 + 呼叫 applyCellFocal（load-gated focal
+        object-position 套用，取代舊 :style="focalStyle(video)" reactive binding）。
+        """
         img = self._grid_img()
-        assert '@load="video._imgLoaded = true"' in img, \
-            "grid <img> 缺 @load=\"video._imgLoaded = true\"（三態的 loaded 觸發）"
+        # [lint-guard: pytest-justified] showcase.html(HTML @load) ↔ state-videos.js(_imgLoaded
+        # 消費) 的跨檔 Alpine binding contract；ESLint 看不到 HTML 側、static_guard_lint 看不到
+        # JS 側的消費，單邊守衛任一邊都測不出接線斷掉。
+        assert 'video._imgLoaded = true' in img, \
+            "grid <img> 缺 video._imgLoaded = true（三態的 loaded 觸發）"
         assert ":class=\"{ 'cover-loaded': video._imgLoaded }\"" in img, \
             "grid <img> 缺 :class 淡入綁定（.cover-loaded by _imgLoaded）"
 

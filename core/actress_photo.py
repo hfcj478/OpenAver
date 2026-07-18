@@ -68,10 +68,14 @@ PHOTO_HOST_WHITELIST: dict[str, set] = {
 }
 
 
-def _validate_photo_url(photo_url: str, photo_source: str) -> bool:
+def validate_photo_url(photo_url: str, photo_source: str) -> bool:
     """
     驗證 photo_url 是否符合來源白名單（SSRF 防禦）。
     scheme 必須是 http/https，host 必須在對應 source 的白名單內。
+
+    公開（原為 `_validate_photo_url`，TASK-100a Codex P2 改公開）：純函式、零
+    side effect、不做任何 I/O，故 `set_actress_photo` 路由可以在 CD-4 清焦點
+    **之前**先呼叫它擋掉注定失敗的請求——不清白清（見該處註解）。
     """
     try:
         parsed = urlparse(photo_url)
@@ -99,7 +103,7 @@ def download_actress_photo(name: str, photo_url: str, photo_source: str) -> bool
     if not photo_url:
         return False
 
-    if not _validate_photo_url(photo_url, photo_source):
+    if not validate_photo_url(photo_url, photo_source):
         logger.warning("[actress_photo] URL 不在白名單 source=%s url=%s", photo_source, photo_url)
         return False
 
@@ -145,9 +149,22 @@ def download_actress_photo(name: str, photo_url: str, photo_source: str) -> bool
         tmp_path = GFRIENDS_DIR / f".{safe_name}{ext}.download.tmp"
         tmp_path.write_bytes(resp.content)
 
-        # 4. 下載成功才刪舊檔
+        # 4. atomic replace（先安裝新圖）
+        os.replace(tmp_path, final_path)
+
+        # 5. 🔴 replace 成功「之後」才刪其他副檔名的舊檔（final_path 除外）。
+        # 順序是承重的（spec-100 §3.3 + Codex P1）：原本是「先刪舊檔 → os.replace」，
+        # 若 replace 拋例外，舊檔已經沒了、finally 又清掉 tmp → **新舊照片全部消失**，
+        # 違反 §3.3 失敗矩陣「寫檔失敗仍保留舊圖、最壞只退回置中裁」的硬保證。
+        # 這不是理論上的極端 case：Windows 上防毒即時掃描／檔案總管縮圖快取持有
+        # final_path 的 handle 就會讓 os.replace 拋 PermissionError，而 Windows 桌面
+        # 版正是本專案的主力使用族群。
+        # 同型 bug 已於 TASK-100a-T2 在 web/routers/actress.py 的 _write_actress_photo
+        # 修掉（見該處 :538-547 註解），此處是被漏掉的雙胞胎。
+        # 成功路徑行為不變（最終同樣只留 final_path 一個檔），兩個 caller
+        # （add_favorite / set_actress_photo）皆不受影響。
         for old in GFRIENDS_DIR.glob(f"{safe_name}.*"):
-            if old == tmp_path:
+            if old == final_path:
                 continue
             try:
                 old.unlink()
@@ -157,8 +174,6 @@ def download_actress_photo(name: str, photo_url: str, photo_source: str) -> bool
                     old, e,
                 )
 
-        # 5. atomic replace
-        os.replace(tmp_path, final_path)
         logger.info("[actress_photo] 下載完成：%s", final_path)
         return True
 
@@ -180,12 +195,42 @@ def get_local_photo_path(name: str) -> Optional[Path]:
     """
     取得女優本地照片路徑。
 
+    正常情況 `{safe}.*` 只會有一個檔（寫入端 os.replace 後即清掉其他副檔名的殘檔）。
+    但清舊檔可能失敗（Windows 縮圖快取／防毒鎖住舊檔 → PermissionError → 寫入端
+    warn-and-continue，見 :166-175 與 web/routers/actress.py 的 _write_actress_photo）
+    ⇒ 目錄同時存在新舊兩個 `{safe}.*`。
+
+    🔴 PR#108 Codex 三審 P2：此時**不可**回 `matches[0]`。`Path.glob` 不排序、回的是
+    `os.scandir` 順序，而 NTFS 目錄項是名稱序 B-tree ⇒ Windows 上必為字母序
+    （`.gif` < `.jpg` < `.png` < `.webp`）。實測：上傳 PNG 蓋住被鎖的舊 `.jpg`，
+    NTFS 20/20 全部解析到**舊 .jpg**（ext4 為 name-hash 序、約 10/20，這正是本 bug
+    在 dev/CI 上不會現形的原因）。後果不是暫時性 glitch：回應 URL 是 name-based
+    （`/photo/{name}?v=...`，不帶路徑）⇒ 每次 GET 都重新 glob ⇒ 舊圖 bytes 被貼上
+    新圖的 `?v=` 指紋讓瀏覽器長期快取，且 detect_focal 會對著舊圖跑偵測。
+
+    取 mtime 最新者＝剛 os.replace 落地的那個（os.replace 保留 temp 檔的 inode 與
+    mtime，故新檔的 mtime 必為較新）。次鍵 `p.name` 只讓平手時的結果**確定**（不是
+    「解對」——平手時挑的是字母序較後者，仍可能挑到舊檔）；實務上殘檔比新檔老數秒
+    到數天，平手在本 bug 情境幾乎不可能（FAT32/exFAT 2s 粒度才有現實機會）。
+    單檔（正常路徑）走 fast-path，零 stat 成本、行為與舊版 `matches[0]` 完全一致。
+
     Returns:
         找到回 Path，不存在回 None
     """
     safe_name = sanitize_filename(name)
     matches = list(GFRIENDS_DIR.glob(f"{safe_name}.*"))
-    return matches[0] if matches else None
+    if len(matches) <= 1:
+        return matches[0] if matches else None
+
+    def _freshness(p: Path):
+        # 殘檔可能在 glob 與 stat 之間被清掉（良性 TOCTOU）：排到最後，不讓它贏。
+        # -inf 而非 -1：st_mtime_ns 對 1970 前的檔案是負值，用 -1 會讓真實檔輸給幽靈檔
+        try:
+            return (p.stat().st_mtime_ns, p.name)
+        except OSError:
+            return (float("-inf"), p.name)
+
+    return max(matches, key=_freshness)
 
 
 def delete_local_photo(name: str) -> bool:

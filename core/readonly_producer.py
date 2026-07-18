@@ -24,6 +24,8 @@ from typing import Callable, Optional
 from core import thumbnail_cache
 from core.config import _STEM_IMAGE_MODES
 from core.database import Video, get_db_path
+from core.focal import requires_face_detection
+from core.focal_trigger import maybe_submit_video_focal
 from core.gallery_scanner import fast_scan_directory
 from core.logger import get_logger
 from core.organizer import (
@@ -45,6 +47,7 @@ from core.path_utils import (
     reverse_path_mapping,
     to_file_uri,
     uri_to_fs_path,
+    uri_to_local_fs_path,
 )
 from core.scraper import extract_number, search_jav
 from core.video_extensions import get_video_extensions
@@ -653,7 +656,9 @@ def _write_movie_assets(
     has_cover = bool(meta.get('cover')) and download_image(meta['cover'], cover_fs)
 
     # 2) poster/fanart (off mode also produces these — Acceptance #6)
-    imgs = generate_jellyfin_images(cover_fs, base_stem) if has_cover else {}
+    imgs = generate_jellyfin_images(
+        cover_fs, base_stem, number=meta['number'], maker=meta.get('maker', '')
+    ) if has_cover else {}
     has_poster = imgs.get('poster', False)
     has_fanart = imgs.get('fanart', False)
 
@@ -891,6 +896,42 @@ def produce_source(source, config, repo, *, proxy_url="", on_progress=None, shou
             # (repo error policy) so raw exception text (paths, errno) never leaks.
             logger.exception("[readonly_producer] 生成失敗: %s", src_uri)
             _emit(on_progress, result, src_uri, "failed", number=number, error="生成失敗")
+
+    # TASK-99b-T1 (CD-99b-1/2/7/8, spec §3.10)：post-loop bulk focal pass。落在
+    # per-file 迴圈之後——此時本次產出的產物封面已落盤，提前呼叫會讓
+    # maybe_submit_video_focal 內的 os.path.exists(cover_fs) 早退、靜默不報錯
+    # （HANDOFF §4「順序陷阱」）。bulk gate（非 per-item hook，CD-99b-2）：
+    # _should_skip（:846）讓已產過的片直接 continue，走不到 _upsert_db；per-item
+    # hook 只涵蓋本次新產者，0.12 既有唯讀庫（全數零焦點）永遠補不到。候選來自
+    # DB（get_empty_focal_candidates），天然涵蓋 skipped 片。
+    #
+    # CD-99b-8：should_abort 已中止 → 完全跳過本段（fresh 查一次，非迴圈起始
+    # snapshot、非迴圈內累積的 break 狀態）。worker 是單執行緒 FIFO、每 job
+    # ~3s，候選可達數千片，中止後仍照排＝取消後仍吃 CPU 數十分鐘，且把使用者
+    # 正在等的手動 focal 塞在其後。只 gate 本段，絕不 `return`——下方 prune
+    # 區塊必須照跑（其判準來自完整 files 列表，非本次處理進度，abort 後跑
+    # prune 是既有且安全的語意）。
+    focal_aborted = should_abort is not None and should_abort()
+    if not focal_aborted:
+        try:
+            # 各自現場算（不可複用下方 prune 的 this_run_uris，:902 之前——那個
+            # 被 `if files and not result.skipped_paths` gate 住，focal 不該因
+            # 為 partial-scan 就整批不排）。與 _upsert_db 寫入同一套推導式
+            # （to_file_uri(fi["path"], path_mappings)），不疊 normalize_path。
+            focal_this_run_uris = [to_file_uri(fi["path"], path_mappings) for fi in files]
+            if focal_this_run_uris:
+                for c_path, c_number, c_maker, c_cover_path in repo.get_empty_focal_candidates(focal_this_run_uris):
+                    # Codex P1（CD-99b-8 二次修）：入口 gate（:912）只擋「取消已在
+                    # 迴圈開始前發生」；候選數可達數千、每圈一次 os.path.exists，
+                    # 迴圈本身可能跑到秒級，取消也可能落在迴圈中途。此處每圈
+                    # fresh 查一次，與入口 gate 防同一種傷害、只是取消落點不同。
+                    if should_abort is not None and should_abort():
+                        break
+                    if requires_face_detection(c_number, c_maker):
+                        cover_fs = uri_to_local_fs_path(c_cover_path, path_mappings)
+                        maybe_submit_video_focal(c_number, c_maker, c_path, cover_fs, db_path=repo.db_path, cover_path_uri=c_cover_path)
+        except Exception:
+            logger.warning("[readonly_producer] focal trigger 批次排程失敗（不影響生成結果）", exc_info=True)
 
     # TASK-89b-T6 (CD-89b-6): DB-row-only prune. Gate = reachable AND this-run
     # list non-empty AND no skipped_paths. reachable is implicitly True here —

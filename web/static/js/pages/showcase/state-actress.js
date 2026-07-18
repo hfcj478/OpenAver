@@ -46,12 +46,20 @@ export function stateActress() {
         // --- helpers in return {} ---
 
         // 44a: helper — 更新 actressLightboxIndex + currentLightboxActress 一致性
+        // 100b-T2a（§B-1c，裁決2）：video→actress 橋接的主要收斂點——本函式是
+        // openActressLightbox()/prevActressLightbox()/nextActressLightbox() 三者共用的賦值
+        // helper，涵蓋 actress→actress 切換與 video-grid→actress-grid 首次開啟兩種情境。
+        // x-if="currentLightboxActress"（showcase.html）可能由 false 翻 true（重新掛載）——
+        // reset 必須排在賦值 currentLightboxActress **之前**同步呼叫（gotchas-frontend §8b：
+        // $watch 姊妹 watcher 是非同步 effect flush，對掛載那一幀擋不住）。
         _setActressLightboxIndex(idx) {
+            this._resetMask();
             this.actressLightboxIndex = idx;
             this.currentLightboxActress = (idx >= 0 && idx < _filteredActresses.length)
                 ? _filteredActresses[idx] : null;
             this.currentLightboxVideo = null;    // 互斥：清除影片
             this._actressChipsExpanded = { aliases: false, info: false };
+            this._refreshActressPhotoLoaded();   // §B-2b：切換/開啟女優皆走此函式，唯一呼叫點
         },
 
         // 44b: 精準匹配 helpers
@@ -375,6 +383,21 @@ export function stateActress() {
         },
 
         prevActressLightbox() {
+            // 100b PR#108 Codex P2-A：picker（.actress-picker-overlay）開著時擋女優切換——
+            // picker 候選是「這個女優」的候選照片，若切到別的女優但 picker 沒關，
+            // _onPickerSelect 讀當下 currentLightboxActress?.name 會把舊女優的候選寫進
+            // 新女優（張冠李戴）。本函式是**女優模式下**（showFavoriteActresses=true）鍵盤
+            // ArrowLeft 女優分支（handleKeydown）與 .lightbox-nav-prev @click 的共同
+            // chokepoint，一次擋住兩條路徑。⚠️ 影片模式的 hero-card（精準命中女優）也能開
+            // picker，但該情境按方向鍵走的是 video 分支（nextLightboxVideo，無此 guard）——
+            // 那條**不會**張冠李戴（overlay 的 x-show 綁 currentLightboxActress、切走即隱藏，
+            // _onPickerSelect 亦 null-check capturedName），只留 _pickerOpen 殘留的化妝品級
+            // 副作用（吞掉第一次 Esc），屬既有、範圍外。手機 swipe
+            // 已在更前面的 _lbTouchEnd 對 _pickerOpen 做同語意 pure-block guard（本函式
+            // 因此永遠不會在 swipe-picker-open 情境下被呼叫到，這裡的擋是給前兩條路徑用，
+            // 對 swipe 是安全的重複判斷、不影響既有行為）。純擋（不 _closePicker()），
+            // 照抄 _lbTouchEnd 既有語意，保持一致。
+            if (this._pickerOpen) return;
             _killLightboxTimelines();
             this._lightboxAnimating = false;
             var lbEl = document.querySelector('.showcase-lightbox');
@@ -402,6 +425,10 @@ export function stateActress() {
         },
 
         nextActressLightbox() {
+            // 100b PR#108 Codex P2-A：見 prevActressLightbox 同段註解（鏡射 guard，
+            // 女優模式下 .lightbox-nav-next @click + 鍵盤 ArrowRight 女優分支的共同
+            // chokepoint；影片模式 hero-card 的殘留副作用同該段說明，範圍外）。
+            if (this._pickerOpen) return;
             _killLightboxTimelines();
             this._lightboxAnimating = false;
             var lbEl = document.querySelector('.showcase-lightbox');

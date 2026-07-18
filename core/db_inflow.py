@@ -6,6 +6,8 @@ Search 頁整理完成後，條件式將影片寫入 DB（in-flow upsert）。
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from core.config import load_config, get_gallery_source_paths
 from core.database import Video, VideoRepository
 from core.gallery_scanner import VideoScanner
@@ -159,6 +161,22 @@ def try_inflow_upsert(
         # 步驟 3：repath（含 upsert 降級）
         repo = VideoRepository()
         video = Video.from_video_info(video_info)
+
+        # 步驟 2.9：從磁碟 NFO 回填權威 nfo_mtime（鏡射目錄掃描 scanner.py:510 既有作法）。
+        # Video.from_video_info 寫死 nfo_mtime=0.0（VideoInfo 無此欄位）；in-flow 路徑
+        # 需自行 stat 剛整理好的 NFO，否則 showcase 會誤判該片缺 NFO（🔍 icon）。
+        # 只在 NFO 實際存在時才寫入真 st_mtime；不存在（如 multipart/cd2 外部模式
+        # organizer skip NFO）維持 0，誠實回報無 NFO。stat() 失敗保卡不拋例外。
+        try:
+            nfo_path = Path(target_file_path).with_suffix('.nfo')
+            if nfo_path.exists():
+                video.nfo_mtime = nfo_path.stat().st_mtime
+        except OSError:
+            logger.warning(
+                "try_inflow_upsert: stat NFO 失敗，%r，nfo_mtime 維持 0",
+                target_file_path,
+            )
+
         new_uri = video.path  # scan_file 寫入 Video.path 即 canonical new_uri
         repo.repath(old_uri, new_uri, video)
 

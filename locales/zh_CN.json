@@ -843,7 +843,13 @@
       "tag_api_failed": "标签保存失败，请稍后再试",
       "user_tags_label": "自定义标签",
       "alias_label": "别名",
-      "alias_source_hint": "由 Scanner 同步"
+      "alias_source_hint": "由 Scanner 同步",
+      "mask_toggle": "封面裁切预览",
+      "mask_detect_failed": "焦点检测失败，请稍后再试",
+      "mask_save_failed": "裁切设置保存失败，请稍后再试",
+      "mask_cover_changed": "封面已变更，请重新打开裁切工具再试一次",
+      "mask_confirm": "确认裁切位置",
+      "mask_cancel": "取消裁切调整"
     },
     "gallery": {
       "prev": "上一张 (←)",
@@ -910,7 +916,12 @@
         "source_graphis": "Graphis",
         "source_gfriends": "gfriends",
         "source_wiki": "Wiki",
-        "source_minnano": "Minnano"
+        "source_minnano": "Minnano",
+        "source_upload": "上传",
+        "upload_btn": "上传自己的照片",
+        "upload_too_large": "图片太大（文件上限 10MB、尺寸上限 50M 像素）",
+        "upload_bad_format": "不支持的图片格式",
+        "upload_failed": "上传失败，请稍后再试"
       }
     },
     "samples": {

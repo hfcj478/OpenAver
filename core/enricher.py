@@ -12,6 +12,7 @@ from typing import List, Optional
 
 from core.config import _STEM_IMAGE_MODES
 from core.database import Video, VideoRepository, get_connection
+from core.focal_trigger import maybe_submit_video_focal
 from core.logger import get_logger
 from core.nfo_updater import parse_nfo
 from core.organizer import crop_to_poster, download_image, find_subtitle_files, generate_nfo
@@ -242,6 +243,8 @@ def _write_external_images(
     fs_path: str,
     external_manager: str,
     overwrite_existing: bool,
+    number: str = '',
+    maker: str = '',
 ) -> dict:
     """外部媒體管理器模式下產生 poster / fanart 圖（72b-T6 CD-7 方案 A）。
 
@@ -298,7 +301,7 @@ def _write_external_images(
         poster_ok = True  # 同上
     else:
         try:
-            poster_ok = crop_to_poster(str(cover_path), str(poster_path))
+            poster_ok = crop_to_poster(str(cover_path), str(poster_path), number=number, maker=maker)
         except Exception as e:
             logger.warning("_write_external_images poster 裁切失敗 (%s): %s", fs_path, e)
 
@@ -457,6 +460,8 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
             fs_path=fs_path,
             external_manager=external_manager,
             overwrite_existing=overwrite_existing,
+            number=number,
+            maker=meta.get("maker", ""),
         )
         try:
             nfo_written = _write_nfo(
@@ -519,6 +524,27 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
         # db-ns-ok: fs_path_for_db passed through to _db_upsert's internal primitive sink
         _db_upsert(repo, number, fs_path_for_db, meta, local_cover_path=local_cover,
                    nfo_mtime=nfo_mtime, written_uris=written_uris, path_mappings=path_mappings)
+
+        # 重刮 focal trigger（TASK-98b-T2 + 99a-T1b CD-4）：只在「實際寫入新封面內容」
+        # （cover_written=True）時才作廢舊手動焦點、再排新的背景偵測；reset 必須在
+        # submit 之前（先清舊值、再讓 gate 判斷是否排 worker，避免有碼片極端時序下
+        # 短暫殘留 manual）。cover_written=False（只重寫 NFO，未覆蓋既有封面）→ 完全
+        # 不進此塊，manual 值原樣保留。video_path_uri 須與 _db_upsert 寫入的 key 一致
+        # （:190 / :594 to_file_uri(fs_path_for_db)），複用上方已算過的 path_uri。
+        if cover_written:
+            repo.reset_focal_to_auto(path_uri)
+            # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
+            maybe_submit_video_focal(
+                number,
+                meta.get("maker"),
+                to_file_uri(fs_path_for_db if fs_path_for_db is not None else fs_path),
+                local_cover,
+                # 99b-T2 caller #4：與 _db_upsert:619-620 計算 cover_uri 同式
+                # （to_file_uri(local_cover_path, path_mappings)），local_cover
+                # 即該處的 local_cover_path。cover_written=True 時 local_cover
+                # 必非空，仍加 `if local_cover else ""` 防未來 gate 條件漂移。
+                cover_path_uri=to_file_uri(local_cover, path_mappings) if local_cover else "",
+            )
 
     # nfo_mtime 獨立更新：不論 mode/source，只要 NFO 存在就同步 DB
     # 避免 analysis 永遠視為 missing_nfo

@@ -843,7 +843,13 @@
       "tag_api_failed": "Failed to save tag, please try again",
       "user_tags_label": "Custom Tags",
       "alias_label": "Aliases",
-      "alias_source_hint": "Synced from Scanner"
+      "alias_source_hint": "Synced from Scanner",
+      "mask_toggle": "Cover crop preview",
+      "mask_detect_failed": "Focal detection failed. Please try again later.",
+      "mask_save_failed": "Failed to save crop settings. Please try again later.",
+      "mask_cover_changed": "Cover has changed. Please reopen the crop tool and try again.",
+      "mask_confirm": "Confirm crop position",
+      "mask_cancel": "Cancel crop adjustment"
     },
     "gallery": {
       "prev": "Previous (←)",
@@ -910,7 +916,12 @@
         "source_graphis": "Graphis",
         "source_gfriends": "gfriends",
         "source_wiki": "Wiki",
-        "source_minnano": "Minnano"
+        "source_minnano": "Minnano",
+        "source_upload": "Upload",
+        "upload_btn": "Upload your own photo",
+        "upload_too_large": "Image too large (max 10MB file, 50M pixels)",
+        "upload_bad_format": "Unsupported image format",
+        "upload_failed": "Upload failed. Please try again later."
       }
     },
     "samples": {

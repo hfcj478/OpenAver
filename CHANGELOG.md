@@ -5,6 +5,151 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.4] - 2026-07-18
+
+本版修好「改過名（有別名）的女優換照片特別難」的兩個問題（feature/102，spec-102 Part A＋B）。之前這類女優在照片挑選視窗裡：本機候選一選就失敗、雲端又永遠查不到圖，體感就是「換圖整個壞掉」。
+
+### Fixed
+#### 🖼️ 別名片的本機候選選了就能換（Part A）
+- 修好「照片挑選視窗給我看的本機封面候選，只要那張封面來自她改名前（別名）名下的影片，一選必跳『抓取失敗，請稍後再試』」。根因是產生候選與儲存驗證用了不同的名字展開範圍；現在兩端一致，**看得到的候選就選得了**。
+- 安全邊界不變：不屬於這位女優（含其別名）名下的影片路徑，仍然一律拒絕。無別名的女優行為與以前完全一致。
+
+### Added
+#### 🔄 重抓時自動輪流用別名向線上圖庫查詢（Part B）
+- 在照片挑選視窗按 🔄 重抓，雲端查詢會自動輪流用她的每個名字查（主名 → 別名依序 → 繞回主名）。剛改名的女優線上圖庫多半只認舊名，之前永遠 0 命中；現在多按幾次 🔄 就能撈到掛在舊名下的雲端照片。
+- **使用者無感、UI 零改動**：沒有新按鈕、不顯示目前用哪個名字查（刻意設計——這是「增加圖片來源」的內部機制，不是要操作的功能）。無別名的女優按 🔄 行為與以前完全一致。換一位女優後輪替自動從主名重新開始。
+
+### 測試
+- 全套 pytest **5348 passed, 1 skipped**（unit + integration，排除 smoke／e2e）＋ `ruff check .` 綠 ＋ `npm run lint` 綠（static_guard_lint 1034 條）＋ `npm test`（node:test 118）。
+- 來源金絲雀：**8 源全 PASS**（javbus／jav321／heyzo／d2pass／avsox／fc2／javdb／dmm，pre-merge live 健康檢查）。
+- 輪替全序列以 **CDP 真機實測**（headless Playwright 真 click）：首開無參數、三連 🔄 查詢名 主名→別名1→別名2→繞回、換人歸零、無別名逐位一致、儲存身分正確（驗後資料已還原）。
+- 每 task 獨立 Sonnet review ＋ Codex PR review（P0 手刻 URI 已修、二審通過）＋ Gemini 整支 branch 第二意見（5 條 findings 全數為既有設計已覆蓋，0 採納）。
+- 本版 **UI 零改動、零新增 i18n key**。
+
+## [0.12.3] - 2026-07-18
+
+本版把焦點（對臉裁切）這條線的尾巴收乾淨（feature/101，spec-101 四部分 A/B/C/D）。前幾版已經讓無碼封面在 app 裡自動對準人臉、也能手動微調；這版補上「媒體伺服器海報也對臉」、把燈箱按下對焦鈕的等待過程做得更連續好懂、清掉兩塊內部技術債，並讓影片對焦鈕只在真的會用到時才出現。承重牆不變：**全程只存焦點座標，你的封面圖檔一個位元都不會被改寫**。
+
+### Added
+#### 🎯 媒體伺服器海報也會對準臉（Part A）
+- 給 Jellyfin／Emby／Kodi 掃描用的實體海報檔（`-poster.jpg`），無碼片在產生時現在會自動偵測人臉、以臉為中心裁切（跟 metatube 一樣的基礎功能）。有碼片與偵測不到臉的封面維持原本裁法、位元級零變化。
+- **不管用哪個來源刮的**（內建 8 源或 metatube 聯邦）一視同仁；四個會產生海報的路徑（整理、補完、唯讀來源生成、掃描頁補圖）全數納入。
+
+### Changed
+#### 🎯 燈箱對焦「按下 → 找到」全程視覺連續（Part B）
+- 按下對焦鈕後那 2–3 秒，星空等待動畫與亮窗落定改為**交棒重疊**——星空淡出的同時亮窗收斂到臉上，中間不再有硬切／空窗閃一下。
+- **一眼看出有沒有抓到臉**：找到臉 → 亮窗收斂落定；沒找到 → 亮窗直接以基準位置淡入、不收斂（用「有沒有收」這個動作區分，不用顏色，不依賴色覺）。
+- 收斂過程中你就伸手拖曳 → 立刻交給你的手，動畫讓位不跟你打架。
+
+#### 影片對焦鈕只在真的會用到時才出現（Part D）
+- 電腦寬螢幕看片時，封面本來就是完整的、對焦鈕按了在當前畫面看不出效果，現在**桌面預設收起這顆鈕**；**手機／窄視窗**（封面被裁成直式 poster 時）才顯示，行為與以前完全一致。拖動視窗跨過寬窄邊界時，鈕即時跟著出現／消失、不需重整。
+  > 說明：這**不是**「這顆鈕沒用」。焦點是有跨畫面後果的儲存值——桌面收起拿掉的只是「桌面預設你自己將來用窄視窗看同一片時的裁切」這個極少用到的情況；桌面當前 viewport 本來就看不到這個裁切效果。
+
+### Fixed
+- 修好「**換照片視窗開著時按左右鍵切片，之後對焦鈕不見、手機滑不動**」（Part B；`_pickerOpen` 狀態洩漏，按一次 Esc 或關燈箱即恢復，本版直接根治）。
+- 修好「**偵測沒找到臉時，對焦窗停在全幅、看不到遮罩**」（Part B；改為落回右裁基準，照樣可拖曳存入）。
+- 對焦忙碌等待的 spinner 一律會轉起來（Part B）。
+- 修好「**某些瀏覽器／開了廣告攔截器時，影片對焦按 ✓ 出現『裁切設定儲存失敗』**」（Part D）——存檔請求的網址剛好長得像影片廣告連結，被廣告／隱私攔截器在瀏覽器端擋掉、根本沒送到伺服器；把該端點改名解除，行為完全不變。
+
+### Internal
+- 女優對焦裁切比例的前後端兩份數值加了**自動一致性守衛**（改一邊漏改另一邊會被 lint 擋下，防「錯框」類靜默 bug）；移除一個從未實作過的 `photo_needs_resize` 殘留欄位（Part C）。純內部工程，對使用者無感、零行為變更。
+
+### 已知限制
+- **手動焦點不進媒體伺服器海報**：你在 app 裡手動拉的焦點是 app 的東西、不外流到 `-poster.jpg`（海報走獨立的自動偵測，這是刻意的產品邊界，不是缺陷）。
+- **海報烤好後才改焦點 → 海報維持舊裁切**：海報是單向匯出產物、不會因你之後改焦點而自動重烤。**逃生口**：到掃描頁對該片補一次圖即會重烤更新（與「既有庫需重掃一次才補焦」同一個既有概念）。
+
+### 測試
+- 全套 pytest **5338 passed, 1 skipped**（unit + integration，排除 smoke／e2e）＋ `ruff check .` 綠 ＋ `npm run lint` 綠（eslint／stylelint／`static_guard_lint` **1034** 條）。
+- 來源金絲雀：**8 源全 PASS**（javbus／jav321／heyzo／d2pass／avsox／fc2／javdb／dmm，pre-merge live 健康檢查；heyzo 較 0.12.2 已恢復）。
+- 每 task 獨立 Sonnet review ＋ Codex PR／本地 review ＋ **CDP 冷載／存檔實測**（影片對焦 icon 依窄螢幕條件顯示、resize 即時翻、✓ 存檔端點改名後真的 200 存入）＋ **整支 branch holistic 第二意見**（Sonnet，LGTM；3 條 P3 maintainability residual 記錄待未來清理，非本版 bug）。
+- **i18n 三語（zh_CN／en／ja）本版新增 key 暫留空**、靠 fallback 顯示 zh_TW（正確翻譯歸 milestone）。
+
+## [0.12.2] - 2026-07-16
+
+本版主軸：**女優照片可以自己上傳了 + 女優也能對焦**（feature/100，spec-100／plan-100a＋100b＋100c）。之前女優牆的照片只能靠系統自動抓（線上圖庫或本機影片封面），想換成自己喜歡的照片得摸到資料夾手動塞檔案；而且女優頭像一律置中裁切，偶爾裁的位置不理想也沒辦法調整。這版把兩塊補齊，並在收尾時把對焦互動簡化成與影片一致（只在照片夠寬時才出現對焦鈕、只可左右拖）。
+
+### Added
+#### 📤 女優照片可以自己上傳
+- 燈箱右上角加一顆上傳鈕，桌面選檔或手機開相簿都能用，選好照片就直接變成主圖（JPEG／PNG／WebP／GIF 都吃）。
+- 上傳的照片存的是你選的原圖、不額外裁切也不跑偵測，跟「線上抓」「本地切割」一樣快、幾乎零等待。
+- 檔案太大或格式不支援時會跳出明確提示，不會讓你以為按了沒反應；失敗時 picker 視窗會留著方便你直接重選再試。
+
+#### 🎯 女優頭像也能手動對焦
+- 燈箱裡女優名字那一行加一顆對焦鈕（和影片的對焦鈕同一個位置），按下去會自動抓一次臉的位置，抓到後可以左右拖曳微調，✓ 存起來、✗ 取消不寫入。
+- 對焦鈕只有在「照片明顯偏寬、接近方形」、真的有左右可調空間時才出現。絕大多數直式沙龍照本來置中就對準臉了，這類照片不會冒出一顆按了也沒什麼好調的鈕。
+- 就算這張照片抓不到臉（例如非正臉照、藝術照），框會停在置中位置，你還是可以手動左右拖到想要的地方存起來，不會卡住、也不會失敗給你看。
+- 存好之後，牆上的縮圖跟燈箱大圖會立刻一起變成新的裁切位置，不需要重新整理頁面。
+
+### Changed
+- 換了新照片之後（不管是上傳自己的圖、線上重新抓、還是本地切割影片封面），舊的手動對焦位置會自動失效、改回置中裁切——避免舊的對焦位置歪打到新照片上。
+
+### 已知限制
+- **桌面手動換檔（自己把圖丟進 `output/Gfriends` 資料夾）不會自動清掉既有的對焦設定**：如果這位女優之前用對焦鈕存過焦點位置，之後又手動把資料夾裡的照片換掉，舊的焦點位置會繼續套用在新照片上，可能會裁到不理想的地方。**逃生口**：再上傳一次照片，或是再按一次對焦鈕重新設定一次，兩者都會蓋掉舊的焦點。
+
+### 測試
+- 全套 pytest **5289 passed, 1 skipped**（unit + integration，排除 smoke／e2e）＋ `ruff check .` 綠 ＋ `npm run lint` 綠（eslint／stylelint／`static_guard_lint` **1007** 條）＋ `npm test`（node:test **112**）。
+- **對焦互動於 100c 收尾定案**（女優對焦鈕只在照片橫向可拖幅度 ≥20% 時出現、只左右拖、Y 軸整條移除）：CD-11「不得復活」forbidden 守衛對 `computeMaskAxis`／`_maskFocalY`／`translateY`／牆格 Y 軸 object-position 輸出各自 mutation 單獨紅→還原綠；零行為變更以 headless CDP 冷載實測（全 22 位女優恰 5 位顯示對焦鈕；editor／render 兩側刪碼前後行為逐項一致；影片路徑零回歸）。
+- **上傳點擊路徑**另以 CDP 實測：`x-show="_focalIconVisible()"` 五條件在依序切換 22 位女優全程無 staleness（method 無條件讀 5 旗標避開 `&&` 短路漏訂閱）。
+- 來源金絲雀：**7 源 PASS + heyzo FAIL**（0 healthy／回空內容，疑站方改版或連線問題；**與本版 diff 無關**——本版零 scraper 改動，advisory 已記待查）。
+- 每 task 獨立 Sonnet review ＋ Codex PR review（100a 三條換圖失敗語意）＋ Codex 本地 review（100b／100c）皆修並 mutation／CDP 證明。
+- **i18n 三語（zh_CN／en／ja）本版新增 key 暫留空**、靠 fallback 顯示 zh_TW（正確翻譯歸 milestone）。
+
+## [0.12.1] - 2026-07-15
+
+本版主軸：**焦點裁切收尾——燈箱拖曳微調 + 唯讀來源補焦**（feature/99，spec-99／plan-99a＋99b）。0.12.0 把自動對焦的地基做完了，但留了三個尾巴：燈箱的手動微調是明示的「過渡版」互動、唯讀來源不會自動對焦、牆上小格對偏側臉只是近似。本版把三個都收掉。承重牆不變：**全程只存焦點座標，你的封面圖檔一個位元都不會被改寫**。
+
+### Added
+#### 🎯 燈箱焦點編輯：點一下 → 拖一下 → 存
+- **新互動取代 0.12.0 的過渡版**：點焦點 icon → **自動對焦**（跑一次偵測、只做預覽不寫入）→ **左右拖曳**亮窗微調到你要的位置 → **✓ 存／✗ 取消**。舊版那套「點窗切換右裁／對臉、點窗外儲存」已移除。
+- **偵測抓不到臉也能用**：偵測沒結果就停在右裁基準，你照樣可以直接拖到想要的位置存起來——歪臉封面（0.12.0 的已知限制）從此有了手動逃生口。
+- **所見即所得**：燈箱裡拖到哪，牆上小格就裁到哪。
+
+#### 🗂️ 唯讀來源也會自動對焦
+- NAS／雲端的**唯讀來源**（off／`.strm` 媒體庫）掃描時現在也會自動偵測焦點，與一般來源一致。**既有的庫重新掃描一次即可補上**（不會改動來源任何檔案）。
+
+### Fixed
+- **牆上小格對偏側臉的裁切不再是近似**（0.12.0 已知限制）：小格改用與燈箱大圖同一套 aspect 換算，臉明顯偏一側時小格與燈箱的裁切位置一致，不再有落差、也不再把偏側臉切掉一點。
+- **臉貼在封面極左／極右時，拖曳起手有死區**：偵測到的臉很靠邊時，亮窗視覺上停在封面邊界、拖曳卻從邊界外開始算，導致往回拖要先「空拖」一段（臉在極右時約封面寬度的 17%）窗子才開始動。三處幾何換算（顯示／拖曳起手／拖曳中）現在共用同一個鉗制函式。
+- **偵測中換封面不會把舊圖的座標寫到新圖上**：背景偵測跑到一半、封面剛好被重刮換掉時，舊圖算出的焦點不再會蓋到新封面（compare-and-store 守衛）。
+
+### Changed
+- **重刮且實際換圖**時，該片的手動焦點會降回自動——手動座標是對著舊封面拉的，對新圖已失效。同封面重刮則完整保留你的手動決定。
+- 移除 `POST /video/crop-mode` 端點（0.12.0 過渡互動的後端），改為 `POST /video/focal` 原子寫入；`POST /video/detect-focal` 改為純預覽（不再寫 DB）。兩者皆未揭露於 `GET /api/capabilities`（純 UI 互動，AI agent 用不到），故 capabilities 無變更。
+
+### 已知限制
+- **臉明顯歪斜的封面可能抓不到**（偵測器走單一角度）：會退回右裁基準，此時**可在燈箱手動拖曳指定**（本版讓這句成真）。改進偵測器本身為 spec-99 Non-Goal。
+- **既有影片庫需重掃一次才補焦**（沿自 0.12.0）：不掃描就不動；到掃描頁重新掃描一次即會補上尚無焦點的無碼片。
+
+### 測試
+- 全套 pytest **5233 passed, 1 skipped**（unit + integration，排除 smoke／e2e）＋ `ruff check .` 綠 ＋ `npm run lint` 綠 ＋ `npm test`（node:test **89**，含拖曳死區鉗制 6 案）。
+- 模擬純 Linux CI（pytest plugin 設 `CURRENT_ENV='linux'`）261 passed——WSL 綠不等於 CI 綠（`to_file_uri` 的 `path_mappings` 分支寫死 `CURRENT_ENV == 'wsl'`）。
+- **e2e**：`tests/e2e/test_showcase_focal_e2e.py`（CI 排除、milestone 才跑）。破壞性測試的安全邊界改為**結構性**——`page.route` 攔在瀏覽器網路層 + `fulfill()`，讓「寫進真實 DB」不可能發生，而非事後偵測。
+- **真機驗收**（owner，唯讀來源 4 片 FC2/HEYZO + 1 片 1pondo）：重掃 3 片有封面者全數排入偵測並 commit（驗證 §3.10 bulk 設計對既有庫成立）；9 筆既有 `manual` 值逐一比對完全未變；自動偵測 x=`0.2926` 與先前手動拉的值完全一致。**未**真機驗證：換封面 race 本體（時序窄 ~3s，改由真 DB mutation 測試覆蓋）、首刮 read-back（owner 選擇跳過，同由真 DB 測試覆蓋）。
+- Codex PR review 三輪 + 99b P1（focal 候選迴圈 per-iteration abort gate）皆已修復並 mutation 證明。
+- Gemini 整支 branch 第二意見：分 4 群審，**1 條真命中**（拖曳死區 P2，已修並補 fail-closed 守衛 + node test）；其餘 6 條經查證為誤報（`focalCellObjectPosition` 首行即 null-safe／`crop_mode` 為 `NOT NULL DEFAULT 'auto'`／`repath` 的 `old_row` 非 caller 傳入且該 race 下 UPDATE 本就影響 0 列／桌面 rail 補 `$watch` 與對照組同為 no-op）。
+
+## [0.12.0] - 2026-07-14
+
+本版主軸：**焦點裁切——無碼封面自動對準人臉**（feature/98，spec-98／plan-98a＋98b，98a 地基 T1–T6 ＋ 98b 影片 T1–T7）。過去無碼片（FC2、素人、uncensored 廠牌）封面一律「切右半邊」，臉常被切掉一半或切在邊緣；本版讓這類封面在牆上小格與燈箱大圖都**以人臉為中心裁切**，看起來整齊得多。有碼片維持原樣（右裁），零額外成本。
+
+### Added
+#### 🎯 焦點裁切：無碼封面自動對準人臉
+- **自動對焦**：無碼片刮削或掃描入庫時，背景自動偵測封面人臉、算出焦點座標；牆上小格、相似探索、燈箱大圖都改以人臉為中心裁切。抓不到臉的封面優雅退回原本的右裁，不會出錯。
+- **只認無碼片**：以番號／廠牌精準判斷（FC2、素人標籤、uncensored 廠牌白名單）。有碼片完全不跑偵測、零成本，行為與以前一模一樣。
+- **不阻塞**：偵測在背景進行，刮削／掃描不會因此變慢；同一張封面若短時間重複觸發，只算最新一次。
+- **絕不改封面檔**：全程只把「焦點座標」存進 OpenAver 自己的資料庫，顯示時才即時裁切——你的原始封面圖檔一個位元都不會被改寫。
+- **燈箱手動微調**：燈箱大圖可切換「右裁／對臉」、對漏判的封面手動觸發偵測（此互動為過渡版，見下「已知限制」）。
+
+### Fixed
+- 燈箱焦點遮罩先前在真機上完全點不動（幾何算錯 + 淡入過場卡住看不見）已修好，並補上切換影片時的競態保護。
+
+### 已知限制
+- **燈箱遮罩的操作方式為過渡版**（點 icon → 點窗切換 → 點窗外儲存），不夠直覺；下一版（spec-99）會改成「點 icon 自動對焦 → 左右拖曳微調 → ✓ 存／✗ 取消」。此過渡互動**不代表最終 UX**。（**已於 0.12.1 取代**）
+- **臉明顯歪斜的封面可能抓不到**（偵測器走單一角度），會退回右裁；可在燈箱手動微調（過渡版）或等下一版拖曳指定。（**仍然成立**；0.12.1 起可在燈箱拖曳指定）
+- **既有影片庫需重掃一次才補焦**——本版不會被動回填舊庫（不掃描就不動）；到掃描頁**重新掃描一次**，即會自動補上尚無焦點的無碼片（不必改動任何檔案）。
+- **唯讀來源尚未納入自動對焦**——NAS／雲端的唯讀來源（off／`.strm` 媒體庫）目前掃描不會自動偵測焦點，將於後續版本支援。（**已於 0.12.1 修復**）
+- **牆上小格對偏側臉的裁切為近似**——臉在正中的封面對得準；臉明顯偏一側時，小格的裁切位置與燈箱大圖（精準）會有落差、偏側臉可能仍被切一點。後續版本會讓小格與大圖一致精準。（**已於 0.12.1 修復**）
+
 ## [0.11.12] - 2026-07-12
 
 本版主軸：**javdb 在 released 版復活 — 打包 metadata 修復 + 打包產物 runtime 驗證守衛**（feature/97，spec-97／plan-97，T1–T5）。**這是 0.11.10 之後第一個實際面向用戶的 GitHub release**（0.11.11 為純內部 test-deflation 里程碑、不單獨發版）。使用者唯一可感知的變化：**released 版（Windows/macOS ZIP）指定 javdb 來源搜尋，行為終於與開發環境一致**——能命中就命中，真的查無才回「無結果」。
@@ -56,189 +201,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 來源金絲雀：**7 源 PASS + fc2 SKIP**（unreachable／no probe，站方連線問題非 parser 回歸，advisory 記錄）。
 - Codex PR review：PR-1 P2×1（eslint persistence.js group 補 selector）、PR-2 P1/P2/P3×4（scope-narrowing）、PR-3 前置審 P1×2+P2×1（1200 窗上限＋lazy 量詞＋multi-tag defer）皆修復並 mutation 證明（修前 GREEN=缺口證實 → 修後 RED）。
 
-## [0.11.10] - 2026-07-10
-
-本版主軸：**設定頁「命名區」膠囊化 + 「列表生成」兩層 IA 重排**（feature/95，Part A spec-95a／Part B spec-95b，兩個獨立部分）——把設定頁兩塊長期是「純文字輸入框 + 一長串控制項」的區域，改成更好懂、更難出錯的形態：命名區（資料夾層級／檔名格式）從手打 `{token}` 字串改成「原子變數膠囊（pill）+ 字面文字自由混排」的視覺化編輯器；列表生成設定拆成「日常常用（外層常駐）」+「離線 HTML 匯出（摺疊進階）」兩層。後端零 schema／DB 變更（僅 format-variables SSOT 端點加情境旗標）。
-
-### Added
-#### 🏷️ 命名區膠囊化（Part A）
-- **資料夾層級／檔名格式改膠囊編輯器**：每個變數（番號／女優／片商／標題／後綴…）以原子「膠囊」呈現，不再是手打 `{num}` 這種容易打錯的字串；膠囊間可自由插入字面分隔符（`[` `]` `-` `_` 等）。變數選單一鍵插入、膠囊整顆刪除（× 或 Backspace 邊界原子刪，不留 `{titl` 半截），貼上時已知變數自動 tokenize、未知 `{foo}` 保留字面。複用既有 source-pill 視覺（999px accent），與 8+30 來源膠囊一致；IME 組字 / Enter guard 不誤送。
-- **資料夾層級改動態清單 + 硬上限 3 層**：可「新增一層／移除此層」，最多 3 層（第 4 層 add 鈕灰化）；載入 >3 層的舊設定自動正規化為前 3 層（保後端有效層、棄第 4 層以上死資料，先 slice 再剝 `{suffix}`）。層順序以穩定 id keying，移除中間層不錯置。
-- **`{suffix}` 情境隔離**：後綴變數只在「檔名格式」可用、資料夾層級選單不出現（`folder_ok` 情境旗標，由 format-variables SSOT 端點下發，前後端不再各自硬編變數清單）。
-
-#### 🗂️ 列表生成設定兩層 IA（Part B）
-- **sec-gallery 拆兩層**：外層常駐＝日常會調的（排序／順序／每頁數量／最小影片尺寸）；摺疊進階層＝只有匯出離線 HTML 才需要的（顯示模式／輸出目錄／輸出檔名），預設收合。
-- **揭露文案克制化**：排序／順序／每頁加「也是你瀏覽頁（Showcase）的預設」揭露；最小尺寸 hint 改寫成「掃描／入庫閾值 — 0 = 不過濾；小於此不入庫（決定你看得到哪些片）」；離線匯出層加 Windows 本機檢視說明條（含 `file://` 成因，材質克制不搶眼）。
-
-### Changed
-- 「進階刮削設定」內的命名區改用膠囊編輯器（取代純文字輸入框）；預覽區改以 `x-text` 渲染（移除舊手動 regex escape，天然防 XSS）。
-- 列表生成設定 state 旗標 `galleryAdvanced` → `galleryExport` rename（語意更準）。
-
-### Fixed
-- **冷模組快取下檔名格式膠囊編輯器持續空白**（95a-T8）：使用者首次開 app／清快取後首載時，「檔案命名格式」膠囊編輯器有時完全空白（存的格式沒渲染成膠囊）。成因是 `loadConfig` 靠單一 `$nextTick` 排的一次性 hydrate callback 在冷模組載入時序下不觸發，而該編輯器又早 mount 過了 ready-gate（資料夾層走 `x-for` 自載、不受影響）。改用 reactive `x-effect` + 響應式就緒旗標 + one-shot 收斂補載，繞過不可靠的單發 `$nextTick`（暖快取本就正常，故只在首次冷載可見）。
-
-### Internal
-- format-variables 抽成單一真理來源端點（`/api/config/format-variables`）+ `folder_ok` 情境旗標；補「format-variables ⊆ organizer 消費」契約守衛（pytest）。
-- 膠囊 tokenizer（`tokenize` / `serializeTokens`）抽成純函式 + node:test round-trip 守衛（`serialize(tokenize(s)) === s`，與 whitelist 無關）；ChipEditor 為非受控 widget，`naming` closure 存參考不進 Alpine x-data（避免 contentEditable 響應式追蹤導致游標跳）。
-- 命名區 ESLint 守衛（膠囊 label brace-strip／禁 raw key）+ orphan 清理 + `/design-system` 同步；列表生成 IA 加 zero-dep lint script（`scripts/lint-settings-ia.mjs` 串 `npm run lint:html`，DOM-ancestry 守 export 控制項必在摺疊內）。
-- 命名區新增 i18n key 只寫 `zh_TW`（其餘三語留空靠 fallback，milestone 補譯——已知缺 16 key warning）。
-- Codex PR review：95a P1（`{suffix}` 資料夾主動移除 + 前 3 層正規化「先 slice 再剝」順序）、95b P2（IA 守衛補鎖 `avlistOutputDir`／`Filename` 在摺疊內）皆已修。
-
-### 測試
-- 全套 pytest **5523 passed, 2 skipped**（unit + integration，排除 smoke／e2e）＋ `ruff check .` 綠 ＋ `npm run lint`（eslint + stylelint + lint-settings-ia）綠。
-- 來源金絲雀：**8 源全 PASS**（javbus／jav321／heyzo／d2pass／avsox／fc2／javdb／dmm）。
-- Gemini 3.1 Pro 整支 branch 第二意見：Part A（命名膠囊）**Approved**（讚 SSOT／closure 隔離 contentEditable／純函式 tokenize／slice-before-filter 順序／x-text 天然防 XSS；4 條 advisory 皆低 severity 或 future-note、無 P1）；Part B 本輪 agy 落入 sandbox 對話式 fallback 未取得有效審查（已知失敗態），correctness 由 per-task Sonnet review + Codex PR review 覆蓋。
-- **95a-T8 冷載修復由 coordinator CDP 實測驗收**（`cacheDisabled` 冷載 3/3 正確 hydrate、暖載／folder 零回歸、編輯游標不跳、reset 重新 hydrate）。
-- E2E-95 runbook 全跑：Part A（A1–A11）+ Part B（B0–B7）全 PASS（A0 即本版修復的 bug）。
-- 視覺 hard-gate：命名膠囊觀感／兩層 IA 可掃讀性／Windows 說明條材質克制由 owner 真機驗收。
-
-## [0.11.9] - 2026-07-10
-
-本版主軸：**掃描頁「補資料」升級成逐片「工人在幹活」進度卡 + 命中封面飛入圖書館**（feature/94，spec-94 G1–G7）——把掃描頁「補資料」（batch-enrich SSE）從一個乾計數器 + 終端 log，升級成逐片可視的進度卡：每片輪到時即顯示「番號 · 搜尋中…」，結果回來後切到對應結局（命中／命中無封面／查無／失敗／唯讀跳過）；**命中且有可服務封面時，真封面從進度卡飛進側邊欄「瀏覽」**（＝我的圖書館），落地帶 scale/glow + 微光，進度卡上累計 badge。承接 spec-92 D 項「入庫飛入抽成共用元件（`GhostFly.playInboundFly`）、scanner 接線留未來」——本 branch 就是那個未來，**直接複用該共用入口、不新增動畫 primitive**。後端極小擴充（`EnrichResult.reason` 欄位 + SSE `result-item` 帶 reason），**刻意不碰核心 `search_jav`、零 schema/DB 變更**。
-
-### Added
-#### 🎬 掃描頁補資料逐片進度卡 + 命中封面飛入
-- **逐片「工人在幹活」進度卡**：補資料時，進度區顯示「目前這片」的可視卡（番號從一開始就在，不等結果），取代乾計數器；五態可辨識——`搜尋中…`／命中封面浮現／`補到資料（無封面）`（文字非破圖）／`查無`（琥珀安靜一閃換片）／`失敗`（進 log）／`跳過（唯讀）`。**命中大聲、落空安靜**：只有真的補到可服務封面才飛入 + badge + 微光，其餘小 glyph 一閃就換片、不搶注意力。
-- **命中封面飛入圖書館（兩格待命位 + 延後飛）**：進度卡分兩格——左「待命格」停駐前一片命中封面、右格顯示目前搜尋中；命中封面先進待命格停一個搜尋週期（不一出現就飛），**下一片命中時**前一片才飛向側邊欄「瀏覽」入口（複用 spec-92 `playInboundFly`），run 結束時 flush 最後一片；落地 scale/glow + 側邊欄微光；進度卡上累計 badge（本次 run 補到資料片數，run 後淡出，不做持久紅點）。延後飛用真實補資料節奏當 dwell，讓每顆封面看得清；待命格容器恆渲染固定尺寸，飛入起點 rect 恆有效、免時序 race。
-- **手機／減少動態不靜默**：窄螢幕（側邊欄隱藏）逐片反饋交給本就可見的進度卡 + badge，收尾用既有 run-end summary toast（不做 per-item toast，避免批次刷屏）；減少動態下命中僅微光、不播飛行。
-
-### Internal
-- 後端只加「scraper parse → `EnrichResult.reason`」+ SSE `result-item` 帶 reason（`reason` ∈ hit／no_cover／not_found／error／readonly；normal 站台靠 `asdict` 自動流出、唯讀/例外站台字面補）；**`search_jav` 零改動**（`git diff` 該檔為空）。前端命中封面 URL 由 `file_path` 自組 `/api/gallery/thumb`，後端不吐 `cover_url`。`GET /api/capabilities` 的 batch_enrich `result_item` output_schema 同步補 `reason`。
-- **獨立 sonnet review 抓到並修復一個 bulk race（P1）**：bulk 下片 A 命中排了飛入後，片 B 的 progress 於同一同步 SSE chunk 覆寫進度卡狀態會隱藏片 A 的命中封面 img（rect=0），使片 A 的 `$nextTick` 讀到退化不飛。修法：飛入起點 `x-ref` 從會隱藏的 `<img>` 移到固定尺寸、恆渲染的容器 div，rect 跨換片穩定。
-- **Codex PR review P1**：`reason=hit` 原用「cover.jpg 磁碟真相」判，但前端命中封面走 `/api/gallery/thumb`，而 `/thumb` 硬性要求 DB `cover_path` 非空、不 fallback 磁碟 sidecar。兩者判準不同 → 「磁碟有 .jpg 但 DB cover_path 空」（掃描後才丟封面／db·nfo-sourced 命中跳過 `_db_upsert`）時卡片顯示 hit、`/thumb` 404 破圖、且該片仍留 missing_cover 清單。修：`reason=hit` 改為鏡射 `/thumb` 的 gate——所有寫檔完成後重讀 DB 最終狀態，`cover_path` 有值才 hit（散落 sidecar 未入 DB → 誠實回報 no_cover、不飛、不破圖）。含 P3 stale wording 併修。
-- **Codex PR #98 review P2**：上條只鏡射了 `/thumb` 第一道 gate（DB `cover_path` 非空）。但 `/thumb` cache miss/disabled 時還有第二道——要讀**實體封面檔**（`uri_to_local_fs_path` 反解後 generate／fallback），檔不在 → 404。故「DB 有記 `cover_path`、但實體封面檔已被刪/移／path_mapping 失效」時仍會誤判 hit → 飛入破圖。修：`reason=hit` 改為**同時**要求 DB `cover_path` 有值 **且**用 `/thumb` 同一解析確認實體檔存在（第三個互補回歸鎖固化；stale-WebP-cache 的 false-negative 是安全方向＝不破圖，已知接受）。
-
-### 測試
-- 全套 pytest **5521 passed, 2 skipped**（unit + integration，排除 smoke／e2e，較 0.11.8 的 5498 +23：reason 映射邊界〔hit/no_cover 依「/thumb 可服務真相＝DB cover_path 有值 + 實體檔存在」分流、not_found/error 各分支〕+ 三個互補 mutation-verified 回歸鎖〔擋「cover_written alone」+ 擋「退回磁碟真相」+ 擋「只鏡射 DB gate 漏實體檔」〕+ result-item 三站台 SSE reason 契約 + /thumb 時序鎖）＋ `ruff check .` 綠 ＋ `npm run lint`（eslint + stylelint）綠。
-- 來源金絲雀：**8 源全 PASS**（javbus／jav321／heyzo／d2pass／avsox／fc2／javdb／dmm，dmm 經 JP proxy live）。
-- Gemini 3.1 Pro 整支 branch 第二意見：本輪未取得有效審查——agy headless 落入 apply-patch 假審模式（已知失敗態，見 AI_COLLABORATION 註記），已清理工作區殘留、確認 committed code 零污染；correctness 由 Codex auto-review（P1 已修）+ 獨立 sonnet review（P1 已修）覆蓋。
-- 視覺 hard-gate：進度卡五態 + 命中飛入節奏 + badge + 手機 fallback 由 owner 真機驗收。
-
-## [0.11.8] - 2026-07-09
-
-本版主軸：**各刮削來源的評分/簡介補進 NFO（NFO-only，服務媒體伺服器用戶）+ 燈箱中繼資訊美化**（feature/93，spec-93 A/B）——把各來源網站**已提供**的「評分/簡介」在刮削時一併抓出、寫進該片 NFO 的 `<rating>`/`<plot>`，純粹服務透過 OpenAver 唯讀產生庫 + `.strm` 餵 Jellyfin/Emby/Kodi 的用戶（那些媒體伺服器把 `<rating>`/`<plot>` 當顯示格，現在這些格不再是空的）。**OpenAver 自身介面刻意不顯示、不進 DB、不翻譯**——延續既有 US7「NFO-only」契約，owner 判斷評分擠高分帶區辨力低、簡介是行銷文案，對自身瀏覽低價值，顯示外包給 Jellyfin。另獨立做燈箱中繼資訊的視覺層次美化。零 API/schema/DB 變更。
-
-### Added
-#### 🎬 評分/簡介補進 NFO（媒體伺服器 enrichment）
-- **六個來源開始填評分 + 簡介**：刮到的評分一律正規化到 0–5，經既有 NFO writer ×2 輸出 Jellyfin 0–10 尺度。
-  - **評分**（7 源）：dmm / heyzo / 1pondo・10musume / jav321 / fc2 / javdb / caribbean。
-  - **簡介**（6 源）：dmm / heyzo / 1pondo・10musume / jav321 / fc2 / caribbean。
-  - javbus / avsox 站上無此兩格 → 不做。
-- **各來源取得方式**（除 DMM 評分外皆「同一請求免費、零額外請求」）：
-  - **DMM**：簡介＝主查詢已抓回的 `description` 接線；評分＝**獨立 root probe** `reviewSummary(contentId:){average}`（比照既有 genres/sample 三態 cache，schema 不支援即永久停用、probe 失敗降級不影響主 metadata，**硬性禁止擴充主 `DETAIL_QUERY`**——那是 DMM 命脈，未知欄位會讓全片刮不到）。
-  - **jav321**：同頁文字 `平均評価: N.N`（直接 0–5，非 GIF 形式，勿 ÷10）+ 描述 div。
-  - **fc2**：JSON-LD `aggregateRating.ratingValue`（支援單一物件／頂層陣列／`@graph` 包裹三形狀）+ 接既有已抽卻未使用的 `div.col.des` 簡介。
-  - **heyzo**：同一 JSON-LD `description`（評分早已抓）。
-  - **d2pass（1pondo/10musume）**：同一 phpauto JSON 加讀 `Desc` + rating 補 `<=5` sanity guard（擋畸形值）。
-  - **javdb**：`.panel-block` 文字 `評分: N.N分`（真實用戶評分；站上無簡介）。
-  - **caribbean**：其 phpauto JSON API 已全面死→改走 moviepage HTML fallback 解析 `itemprop="description"` 簡介 + `meta-rating` 星數 rune-count（0–5）評分（同一已抓 HTML、零額外請求）。
-
-### Changed
-#### 🎨 燈箱中繼資訊視覺層次
-- 燈箱詳情列（番號 · 片商 · 導演 · 片長 · 系列 · 發行商 · 發行日期）從同色扁平長串改為可掃讀：番號升一階色階（`--text-secondary`）+ 微加粗一眼可辨、欄位標籤微分層、中繼區以髮絲線（`--stroke-subtle`）與上方克制分隔。不加色塊/玻璃卡/accent 底，封面仍視覺主角。
-
-### Internal
-- 評分/簡介只改「scraper parse → `Video.rating`/`Video.summary`」這一段；carrier 產生（`internal_nfo_carriers`）、前端 strip（`strip_internal_nfo_keys`）、NFO fill-if-missing 寫入管線（`nfo_updater`/`organizer`/`enricher`/`readonly_producer`）皆為既有機制、不動；`needs_update()` 不把 plot/rating 列缺料（不觸發掃描頁「缺資料」提醒）。補回歸鎖 `TestNeedsUpdateNeverNagsPlotRating` 固化此契約。
-- **Codex PR review P1**：T2 的 D4-gap mutation 驗證用的 restore `sed` 無 count、over-match，把 `_probe_genres`/`_probe_sample_images`/`DETAIL_QUERY` 三個 `{'id': content_id}` payload 一併誤改成 `{'contentId'}`，但這三個 query 宣告的是 `$id` → `DETAIL_QUERY` 送 `contentId` 使 `ppvContent(id:null)` 失敗、DMM exact/producer/enrich 全掉；DMM unit test 全 mock 在 HTTP 層、對 query↔variables 契約盲故未攔到。已修（三 payload 還原 `id`，僅 review probe 保留 `contentId`）+ 補 `TestDMMProbePayloadVariables` 監看真實 POST 斷言各 method 送出的 variables key 對應其 query `$var`（mutation 驗證會攔）。**P2**：fc2 `_get_rating` 補 `{"@graph":[…]}` 包裹形狀防禦。
-- **Codex PR #97 re-review P2×3**（皆真實資料流 gap，HTTP-mock 單測看不到、靠讀真 fixture/merge 路徑抓）：〔P2-1〕自動模式 `source_merger.merge_results` backfill 欄位群含 `rating` 卻漏 `summary` → 贏的來源無簡介時合併後簡介遺失、NFO `<plot>` 恆空（多源模式下本功能形同虛設），修：`summary` 加進 `_STR_META_FIELDS`；〔P2-2〕`.get(k,'')` 在「欄位在、值 JSON null」時回 `None`，`Video.summary` 非 Optional str → `Video(summary=None)` 拋 ValidationError 被 broad except 吞 → 整片結果被丟，修：dmm/heyzo/d2pass 三處 `.get(k) or ''`；〔P2-3〕jav321 詳情頁真描述前有空 `.col-md-12` 佔位、`select_one` 停在空佔位 → summary 恆空（T3 合成 fixture 無此佔位故漏），修：scope 主 panel-body 取第一個非空 `.col-md-12`、用真實 fixture 鎖死。三者皆補回歸。
-- caribbean 覆蓋經 JP proxy live 驗證（解 plan-93 D9 defer）：其 JSON API 對真實現行番號全面 404，推翻「1pondo 同一 `_parse_json` 代表家族」假設 → caribbean 走 `_parse_caribbeancom_html`，補值落該 HTML fallback。
-- `core/scrapers/README.md` §1.4 新增「評分/簡介覆蓋（NFO-only）」矩陣。
-
-### 測試
-- 全套 pytest **5498 passed, 2 skipped**（unit + integration，排除 smoke／e2e，較 0.11.7 的 5447 +51：六源 rating/summary parse 邊界〔0–5 尺度、勿 ÷10 防呆、JSON-LD dict/list/@graph、rune-count 星數、正則 None fallback〕+ DMM `_probe_review` 三態＋降級不影響主 metadata＋query↔variables 契約守衛 + d2pass `<=5` guard 新舊對照 + fc2 dead 變數接線 + NFO 管線回歸鎖〔fill-if-missing 不覆蓋／不 nag plot/rating／echo 路徑空 plot〕+ Codex PR #97 re-review P2×3〔merge summary backfill／null 描述不丟片／jav321 空 col 佔位真實 fixture〕）＋ `ruff check .` 綠 ＋ `npm run lint`（eslint + stylelint）綠。
-- 來源金絲雀：**8 源全 PASS**（javbus／jav321／heyzo／d2pass／avsox／fc2／javdb／dmm，dmm 經 JP proxy live）。
-- Gemini 3.1 Pro 整支 branch 第二意見：**LGTM、零 P1/P2**（跨源一致性、parse 防禦、UI 克制皆讚，無須修改）。
-- 視覺 hard-gate：燈箱 `.lb-details` 層次由 owner 真機驗收。
-
-## [0.11.7] - 2026-07-07
-
-本版主軸：**搜尋頁體驗優化（搜尋列不擠壓 + 整理發現性 + 入庫飛入動畫加強）**（feature/92，spec-92 A/B/C/D 四項）——純前端 UX polish + 一個 latent 正確性 bug 修復，零 API/schema/DB 變更。四個彼此獨立的痛點：搜尋列右側控制項擠壓變形、整理入口埋在頁尾難發現、整理入庫的「飛入側邊欄」動畫太不明顯、以及把該動畫抽成可跨頁複用的共用元件（本版只做 search 端接線，scanner 接線留未來 branch）。
-
-### Added
-#### 🎯 入庫飛入動畫加強（C）
-- **整理入庫回饋更有實感**：某片整理成功並寫進資料庫後，一顆封面 ghost 從該片飛向側邊欄「瀏覽」入口——改為三段節奏（起飛 → 於入口旁懸停約 0.5s 微發光讓眼睛看清是哪片 → 縮入落地並帶 scale 彈跳 + 光暈），取代舊版「抵達即淡掉的小點」。
-- **窄螢幕／手機不再靜默**：側邊欄隱藏時退化為「已入庫」輕量提示，不再毫無反饋；系統開啟「減少動態效果」時保留輕量落地反饋、不播飛行與縮放。
-
-#### 🎯 整理入口更好找（B）
-- **批次整理鈕常駐可見**：拖入一批檔案整理時，「批次整理 N 片」主動作恆在視線內（桌面靠既有固定插槽 + 表頭 sticky；窄視窗改貼底浮動列），不再因結果卡過高被推到畫面外要捲動才找得到。
-- **單片／批次整理各有可辨識 icon**：單片＝單一檔案 icon、批次＝資料夾 icon，一眼分辨；空狀態說明文字旁內嵌同款 icon + 同色，文字與畫面上那顆按鈕對得上。
-
-### Changed
-#### ⌨️ 搜尋列右側控制項不再擠壓變形（A）
-- **「自動」來源膠囊不變形**：在已有結果的頁面回搜尋框打新番號時，「自動」／來源名膠囊不再被壓縮擠壓；右側控制區預留足夠寬度（CDP 實測定值）容納最長來源名 + 清除 + 送出。
-- **格狀／詳情切換鈕穩定可見**：女優／前綴搜尋有結果時，格狀↔詳情切換鈕穩定可見可點、不被裁切；打字搜尋新片時暫時讓位屬預期，結果落定後回來。
-
-### Fixed
-- **不再出現「兩組相同的 ✕」**：在已有結果的頁面重新搜尋（含用「自動」膠囊重搜）進入載入態時，取消鈕與清除鈕不再並排出現兩顆一樣的 ✕——`hasContent` 由手動維護的旗標改為自動推導的 computed 值，根治整類「漏同步一處就出 bug」的結構性缺陷。
-- **整理飛入的封面永遠是「正確那片」**：先前在詳情檢視 X 片時、點清單裡另一片 Y 的「整理此片」，飛出去的會是 X 的封面；改為封面身份永久綁定被整理那片自己的資料（起飛位置才有條件借用目前顯示中的元素）。
-
-### Internal
-- 新增參數化共用動畫入口 `GhostFly.playInboundFly`（起點元素／封面 src／終點／fallback 由呼叫端傳入、不綁 search 專屬假設）取代 `playToIcon`：三段 timeline、對稱 `onComplete`/`onInterrupt` cleanup（C21，契約源 `playMobilePanelEnter/Exit`）、通用 scale/glow 落地反饋、並發序列化（`killTweensOf(toEl)` 讓最新落地勝出）。scanner 端接線留未來 branch（共用入口簽章刻意不含 search 假設）。
-- `hasContent` 改 Alpine computed getter（移除散落 7 處手動賦值）；`playToIcon` 移除並加 ESLint `no-restricted-syntax` 守衛（definition site + caller site 兩 scope，mutation 自驗 RED 防復活）。i18n 新 key `search.toast.db_synced_mobile` 只寫 zh_TW（其餘三語 fallback）。守衛一律走 ESLint 不落 pytest（本版測試數持平）。
-
-### 測試
-- 全套 pytest **5447 passed, 2 skipped**（unit + integration，排除 smoke／e2e，與 0.11.6 baseline 一致、零回歸；本版守衛全走 ESLint，故測試數持平）＋ `ruff check .` 綠 ＋ `npm run lint`（eslint + stylelint）綠。
-- 來源金絲雀：**8 源全 PASS**（javbus／jav321／heyzo／d2pass／avsox／fc2／javdb／dmm，pre-merge live 健康檢查）。
-- ESLint 守衛 mutation 自驗：植入 `this.hasContent = ...`（Group 1）／`playToIcon` 定義或呼叫（Group 1 caller + Group 6 definition）皆轉 RED。
-- Codex 二審 F1（P2 並發落地反饋 race）已修（`killTweensOf` 序列化）；F2（P3，無現行回歸）記 accepted residual（`.gsap-animating` 通用性邊界＝各元件 scoped，現行 `#sidebar-showcase-link` 只 transition color/background 不觸 C21；未來 transform/filter transition 的 toEl caller 須補 scoped 規則，scanner 接線 branch 一併補、端到端驗）。
-- 視覺 hard-gate：owner 真機一次驗收通過（A pill 不變形／無兩組 X、B icon 辨識 + 常駐鈕、C 飛入節奏 + 手機 fallback）。
-
-## [0.11.6] - 2026-07-06
-
-本版主軸：**跨機器路徑映射（WSL2+UNC path_mappings）的讀寫全棧收斂 + DB-key 命名空間守衛**（feature/91，plan-91 axis-A ＋ plan-91b axis-B）——純 correctness 重構、零使用者可見功能變更、零 API/schema 變動。針對「OpenAver 在 WSL、影片放在網路磁碟（UNC `//NAS/share`）、DB 存映射後路徑」這條情境，把兩類長期潛伏的 silent bug 一次修乾淨並上守衛擋死回不去：一是**讀取端忘了在真正碰磁碟前把 `file:///` URI 反解回本機路徑**（縮圖／封面／劇照／串流／女優裁切一律 404 或讀不到）；二是**已反解的值又被餵回 DB key 建構**、落成沒映射過的命名空間，造成 silent DB miss（重複刮削、掉 user_tags、女優照 403）。
-
-### Fixed
-- **跨機器路徑（WSL+UNC）下讀圖／串流不再靜默失敗**：縮圖、封面＋劇照、影片串流（seek 206）、女優裁切、相似探索等所有「先讀 DB 路徑再碰磁碟」的入口，統一在磁碟 I/O 前經單一入口反解映射路徑；先前在 `path_mappings` 情境下這些入口會拿映射後的路徑直接碰磁碟而 404／讀不到圖。
-- **刮削不再掉使用者標籤（user_tags）live bug**：`web/routers/scraper.py` 對某片重刮時，DB key 由一個已反解的本機路徑裸建構、落成未映射命名空間，導致比對不到既有列、既有 `user_tags` 被當新片覆寫遺失。改為建 DB key 前先 forward-map 回 DB 命名空間，重刮後 user_tags 正確保留（WSL+UNC 回歸測試斷言單一 mapped row + tags union）。
-- **NFO 路徑推導反解**：`core/nfo_updater.py` 由影片路徑推導 NFO 檔位置時改用顯式反解入口，跨機器映射下定位到真實本機 NFO。
-
-### Internal
-- **axis-A（讀取端反解）**：新增單一顯式入口 `uri_to_local_fs_path()`，取代 22 個站台散落的裸 `uri_to_fs_path`／`coerce` 呼叫（router／scanner／core／enrich 全棧）；27 個純磁碟用途或已處理站台補 `# uri-no-reverse:` marker 標註安全；新增 pytest AST 結構守衛 `test_uri_to_fs_path_reverse_mapping_completeness.py`（sink 白名單＝`open`／`FileResponse`／`os.path.*`／`Path.*`／`shutil.*`），偵測「反解值未經處理直接碰磁碟」→ CI 擋死。含 Codex 兩輪 PR review 修正（enricher DB 命名空間、actress_crop 主流程 403 canonical、守衛 `Path()` 擴充）。
-- **axis-A drive-letter remote 反解對齊（Codex PR #94 review P2）**：`reverse_path_mapping` 補上 WSL-mount 候選前綴——當 `path_mappings` 的 remote 端是磁碟機代號（如 `Z:/share`）時，`uri_to_fs_path` 在 WSL 會把 `file:///Z:/share/...` 正規化成 `/mnt/z/share/...`，原本只比對 `Z:\share`／`Z:/share` 兩形式 → miss → fallback 回未反解的 `/mnt/z/...`（該磁碟未掛載時封面／影片／NFO 讀取失敗）。改為額外以 `to_wsl_path(win_prefix)` 產生 `/mnt` 形式候選（dedup，UNC 不受影響、零回歸）。
-- **axis-B（DB round-trip 命名空間）**：新增 sink-anchored AST 守衛 `test_db_key_namespace_completeness.py`（錨 DB-key 建構點 `to_file_uri`／`is_known_cover_path`／repo 寫入，非 source），偵測「反解值裸餵 DB round-trip 無 forward-map」→ CI 擋死；獨立 marker `# db-ns-ok:`（不 overload axis-A 的 `# uri-no-reverse:`）。含 Codex 二審修正（守衛 reaching-def marker 界限、keyword sink 抽取）。
-- **已接受殘留**：`core/enricher.py` `_write_nfo` 的 `user_tags is None` 分支裸 `to_file_uri` 為 dead path（所有 production 呼叫端恆傳 `user_tags != None`），marker + docstring 已註記，另開 follow-up；plan-91b D4 固化「寫入端命名空間統一（DB 一律存單一 canonical namespace）」暫緩為 feature/92+（守衛已達成 axis-B「不容易觸發」）。
-
-### 測試
-- 全套 pytest **5447 passed, 2 skipped**（unit + integration，排除 smoke／e2e，較 0.11.5 的 5365 +82：axis-A 22 站台 WSL+UNC 反解回歸〔縮圖／封面＋劇照／串流／女優裁切／相似〕+ axis-B 兩 bug 回歸〔刮削 user_tags union 單一 mapped row／enricher NFO DB 命名空間〕+ 兩支 AST 守衛自驗 21 案例〔含植入假違規 mutation 轉紅〕+ nfo_updater／path_utils／showcase／thumbnail_cache 補測 + Codex PR #94 drive-letter remote `/mnt` 候選反解回歸〔命中／backslash 形式／boundary share-vs-share2／UNC 零回歸／e2e〕）＋ `ruff check .` 綠 ＋ `npm run lint`（eslint + stylelint）綠。
-- 來源金絲雀：**8 源全 PASS**（javbus／jav321／heyzo／d2pass／avsox／fc2／javdb／dmm，pre-merge live 健康檢查）。
-- 真機 E2E hard-gate（WSL2+UNC+path_mappings，CDP + DB SQL 檢查）：sign-off #1–12 全過——縮圖／封面劇照／串流 seek 206／女優裁切主線／similar／enrich NFO 落反解磁碟／fetch-samples 守衛觸發／真刮 MIDV-300 user_tags union 單一 mapped row／NFO 路徑反解／readonly `.strm` 純 marker 零回歸／DB 命名空間三查詢無分裂無重複。關鍵教訓：`D:\123`（`/mnt/` 短路成 drive-letter URI）無法觸發 bug，須非 `/mnt` 路徑 + UNC mapping 才是真觸發。
-
-## [0.11.5] - 2026-07-05
-
-本版主軸：**唯讀來源生成媒體伺服器庫（media-server 風味）+ 跨機器路徑映射 + 唯讀寫入全面封鎖**（feature/90，spec-90 §90a/§90b/§90c）——承接 0.11.3/0.11.4 的唯讀產生庫，這版把「餵給 Emby／Jellyfin／Kodi」這條路走通：唯讀來源除了生成 OpenAver 自己瀏覽的本地庫，還多吐每片一個 `.strm` 捷徑檔給媒體伺服器掃描播放。針對「OpenAver 在這台、媒體伺服器在 NAS／別台」的跨機器情境，新增「播放端路徑替換」規則，把 `.strm` 裡的影片路徑翻成播放端看得懂的路徑；改了規則，既有 `.strm` 一鍵同步改寫。同時把唯讀來源的「零寫入」承諾補到滴水不漏：勾唯讀有破壞性確認、四個會寫回的入口在唯讀產生片上全部停用並導引、切換媒體伺服器模式時清乾淨舊唯讀來源的媒體卡（只清庫、不刪你輸出夾的檔）、產生中途斷線也乾淨收尾。
-
-### Added
-#### 🎯 媒體伺服器風味（.strm）+ 跨機器路徑映射
-- **唯讀來源可生成 `.strm` 媒體庫給 Emby／Jellyfin／Kodi**：Settings 把模式切到 Emby／Jellyfin／Kodi 後，對唯讀來源「產生」時，除了每片一夾的 NFO＋封面，還多產一個單行 `.strm`（無 BOM）指向雲端／唯讀硬碟上的原始影片。把輸出夾指向 NAS 上一個可寫位置，媒體伺服器就能掃這批片、經 `.strm` 串流播放，而唯讀來源一個 bit 都沒被寫。
-- **跨機器「播放端路徑替換」**：當播放的媒體伺服器在別台機器、看到同一顆硬碟的路徑跟 OpenAver 不一樣（例如 OpenAver 上是 `Z:\115`、NAS 上是 `/volume1/115`），到 Settings 加一條映射規則，`.strm` 內就會寫成播放端看得懂的路徑。跨命名空間比對（Windows 顯示 vs WSL 原生皆可對上），播放端路徑原樣寫入不做正規化。
-- **改規則即同步改寫既有 `.strm`**：改／加／刪一條映射規則並儲存後，跳「將改寫 N 個 `.strm`」輕量確認（N 為精確計數），確認即依新規則一次改寫所有既有 `.strm`（只覆寫那一行純文字，不動 NFO／封面／DB／影片檔）；刪光規則則還原成本機路徑。OpenAver 自身播放不受影響（從 DB 串流原檔）。
-
-#### 🎯 唯讀寫入封鎖 + 破壞性操作確認
-- **勾「唯讀」跳確認**：在 Scanner 把來源勾唯讀時跳確認彈窗，白話說明唯讀代表什麼、輸出夾放哪、跨機器怎麼餵媒體伺服器；確認後才真的勾上，媒體伺服器模式下同時展開「輸出到」欄位。
-- **唯讀產生片四個寫入入口停用**：對「由唯讀來源產生」的片，封面牆補圖 icon、燈箱「補資料」「補劇照」、齒輪「進階重刮」四個會寫回的入口全部停用（淺色、不可點、hover 導引「更新請至掃描頁重新產生」），播放／開資料夾／探索相似等唯讀操作照常。後端三個補資料端點也一律拒絕唯讀來源、來源零寫入。
-
-### Changed
-- **切換媒體伺服器模式會清掉舊唯讀來源的媒體卡**：在有唯讀來源時切換模式，跳破壞性確認（正確待移除數 + 白話後果 + 多分頁提醒）；確認後移除那些唯讀來源與其媒體卡，之後重新加入即可在新模式重建。**只清 DB 卡，你輸出夾裡的檔案一個都不刪**；可寫來源與其卡完全不受影響（巢狀在唯讀夾下的可寫來源也精準保留）。
-- **部署文案清晰化**：把「輸出夾（產出放哪、要可寫、通常在 NAS）」與「播放端路徑替換（影片路徑跨機對應）」兩個容易混淆的欄位講清楚、界線分明；切換彈窗用詞與 checkbox 統一為「唯讀來源」；三模式一律並列「Emby／Jellyfin／Kodi」。Help 新增「唯讀來源 + 讓 Emby／Jellyfin／Kodi 掃到片（跨機器部署）」區塊，把整條部署流程用步驟講通（痛點常在事後播不出才回查，Help 是唯一會回來找的地方）。
-
-### Fixed
-- **產生中途斷線乾淨收尾**：產生過程中關分頁／重整／中斷 SSE，後端在下一個檢查點停手、不跑完整來源，尾段仍跳 HTML 產生與完成通知、保留必要收尾（媒體伺服器快取重置），正常跑完零回歸。
-- **產生進行中擋切換模式**：一個分頁在產生時，另一分頁切換模式會被擋下並提示「產生進行中，請等產生完成後再切換模式」，避免背景 producer 在清卡後又把卡補回去。
-- **切換模式彈窗矛盾修正**：唯讀確認彈窗的「請先去設定切模式」提示改為只在預設模式顯示，不再出現「已在 Emby／Jellyfin／Kodi 模式卻又叫你去切」的自相矛盾。
-
-### Internal
-- 新增 `scraper.strm_path_mappings` 設定（加法式遷移補預設）；`core/readonly_producer.py` 加 `.strm` 產出 + `_apply_path_mapping`（file:/// URI 空間比對、最長前綴勝、remote 端 verbatim 不正規化）；`core/readonly_source.py` 抽唯讀判定純資料流層（scraper guard 與 showcase payload `is_readonly_source` 共用）；`core/generate_state.py` 產生進行中登記表（雙 clear-hook 生命週期）。
-- 破壞性端點：`POST /api/config/switch-external-manager`（枚舉離線來源 DB 卡 → delete_by_paths + 縮圖失效 → mutate_config 原子移除離線條目 + 設新模式；先 DB 後 config 可自癒失敗序；巢狀可寫來源從刪除集扣除；髒來源路徑 coerce 容錯 skip 不 500）、`POST /api/config/rewrite-strm`（dry-run 精確計數 + best-effort 就地改寫、壞列 skip 不阻斷整批）。兩端點皆使用者觸發維護操作、不揭露 capabilities。
-- 前端：唯讀 checkbox 攔截式確認（`:checked` 單向綁定 + `@click.prevent`，非 x-model）、破壞性切換流程（element-bound 綁定 + isDirty 不誤判 + 三處狀態同步）、唯讀產生片四入口 native disabled、strm 映射編輯器 + 範本回顯。
-- Gemini 整支 branch 二審 triage：switch 端點髒路徑 coerce 容錯（mirror 既有唯讀判定 guard）、`strmChanged` 補 optional chaining（config.scraper undefined 防崩存檔）；其餘 findings triage 為誤報或已知接受殘留。
-
-### 測試
-- 全套 pytest **5365 passed, 2 skipped**（unit + integration，排除 smoke／e2e，較 0.11.4 的 5171 +194：strm 產出/單行無 BOM/off 不產 strm + 路徑映射三類+邊界/跨命名空間+尾分隔符 + rewrite 端點多片/刪規則還原/off no-op/只動 strm/dry-run 計數/mapped output_dir 反解 + switch 端點 purge 全契約/巢狀可寫扣除/髒路徑容錯 + 唯讀 enrich guard 三端點+混合批/巢狀可寫 override 矩陣 + SSE 斷線生命週期/尾段 abort + 前端停用態/確認彈窗/切換流程守衛 + 五審 file:/// URI 型來源前綴映射對齊 DB 命名空間〔WSL+映射匹配/非映射 canonical/非 WSL round-trip〕 + 整份儲存↔切換真互斥雙向 guard/窗口釋放/重疊存檔第一個結束仍擋切換/三方重疊全清才放行 + 掃描中改 strm 映射 gate〔映射變更擋存檔/未變放行/無 generate 放行〕 + rewrite-strm 掃描中拒絕含 dry_run + strm 映射 fresh getter〔覆寫勝凍結/None 回退凍結/空覆寫寫原始路徑/produce_source getter 供新映射 vs 無 getter 用凍結/getter 在 NFO 後 _write_strm 前才求值的時序鎖〕）＋ `ruff check .` 綠 ＋ `npm run lint`（eslint + stylelint）綠。
-- 來源金絲雀：**7 源 PASS + 1 SKIP**（javbus／jav321／heyzo／d2pass／avsox／javdb／dmm 全 PASS；fc2 unreachable/no probe → SKIP 非 fail，pre-merge live 健康檢查）。
-- E2E 真機驗收（CDP + 檔案驗證）：6 大硬閘門全過——strm 規範（單行/無 BOM/正確路徑）、唯讀零寫入（來源逐位元不變）、映射改寫 ≥3 檔抽查 + 刪規則還原、四寫入入口停用態 + tooltip、破壞性切換 purge（零檔案刪除）、產生中擋切換（兩分頁 toast）。
-- Codex PR review（90c 二審 Finding 2/3 + PR #93 一審 P2×2〔巢狀可寫 override 唯讀判定、mapped output_dir reverse-map〕 + PR #93 二審 P1+P2×2：巢狀歸屬改「最具體〔最長匹配〕前綴勝」修回上一輪「可寫一律壓唯讀」對反向巢狀〔可寫父+唯讀子〕的回歸〔showcase/scraper/purge 共用同一 is_path_readonly〕、切模式 purge 改雙向互斥〔try_begin_switch 佔全窗口 + generate 掛號 try_mark_generate_active 檢查，杜絕切模式進行中才開始的 generate 把剛 purge 的卡補回〕 + PR #93 三審 P2×2：strm 改寫時 source path 也走 reverse-map〔補上一輪只反解 output_dir 的漏網，WSL+gallery.path_mappings 下改寫內容 == 初次生成內容〕、半填映射規則丟棄〔remote 空的規則前端不存 + 後端 _apply_path_mapping skip，避免前綴被剝只剩後綴破壞 strm〕 + PR #93 四審 P2×1：switch 也序列化〔try_begin_switch 補檢查 _switch_active，第二個重疊 switch 回 switch_in_progress 拒絕，否則第一個 end_switch 會在第二個窗口中清旗標讓 generate 趁隙補回卡〕 + 主動對抗性自審 P1×1：整份設定儲存也讓開 switch 窗口〔update_config 在 is_switch_in_progress 時拒絕，防另一分頁帶舊 directories 快照把剛 purge 的離線來源條目寫回 config；次秒級窗口〕 + PR #93 五審 P2×2：〔P2-f〕唯讀來源前綴改走 `to_file_uri(uri_to_fs_path(path), mappings)` canonical 化〔取代 coerce_to_file_uri 對 file:/// URI 型來源原樣回不套 mapping 的漏——producer 存 DB row 是 mapped 命名空間，URI 型來源前綴對不上 → 唯讀 guard/showcase 旗標/switch purge 全 miss；config.py `_safe_prefixes` 併入共用同一 helper 杜絕重複實作漂移〕、〔P2-e〕整份儲存↔切換改真互斥〔取代上一輪 is_switch_in_progress preflight 的 TOCTOU：存檔可在 switch 開始前通過檢查、卻在 switch 做完後才落盤 → lost-update。改 update_config 持 config-save 窗口、try_begin_switch 見窗口即拒絕，兩者同一 _lock 原子不交錯；owner 拍板互斥鎖，殘留「切換已全做完後才到的舊快照存檔」記為已知限制、靠破壞性 confirm『其他分頁請重整』提示兜底。五審二次 Codex：窗口旗標從 bool 改 **token-set**〔比照 generate 的 _active_tokens〕——bool 版下兩個重疊存檔第一個結束就把共享旗標清掉、第二個仍在寫窗口內 switch 就能進場，race 重新暴露；per-token add/discard 讓第一個結束不清掉第二個窗口，switch 續擋到最後一個存檔結束〕 + PR #93 五審三次 P2×1：〔strm 映射 vs generate〕掃描/產生進行中 gate 掉「有動到 scraper.strm_path_mappings」的整份存檔與 rewrite-strm〔generate 起始把 config 凍結一場沿用，中途改映射存檔 → 該次 generate 之後才產出的 .strm 仍用舊映射且無自動重寫 → 靜默半修永久指錯；owner 拍板精準 gate：is_generate_in_progress 短路後才 diff，只擋真動到映射的存檔、改主題/檔名等不受影響，rewrite-strm 端點同擋含 dry_run，前端顯示 warning toast『掃描完成後再改』〕 + PR #93 五審四次 P2×1：〔strm 映射斷線尾巴殘留〕gate 只看 is_generate_in_progress，但 SSE watcher 偵測到斷線即清 generate token，producer 每片 checkpoint 才看 should_abort → token 清空後仍會多做完當下這片、此時另一分頁可存新映射 → 那片用凍結舊映射落檔且不自癒〔比 P1 殘留嚴重：不像 switch race 下次 generate 自癒〕；owner 拍板 option C：produce_source 注入 strm_mappings_getter，media-server 模式每片寫 .strm 前重讀 fresh 映射〔scanner 注入 load_config().scraper.strm_path_mappings，無 lru_cache 每次讀 disk〕，讓斷線尾巴那片也用當前映射；getter=None 回退凍結 config，既有呼叫/rewrite/測試零行為變更〕 + PR #93 五審五次 P2×1：〔getter 求值時機〕getter 原在 produce_source 片處理開頭 snapshot，但 _write_movie_assets 接著下載封面/生成圖/寫 NFO 才輪到 _write_strm、期間存的新映射會被漏掉 → 改傳 getter callable 往下、在 _write_strm 前一刻才求值（封面/NFO 都寫完後）。殘留降至「getter() 回傳→open() 寫檔」微秒級 GIL 排程窗口，與 generate_state.py 既記錄之 owner-accepted 殘留同類（徹底封死需 option A 綁 token 生命週期至 worker 真停手，已評估否決：跨檔重構+token 洩漏風險比原 bug 更糟）〕）+ Opus 審核（purge 巢狀誤刪 / rewrite 壞列容錯）+ Gemini 整支 branch 二審皆已 triage 修正。
-
-## 0.11.x 系列 (v0.11.0 ~ v0.11.4, 2026-06-27 ~ 2026-07-04)
+## 0.11.x 系列 (v0.11.0 ~ v0.11.10, 2026-06-27 ~ 2026-07-10)
 
 - **v0.11.0**：JavBus 過度泛用清償 + exact 番號搜尋改優先序 cascade（feature/85）——直接搜番號改為依你拖曳的來源優先順序逐一查詢（cascade，命中即回），JavBus 不再無視優先序搶先短路；DMM proxy 透傳修復、前綴搜尋 `type` 參數修正；拔除已死的 JavBus variant（同番號多版本）探查死碼。
 - **v0.11.1**：JavLibrary 同番號多版本手動切換（feature/86）——搜尋框直搜／燈箱換來源／結果卡替換來源三入口皆可看封面手動挑撞號版本（游標預設停最新發行日），桌面 standalone 限定（需 CF transport）。
@@ -246,8 +209,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **v0.11.3**：唯讀來源生成本地媒體庫「off 風味」首發（feature/88）——scanner 來源可勾「唯讀」＋設輸出夾，來源零寫入下生成每片一資料夾的本地庫（NFO + 封面 + 劇照）並直接寫進 DB，供 OpenAver 自身瀏覽／串流播放雲端原檔；給 Emby/Jellyfin/Kodi 的 media-server（`.strm`）風味延後至下一版（feature/89）。
 
 - **v0.11.4**：唯讀產生庫「地基」+ 掃描頁「試過」記憶 + 來源刪檔清死卡（feature/89）——生成片記住輸出夾（`videos.output_dir`）重刮原地更新不長重複夾、off 風味固定輸出夾免設定；試過／已生成的片不再被「缺資料」嘮叨、刮不到只試一次；唯讀網盤掉線明確警告不誤報成功；來源刪檔後 DB-row-only 清死卡（零檔案刪除）。
+- **v0.11.5**：唯讀來源生成媒體伺服器庫「.strm 風味」+ 跨機器路徑映射 + 唯讀寫入全面封鎖（feature/90）——唯讀來源可產出 `.strm` 捷徑檔給 Emby/Jellyfin/Kodi 掃描播放，跨機器「播放端路徑替換」規則讓 `.strm` 內路徑翻成播放端看得懂的形式、改規則一鍵同步改寫既有 `.strm`；同時把唯讀來源「零寫入」補到滴水不漏（勾唯讀破壞性確認、四個寫入入口全面停用、切模式清舊媒體卡、產生中斷乾淨收尾）。
+- **v0.11.6**：跨機器路徑映射（WSL2+UNC）讀寫全棧收斂 + DB-key 命名空間守衛（feature/91）——純 correctness 重構：修好「讀取端忘了在碰磁碟前把映射路徑反解回本機路徑」導致縮圖／封面／串流跨機器讀不到的一類 silent bug，以及「已反解路徑又被裸餵回 DB key」導致重刮掉使用者標籤、女優照 403 的另一類；兩支 AST 結構守衛擋死回歸。
 
-測試數 4735 → 5171。
+- **v0.11.7**：搜尋頁體驗優化（feature/92）——搜尋列右側控制項不再擠壓變形、整理入口常駐可見更好找、整理入庫「飛入側邊欄」動畫加強為三段節奏，並抽成可跨頁複用的共用元件；順手修好「重新整理已有結果頁面時出現兩組 ✕」的 latent bug。
+- **v0.11.8**：各刮削來源評分/簡介補進 NFO（feature/93，NFO-only）——七源評分、六源簡介寫進 `<rating>`/`<plot>`，純服務媒體伺服器（Jellyfin/Emby/Kodi）用戶，OpenAver 自身介面不顯示；順手美化燈箱中繼資訊視覺層次。
+- **v0.11.9**：掃描頁「補資料」升級成逐片進度卡 + 命中封面飛入圖書館（feature/94）——補資料時逐片可視進度（搜尋中／命中／查無／失敗／唯讀跳過），真封面命中飛入側邊欄「瀏覽」入口。
+- **v0.11.10**：設定頁命名區膠囊化 + 列表生成兩層 IA 重排（feature/95）——檔案命名格式從手打字串改成「變數膠囊 + 字面文字」視覺化編輯器、資料夾層級改動態清單（硬上限 3 層）；列表生成設定拆成日常常用（常駐）+ 離線 HTML 匯出（摺疊進階）。
+
+測試數 4735 → 5523。
 
 ## 0.10.x 系列 (v0.10.0 ~ v0.10.11, 2026-06-18 ~ 2026-06-24)
 

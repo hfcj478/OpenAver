@@ -13,7 +13,7 @@
  * 非 pytest（遵 CLAUDE.md「lint 守衛寫 lint config、不寫 pytest」）。串 `npm run lint`。
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
@@ -1534,6 +1534,91 @@ const RULES = [
         ctx.fail('CG-ML-02: motion_lab.html <style>: .clip-lab-slot rule not found');
       } else if (m2[1].includes('width: 120px')) {
         ctx.fail('CG-ML-02: .clip-lab-slot block must not contain width: 120px (should be 107px)');
+      }
+    },
+  },
+
+  // ══ 98b-T3：focal inline-wins 前提守衛 ══
+  // CG-FOCAL-01 ← TASK-98b-T3 no-`!important` 不變式：web/static/css/** 任何 CSS 檔的
+  // object-position 宣告不得帶 !important。98b-T3 的 inline `:style="focalStyle(...)"` /
+  // imperative `el.style.objectPosition` 靠自然 specificity 勝過 CSS baseline `right center`；
+  // 若某 focal-aware 站的 CSS object-position 加了 !important，inline 會被壓過 → focal 失效。
+  // 註：css-guard 既有 rule 皆單檔 selector-block 導向，表達不了「全目錄任一檔的宣告級 forbidden」，
+  // 故用 fn escape-hatch + 遞迴 readdir 掃全 css 目錄（去註解後逐檔 regex：object-position + !important
+  // 同一宣告），最貼近「object-position + !important on same declaration」語意（file: 'theme.css'
+  // 僅為佔位滿足 runner loadFile，實際掃描在 check 內遞迴 CSS('')；ROOT 覆蓋 → scratch 副本自動生效）。
+  {
+    id: 'CG-FOCAL-01',
+    file: 'theme.css',
+    kind: 'fn',
+    check(ctx) {
+      const cssDir = CSS('');
+      const files = [];
+      const walk = (dir) => {
+        for (const ent of readdirSync(dir, { withFileTypes: true })) {
+          const full = join(dir, ent.name);
+          if (ent.isDirectory()) walk(full);
+          else if (ent.isFile() && ent.name.endsWith('.css')) files.push(full);
+        }
+      };
+      walk(cssDir);
+      const re = /object-position\s*:[^;}]*!important/;
+      for (const f of files) {
+        const m = stripCssComments(readFileSync(f, 'utf-8')).match(re);
+        if (m) {
+          ctx.fail(`CG-FOCAL-01: ${f} 含 object-position + !important（${JSON.stringify(m[0].trim())}）— 破壞 98b-T3 focal inline-wins 前提（inline :style/el.style 會被 !important 壓過）`);
+        }
+      }
+    },
+  },
+
+  // CG-FOCAL-02 ← 99a-T3：拖曳中停用 .lb-mask-window transition，防與連續 pointermove 打架
+  // （橡皮筋延遲手感，違反 spec §3.3「拖曳即時預覽」）。若被移除，視覺上不會立即崩潰（只是拖曳
+  // 手感變差），純靠人眼不易發現，值得一條結構守衛鎖住。
+  {
+    id: 'CG-FOCAL-02',
+    file: 'pages/showcase.css',
+    kind: 'selector-require',
+    markers: ['.lb-mask-window--dragging'],
+    pattern: /transition\s*:\s*none/,
+    msg: '.lb-mask-window--dragging must keep transition:none — 99a-T3 拖曳跟手；移除會讓 .lb-mask-window 的 333ms ease-out 與連續 pointermove 打架（橡皮筋延遲）',
+  },
+
+  // CG-FOCAL-03 ← 99a-T3：.lb-action-btn--success 刻意採 token-based color-mix(var(--color-success))
+  // 而非像既有 --danger 那樣硬編 rgba（--danger 是 44c-T3 遺留、早於 6-role 材質系統，touched-
+  // when-modified 才修，非本規則管轄）。鎖住「不要把新 modifier 也走回硬編老路」。
+  {
+    id: 'CG-FOCAL-03',
+    file: 'pages/showcase.css',
+    kind: 'selector-forbid',
+    markers: ['.lb-action-btn--success'],
+    pattern: /rgba\(/,
+    msg: '.lb-action-btn--success must stay token-based (color-mix(in oklch, var(--color-success) ...)), not hardcoded rgba — unlike legacy .lb-action-btn--danger (pre-dates 6-role material system, out of scope here)',
+  },
+
+  // CG-FOCAL-04 ← TASK-99a-T5 Bug 2 修正：.cover-actions--focal-edit z-index 數值必須 >
+  // .lb-mask-overlay，否則 ✓/✗ 46×46 hit box 的 elementFromPoint 落在 overlay 而非按鈕本身
+  // （overlay 的 @click.self="cancelMask()" 攔截點擊，✓ 100% 靜默變 ✗，見 TASK-99a-T5 根因分析
+  // 實測數據）。注意：z-index 數值關係正確 ≠ hit-test 正確（stacking context 邊界另有 rule，
+  // 這只是必要非充分條件）——真正的證明只有 T6 e2e 的 elementFromPoint 斷言，本規則不宣稱
+  // 涵蓋 hit-test 本身，只鎖住這個數值前提不會被未來改動悄悄破壞。
+  {
+    id: 'CG-FOCAL-04',
+    file: 'pages/showcase.css',
+    kind: 'fn',
+    check(ctx) {
+      const focalEditZ = zindexOf(ctx.raw, '.cover-actions.cover-actions--focal-edit');
+      const overlayZ = zindexOf(ctx.raw, '.lb-mask-overlay');
+      if (focalEditZ === null) {
+        ctx.fail('CG-FOCAL-04: 無法在 showcase.css 找到 .cover-actions.cover-actions--focal-edit 的 z-index');
+        return;
+      }
+      if (overlayZ === null) {
+        ctx.fail('CG-FOCAL-04: 無法在 showcase.css 找到 .lb-mask-overlay 的 z-index');
+        return;
+      }
+      if (!(focalEditZ > overlayZ)) {
+        ctx.fail(`CG-FOCAL-04: .cover-actions--focal-edit z-index ${focalEditZ} 未高於 .lb-mask-overlay ${overlayZ}（✓/✗ hit-test 會被 overlay 攔截，見 TASK-99a-T5 根因分析）`);
       }
     },
   },

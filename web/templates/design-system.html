@@ -204,6 +204,21 @@
                         <span>說明/Help</span>
                     </div>
                 </div>
+
+                <!-- 群組 4: 100b 女優 Focal 編輯 -->
+                <h4 class="ds-group-label" style="margin-top: 1.5rem;">女優 Focal 編輯（100b）</h4>
+                <div class="ds-color-grid">
+                    <div class="ds-icon-card">
+                        <i class="bi bi-person-bounding-box"></i>
+                        <code>bi-person-bounding-box</code>
+                        <span>Focal 編輯（開啟遮罩、force-detect）</span>
+                    </div>
+                    <div class="ds-icon-card">
+                        <i class="bi bi-upload"></i>
+                        <code>bi-upload</code>
+                        <span>上傳自己的照片</span>
+                    </div>
+                </div>
             </div>
         </section>
 
@@ -2948,12 +2963,49 @@
                             <button class="lb-action-btn" data-tooltip="來源網址" aria-label="來源網址" type="button">
                                 <i class="bi bi-box-arrow-up-right"></i>
                             </button>
+                            <button class="lb-action-btn lb-action-btn--danger" data-tooltip="移除最愛" aria-label="移除最愛" type="button">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                            <button class="lb-action-btn lb-action-btn--success" data-tooltip="確認裁切位置" aria-label="確認裁切位置" type="button">
+                                <i class="bi bi-check-lg"></i>
+                            </button>
                         </div>
                     </div>
                 </div>
                 <p class="ds-desc" style="margin-top: 0.75rem;">
                     Classes：<code>.lightbox-cover</code>（父容器）<code>.cover-actions</code> <code>.lb-action-btn</code>
+                    <code>.lb-action-btn--danger</code> <code>.lb-action-btn--success</code>
                     屬性：<code>data-tooltip</code>
+                </p>
+                <!-- 99a-T5 評估：星空等待迴圈（.lb-mask-wait-burst，detect-first 等待期間佔位）不在此加
+                     demo——它不是獨立可展示元件，是遮罩內部依附 _maskDetecting 時序的暫態動畫（可拖曳窗
+                     出現前的中間態），脫離真實 detect 時序展示成靜態 swatch 沒有意義（比照既有
+                     .sparkle-burst 同理未在此頁建 demo）。真正的 GSAP ease/loop 展示落在
+                     /motion-lab（showcase tab，Play/Stop Focal Wait 按鈕，真跑
+                     window.GhostFly.playFocalDetectWait/stopFocalDetectWait），不留沉默缺口。 -->
+            </div>
+
+            <!-- Focal Mask Window Cursor States (100b-T5 → 100c-T3a 收斂：Y 軸/凍結 modifier 移除) -->
+            <div class="ds-subsection">
+                <h3>Focal Mask Cursor</h3>
+                <p class="ds-desc">
+                    <code>.lb-mask-window</code>（焦點裁切遮罩內的可拖曳窗）唯一可拖方向恆為橫向
+                    （CD-6：icon 只在橫向可拖幅度 ≥20% 的照片顯示），<code>cursor: ew-resize</code>
+                    併入基礎規則，不再需要軸向 modifier class。滑鼠移到方塊上可見游標變化。
+                </p>
+                <div class="ds-state-matrix">
+                    <div class="ds-state-item">
+                        <span class="ds-state-label">預設（可橫向拖曳）</span>
+                        <div class="lb-mask-window" style="position: relative; width: 90px; height: 60px; border: 1px solid rgba(255,255,255,0.55); background: var(--color-base-300); border-radius: 0.25rem; box-shadow: none;"></div>
+                    </div>
+                    <div class="ds-state-item">
+                        <span class="ds-state-label">Dragging</span>
+                        <div class="lb-mask-window lb-mask-window--dragging" style="position: relative; width: 90px; height: 60px; border: 1px solid rgba(255,255,255,0.55); background: var(--color-base-300); border-radius: 0.25rem; box-shadow: none;"></div>
+                    </div>
+                </div>
+                <p class="ds-desc" style="margin-top: 0.75rem;">
+                    Classes：<code>.lb-mask-window</code>（<code>ew-resize</code>）
+                    <code>.lb-mask-window--dragging</code>（<code>grabbing</code>）
                 </p>
             </div>
 
