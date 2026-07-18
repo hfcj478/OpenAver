@@ -19,8 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 在照片挑選視窗按 🔄 重抓，雲端查詢會自動輪流用她的每個名字查（主名 → 別名依序 → 繞回主名）。剛改名的女優線上圖庫多半只認舊名，之前永遠 0 命中；現在多按幾次 🔄 就能撈到掛在舊名下的雲端照片。
 - **使用者無感、UI 零改動**：沒有新按鈕、不顯示目前用哪個名字查（刻意設計——這是「增加圖片來源」的內部機制，不是要操作的功能）。無別名的女優按 🔄 行為與以前完全一致。換一位女優後輪替自動從主名重新開始。
 
+#### 🖱️ 滑鼠滾輪也能切上一片／下一片（102d）
+- 搜尋頁詳情、燈箱（影片／女優）、劇照瀏覽：**橫向滾輪往右撥＝下一個**（等同按右方向鍵），往左撥＝上一個；showcase 牆也能用橫向滾輪翻上下頁。
+- 燈箱和劇照這類全螢幕檢視裡，**垂直滾輪也能切**（滾下＝下一張、滾上＝上一張）——多數滑鼠沒有橫向滾輪，這讓一般滑鼠也用得到。一般頁面的垂直滾輪維持捲動頁面、完全不受影響。
+- 防誤觸設計：一撥只切一張（觸控板慣性連發不會飛過好幾張）；縮圖列、資訊面板等本來就能捲動的區域維持原生捲動，不會被搶走。
+
+### Internal
+- **CI 測試瘦身（102c）**：把「真的跑人臉偵測」收斂到少數顯式回歸測試，其餘佈線／端點測試改用固定座標 mock——全套測試本地 267s → 180s（CI 約 5 分鐘 → 3 分鐘內），測試行為覆蓋不減、零產品碼變更（含 mutation 驗證測試沒變空殼）。
+
 ### 測試
-- 全套 pytest **5348 passed, 1 skipped**（unit + integration，排除 smoke／e2e）＋ `ruff check .` 綠 ＋ `npm run lint` 綠（static_guard_lint 1034 條）＋ `npm test`（node:test 118）。
+- 全套 pytest **5348 passed, 1 skipped**（unit + integration，排除 smoke／e2e）＋ `ruff check .` 綠 ＋ `npm run lint` 綠（static_guard_lint 1034 條）＋ `npm test`（node:test **139**，含滾輪導航 20 案）。
 - 來源金絲雀：**8 源全 PASS**（javbus／jav321／heyzo／d2pass／avsox／fc2／javdb／dmm，pre-merge live 健康檢查）。
 - 輪替全序列以 **CDP 真機實測**（headless Playwright 真 click）：首開無參數、三連 🔄 查詢名 主名→別名1→別名2→繞回、換人歸零、無別名逐位一致、儲存身分正確（驗後資料已還原）。
 - 每 task 獨立 Sonnet review ＋ Codex PR review（P0 手刻 URI 已修、二審通過）＋ Gemini 整支 branch 第二意見（5 條 findings 全數為既有設計已覆蓋，0 採納）。
