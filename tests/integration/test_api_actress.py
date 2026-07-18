@@ -1413,6 +1413,121 @@ class TestSetActressPhoto:
         assert local_data["crop_mode"] == "auto"
         assert set(local_data.keys()) == {"photo_url", "photo_source", "auto_focal", "crop_mode"}
 
+    # ---- TASK-102a-T1: alias 展開對稱（RED→GREEN） ----
+
+    def test_set_actress_photo_local_crop_alias_video_success(self, client, tmp_db, tmp_path):
+        """別名片候選儲存：片子掛在別名（非主名）名下，POST 仍須成功（spec-102 §3.1-1）。
+
+        修碼前紅在 404 video_or_cover_not_found（_get_actress_videos 只用主名單查）；
+        修碼後 200，比照 test_set_actress_photo_local_crop_success 的斷言深度。
+        """
+        from core.database import AliasRepository, VideoRepository, Video
+
+        self._save_actress(client)
+        alias_name = "別名A"
+        # _save_actress → favorite 端點已透過 sync_from_favorite 建立 ACTRESS_NAME 的
+        # primary alias 群組（aliases=[]），因此這裡用 add_alias 掛新別名，而非 add()
+        # 新建群組（add() 對已存在的 primary_name 會拋 ValueError）。
+        ok, err = AliasRepository().add_alias(ACTRESS_NAME, alias_name)
+        assert ok, f"add_alias 失敗: {err}"
+
+        video_path = str(tmp_path / "alias_video.mp4")
+        cover_path = str(tmp_path / "alias_cover.jpg")
+        Path(cover_path).write_bytes(b"\xff\xd8\xff\xe0fake_alias_cover")
+        video = Video(
+            path=video_path,
+            title="Alias Video",
+            actresses=[alias_name],
+            cover_path=cover_path,
+        )
+        VideoRepository().upsert(video)
+        video_uri = to_file_uri(video_path)
+        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_ALIAS_CROP_JPEG"
+
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
+        with patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg), \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            resp = client.post(
+                f"/api/actresses/{ACTRESS_NAME}/photo",
+                json={"source": "local_crop", "video_path": video_uri},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["photo_source"] == "local_crop"
+        assert "?v=" in data["photo_url"]
+        written = list(gfriends.glob("*.jpg"))
+        assert len(written) == 1
+        assert written[0].read_bytes() == fake_jpeg
+
+    def test_set_actress_photo_local_crop_unrelated_actress_still_404(self, client, tmp_db, tmp_path):
+        """偽造路徑：片子掛在「無關女優」名下（不在目標 alias set 內），仍須 404
+        （spec-102 §3.1-2 安全邊界不動）。
+        """
+        from core.database import AliasRepository, VideoRepository, Video
+
+        self._save_actress(client)
+        ok, err = AliasRepository().add_alias(ACTRESS_NAME, "別名A")
+        assert ok, f"add_alias 失敗: {err}"
+
+        unrelated_video_path = str(tmp_path / "unrelated_video.mp4")
+        unrelated_cover_path = str(tmp_path / "unrelated_cover.jpg")
+        Path(unrelated_cover_path).write_bytes(b"\xff\xd8\xff\xe0fake_unrelated_cover")
+        video = Video(
+            path=unrelated_video_path,
+            title="Unrelated Video",
+            actresses=["無關女優XYZ"],
+            cover_path=unrelated_cover_path,
+        )
+        VideoRepository().upsert(video)
+        video_uri = to_file_uri(unrelated_video_path)
+
+        resp = client.post(
+            f"/api/actresses/{ACTRESS_NAME}/photo",
+            json={"source": "local_crop", "video_path": video_uri},
+        )
+        assert resp.status_code == 404
+        assert resp.json()["error"] == "video_or_cover_not_found"
+
+    def test_set_actress_photo_local_crop_uses_alias_resolve_symmetrically(self, client, tmp_db, tmp_path):
+        """對稱守衛：local_crop 儲存路徑必須呼叫 AliasRepository.resolve(name) 且
+        VideoRepository.get_videos_by_actress_names 收到展開後的多名 list（與候選端
+        _get_random_videos_with_covers 同一對 API，spec-102 §3.2 / plan-102a CD-3）。
+        """
+        from core.database import VideoRepository
+
+        self._save_actress(client)
+        video_path, cover_path = self._save_video_with_cover(tmp_path)
+        video_uri = to_file_uri(video_path)
+        fake_jpeg = b"\xff\xd8\xff\xe0FAKE_SYMMETRY_JPEG"
+
+        gfriends = tmp_path / "gfriends"
+        gfriends.mkdir()
+
+        with patch("web.routers.actress.AliasRepository") as mock_alias_repo_cls, \
+             patch("web.routers.actress.VideoRepository") as mock_video_repo_cls, \
+             patch("web.routers.actress.crop_video_cover", return_value=fake_jpeg), \
+             patch("web.routers.actress.GFRIENDS_DIR", gfriends), \
+             patch("core.actress_photo.GFRIENDS_DIR", gfriends):
+            mock_alias_repo_cls.return_value.resolve.return_value = {ACTRESS_NAME, "別名A"}
+            real_video_repo = VideoRepository()
+            mock_video_repo_cls.return_value.get_videos_by_actress_names.side_effect = (
+                real_video_repo.get_videos_by_actress_names
+            )
+
+            resp = client.post(
+                f"/api/actresses/{ACTRESS_NAME}/photo",
+                json={"source": "local_crop", "video_path": video_uri},
+            )
+
+        assert resp.status_code == 200
+        mock_alias_repo_cls.return_value.resolve.assert_called_once_with(ACTRESS_NAME)
+        mock_video_repo_cls.return_value.get_videos_by_actress_names.assert_called_once()
+        called_names = mock_video_repo_cls.return_value.get_videos_by_actress_names.call_args[0][0]
+        assert set(called_names) == {ACTRESS_NAME, "別名A"}
+
 
 # ---------------------------------------------------------------------------
 # T2 (TASK-100a-T2): POST /api/actresses/{name}/photo/upload — 女優照片上傳

@@ -148,6 +148,9 @@ export function stateLightbox() {
         _pickerCurrentSource: null,
         _pickerFloatTweens: [],
         _pickerRunId: 0,
+        // 102b T2: 🔄 輪替序號。歸零只在 openActressPicker 首開判別（CD-4），
+        // ⛔ 不進 _resetPicker——那也是 🔄 重抓路徑的一環，在 reset 清會抹掉剛 +1 的值。
+        _pickerAttempt: 0,
         _pickerSSE: null,
         _pickerBurstFired: false,       // SSE 收齊後一次 burst（防 done/error 重複觸發）
         _pickerReadyAbort: null,        // T3: _burstAllPickerCandidates waitForMount 的 per-run AbortController
@@ -1720,6 +1723,11 @@ export function stateLightbox() {
             // _onPickerSelect 皆同款 early-return，裁決 5）。
             if (this._pickerSelected) return;
 
+            // 102b T2 (CD-4)：🔴 必須在 _resetPicker()（下方會把 _pickerOpen 翻 false）
+            // 之前讀 _pickerOpen 判別首開/重抓——換女優必經關→開，歸零由結構保證。
+            if (this._pickerOpen) { this._pickerAttempt++; }   // 🔄 重抓（同一 picker session）
+            else { this._pickerAttempt = 0; }                  // 首開（含換女優後首開）→ 主名重來
+
             // Tear down any in-flight SSE before starting a new one
             if (this._pickerSSE) { this._pickerSSE.close(); this._pickerSSE = null; }
 
@@ -1745,9 +1753,13 @@ export function stateLightbox() {
          */
         async _burstAllPickerCandidates(runId) {
             if (this._pickerRunId !== runId) return;
-            if (this._candidates.length === 0) return;
             if (this._pickerBurstFired) return;     // 防 done/timeout/error 重複觸發
             this._pickerBurstFired = true;          // dedup latch 維持在等待前（位置不動）
+            // Codex PR#111 一審 P2：0 候選（改名女優主名 0 命中的典型情境）也要落 latch，
+            // 否則 🔄（x-show="_pickerBurstFired"，showcase.html:1064）永遠不出現，
+            // 用戶卡死在 attempt 0 無法換別名重抓。_pickerLoading 已在呼叫端（done/onerror
+            // handler）設為 false，此處不需重複處理。
+            if (this._candidates.length === 0) return;
 
             // T3（CD-3/CD-3a）：waitForMount 等候選卡 mount 取代 $nextTick。predicate 用
             // expected（burst 時 _candidates 已定，SSE 已 close 不再增）非硬編；observer root =
@@ -1787,7 +1799,10 @@ export function stateLightbox() {
          * 超過數秒，誤殺會讓用戶只看到雲端那張。連線中斷由 EventSource onerror 兜底。
          */
         _startPickerSSE(name, runId) {
-            const url = `/api/actresses/${encodeURIComponent(name)}/photo-candidates`;
+            // 102b T2 (CD-5)：0 不帶參數（首開 URL 與 0.12.3 逐位一致）；
+            // 顯式 > 0 而非 truthiness（0 是合法值，gotchas「|| 吞 numeric 0」）
+            const url = `/api/actresses/${encodeURIComponent(name)}/photo-candidates`
+                + (this._pickerAttempt > 0 ? `?attempt=${this._pickerAttempt}` : '');
             const sse = new EventSource(url);
             this._pickerSSE = sse;
             this._pickerBurstFired = false;
@@ -2124,6 +2139,8 @@ export function stateLightbox() {
          * 內部 reset：清空候選 + kill float tweens
          */
         _resetPicker() {
+            // 102b T2: ⛔ 不清 _pickerAttempt——本函式也是 🔄 重抓路徑的一環
+            // （openActressPicker :1727 會呼叫），在此清會抹掉剛 +1 的值。
             this._pickerOpen = false;
             this._pickerLoading = false;
             this._pickerSelected = false;
