@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.5] - 2026-07-20
+
+本版是一次「技術債清償」（feature/103）：把散在程式各處、只能靠人腦自律維持的東西收斂乾淨，並替每一筆清償補上一道機械守衛，讓債長不回來。**絕大部分對使用者完全隱形**，實際會被看見的只有下面三件事。
+
+### Changed
+#### 🌐 多語系介面更完整
+- 原本有一批中文字（主要是各種提示與錯誤訊息）直接寫死在程式裡，切成英文／日文／簡中時仍顯示繁中。本版把約 130 行這類文字收進語言檔，未來翻譯補上後就會跟著介面語言走。
+  > 本版新增的字暫時只有繁中、其他語言留空靠回退顯示繁中（正確翻譯留待後續統一補），所以**這一版切語言時這些字仍是繁中**，但已從「不可能翻」變成「翻了就生效」。
+
+#### 🎯 拖曳檔案的番號辨識與「貼上檔名」一致
+- 以前把影片檔**拖**進搜尋頁，番號辨識走的是前端一份簡化規則，比「貼上檔名」少認 5 種格式（日期式 `123456-01`、底線式、方括號 `[ABC-123]`、Tokyo Hot `n0762`、數字前綴）——同一個檔拖進去可能失敗、貼進去卻正常。本版讓拖曳與貼上走**同一套後端規則**，兩邊結果一致（先前 `PARATHD` 系列拖檔掉字即屬此類）。
+
+#### 💬 番號辨識失敗時會明說
+- 檔名認不出番號時改為**明確提示**，不再默默留空讓你以為沒反應。
+
+### Internal
+純內部工程，對使用者無感、零行為變更：
+- **死碼清除**：移除 2 個已退役函式 + 8 個孤兒函式（連同其測試）。
+- **logger 守衛遷移**：從 pytest 改用 ruff banned-api（TID251）機械擋「用標準 `logging` 而非 `core.logger`」。
+- **前端重複收斂**：四份重複的 `mergeState`、兩份重複的 `openLocal` 各自收斂為單一共用模組。
+- **中文硬編碼守衛上線**：JS 面用 eslint 自訂 AST rule、模板面用掃描腳本，植入一行硬編碼中文即 lint 報紅——這是讓 i18n 債長不回來的機械閘。
+- **番號抽取鏡像連根拔除**：刪掉前端那份簡化番號規則，規則只留後端一份權威版，消除「兩份鏡像會漂移」的債源；連帶把批次拖曳／選檔的競態補強（連續操作時舊請求會被取消、不覆蓋新結果、失敗也不吞掉已選檔案）。
+- **治理文件收斂**：`Alpine.store` 使用界線明文化、javbus UA 反爬意圖入註記。
+
+### 測試
+- 全套 pytest **5347 passed, 1 skipped**（unit + integration，排除 smoke／e2e）＋ `ruff check .` 綠 ＋ `npm run lint` 綠（eslint／stylelint／`static_guard_lint` 1039 條／cjk_guard_lint）＋ `npm test`（node:test **212**，含 T5 競態／fallback 守衛 4 支）。
+- 來源金絲雀：**8 源全 PASS**（javbus／jav321／heyzo／d2pass／avsox／fc2／javdb／dmm，pre-merge live 健康檢查）。
+- T5（唯一有 runtime 行為變更的 task）**CDP 真機驗收 3 oracle 全 PASS**（拖日期式番號→辨識成功／拖無番號檔→明確提示／連拖競態→正確取後者無殘留）。
+- 每 task 獨立 Sonnet review ＋ Codex PR review（P1：批次 abort 未貫穿 parse 階段，已修＋真 A/B 競態守衛）＋ grok 整支 branch 第二意見（LGTM；提出 2 條皆 P3，採納 1＝T6 誤把 metatube 連線 toast 文案「Provider 清單」改成「Parts Bin」造成設定頁內部不一致，已還原；此條 Codex 與 per-task review 皆未觸及，為 holistic branch review 的增量發現）。
+- 本版新增 i18n key 只寫 zh_TW，其餘三語留空靠回退。
+
 ## [0.12.4] - 2026-07-18
 
 本版修好「改過名（有別名）的女優換照片特別難」的兩個問題（feature/102，spec-102 Part A＋B）。之前這類女優在照片挑選視窗裡：本機候選一選就失敗、雲端又永遠查不到圖，體感就是「換圖整個壞掉」。
@@ -185,31 +216,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 每 task 獨立 Sonnet structured review（T2/T3/T4/T5 findings 皆修：產物守衛 scanned==0 假綠守衛／audit if-no-files-found／CI YAML semantics／javdb test importorskip）。CI dispatch dry-run + Codex PR review 為 push 後最終網。
 - **本版另 bundle 兩個後續修復**（feature/98 javdb error 77 + 番號 cap 對齊）：全套 pytest 升至 **5030 passed / 1 skipped**（+35 自 4995：javdb CAINFO 12 案〔非 win／ASCII 路徑 no-op／ACP 可編→bytes 覆寫 CAINFO／`UnicodeEncodeError` 降級 warn-once／cache sentinel／併發 publish-after-compute／import-time 優雅降級，皆 mutation 驗〕+ 番號 cap 對齊回歸鎖〔parathd 各形式／合成 7 字母／8 字母維持不變非回歸／Tokyo Hot・日期・FC2 collision guard／organizer 殘留碎片／前端逃生口，皆 mutation 驗〕）；`npm test` 39 pass；`ruff check .` ＋ `npm run lint:js` 綠。兩者各經獨立 Sonnet review + Codex 二審（javdb import-time 降級測試、番號 `extractChineseTitle`／DMM 恆真斷言、organizer 無鎖）皆修並 mutation 證明。
 
-## [0.11.11] - 2026-07-12
-
-本版主軸：**前端靜態守衛 pytest → lint 全面遷移（test-deflation）**（feature/96，5 plan 96a–96e／3 PR `0.11.11ab`→`0.11.11cd`→`0.11.11`）——**純內部工程里程碑：零產品碼、對使用者完全隱形、不單獨發 GitHub release**（下一個面向用戶的 0.11.12 才是 0.11.10 後第一個實際 release）。north-star（owner 拍板）：**能用 lint 機械處理的，就不該進 pytest、也不該耗 Codex 審**——把 `tests/unit/test_frontend_lint.py` 裡「讀原始碼做字串/結構斷言」的前端靜態守衛搬回它們該去的工具層（eslint／stylelint／node `.mjs` lint 腳本），並止血讓它不再長回來。收益不是測試數字，是把機械式字串存在檢查移出 AI review 的注意力預算。
-
-### Internal
-#### 🧹 test-deflation 成果
-- **`test_frontend_lint.py` 16,749 行/214 class → 5,041 行/59 class（−70%）**。殘留組成全數記帳：E2E-block 52 class（替代網＝旅程測試，待未來 E2E branch）+ slim-residual 4 class（pytest-justified 極性/scope 語意，逐一標籤）+ 混合殘餘；**8,000 行過渡上限達標**（4,000 完成上限待 E2E branch 適用）。
-- **KEEP-justified 36 class relocate 進 `tests/unit/frontend_contracts/`**（7 檔 4,148 行）：跨檔 contract／method-body ordering／call-count／brace-scope 等 node 字串檢查不忠實的真守衛，純搬移零行為變更（pure-move gate：collect test-id 差集空 + byte-for-byte 驗證），明文排除行數棘輪計量。
-#### 🛠️ 新 lint 基建（全掛 `npm run lint`，自動進 CI）
-- **`scripts/i18n_lint.mjs`**（96a）：i18n key 存在性／四語 parity（warn）／禁詞（「推薦」「風味」）。
-- **`scripts/static_guard_lint.mjs`**（96b 建、96d/96e 擴）：表驅動靜態守衛引擎，**886 rule／9 kind**（required/forbidden-string、dup-id、structure-count、tag-scan、inline-style-token、order、file-absent、paired-string〔檔含 A 必含 B〕）+ scope 機制（anchor 缺席 fail-closed、braceBalanced method-body 計數、stripLineComments 注釋剝除）。
-- **`scripts/css-guard.mjs`**（96c）：41 CSS-block rule（fluent-materials／poster-crop／z-index 跨檔序／vt-anchor／selector-scope 等）+ stylelint 接線。
-- **eslint 新 `SEL_*` 家族**：showModal／tracked-eventsource／longpress／clip-ban／window.open(path) 等 no-restricted-syntax，逐一追加進全部 flat-config 群（防 scoped-group replace trap）。
-- **P0 止血**：pre-merge SA-pre-6 改 content-based lint-guard 偵測（掃斷言內容非 class 名，未標 `[lint-guard:*]` 即 BLOCKER）+ `test_frontend_lint.py` 行數硬上限。
-#### 🔬 遷移品質方法論（本 branch 最貴的教訓，已固化進 plan-context gotcha）
-- **每條遷移 mutation 驗證**：先建網 → 故意破壞 target 必 RED／還原必 GREEN → 才刪 pytest；刪除 commit 附「被刪 class → 替代網 rule」對照表（96e-T5 由獨立 review 50/50 逐條對帳）。
-- **Codex 累計抓 7 條「替代網比原 pytest 弱」（scope-narrowing fail-open）全數修復**：element-bound 屬性值未綁值／`\b` 誤當屬性名邊界／class token 非 token 比對／whole-text 掃描被 property-scoped 弱化／複合 scope 漏 1200-char 窗上限／greedy 量詞偏離 find-first 語意／單 match 漏 multi-tag。通則固化：**遷移前記下原 pytest 掃描粒度，替代網必須同粒度，寧 fail-closed 不 fail-open**；mutation 必含 wrong-location 負向案。
-- 遷移過程亦修正一個原 pytest 既有錨定 bug（VT head-script 守衛誤鎖無關 script tag，獨立 review 重演證實後改鎖真正 timing-critical script）。
-
-### 測試
-- 全套 pytest **4985 passed, 1 skipped**（unit + integration，排除 smoke／e2e，較 0.11.10 的 5523 淨 −538：被刪守衛已由 lint 層 886+41 rule 等價承接，覆蓋面不減、Codex/pytest 注意力預算下降）＋ `ruff check .` 綠 ＋ `npm run lint`（eslint + stylelint + css-guard + static_guard_lint + i18n_lint + lint-settings-ia）綠 ＋ `npm test`（node:test 28）綠。
-- 來源金絲雀：**7 源 PASS + fc2 SKIP**（unreachable／no probe，站方連線問題非 parser 回歸，advisory 記錄）。
-- Codex PR review：PR-1 P2×1（eslint persistence.js group 補 selector）、PR-2 P1/P2/P3×4（scope-narrowing）、PR-3 前置審 P1×2+P2×1（1200 窗上限＋lazy 量詞＋multi-tag defer）皆修復並 mutation 證明（修前 GREEN=缺口證實 → 修後 RED）。
-
-## 0.11.x 系列 (v0.11.0 ~ v0.11.10, 2026-06-27 ~ 2026-07-10)
+## 0.11.x 系列 (v0.11.0 ~ v0.11.11, 2026-06-27 ~ 2026-07-12)
 
 - **v0.11.0**：JavBus 過度泛用清償 + exact 番號搜尋改優先序 cascade（feature/85）——直接搜番號改為依你拖曳的來源優先順序逐一查詢（cascade，命中即回），JavBus 不再無視優先序搶先短路；DMM proxy 透傳修復、前綴搜尋 `type` 參數修正；拔除已死的 JavBus variant（同番號多版本）探查死碼。
 - **v0.11.1**：JavLibrary 同番號多版本手動切換（feature/86）——搜尋框直搜／燈箱換來源／結果卡替換來源三入口皆可看封面手動挑撞號版本（游標預設停最新發行日），桌面 standalone 限定（需 CF transport）。
@@ -224,8 +231,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **v0.11.8**：各刮削來源評分/簡介補進 NFO（feature/93，NFO-only）——七源評分、六源簡介寫進 `<rating>`/`<plot>`，純服務媒體伺服器（Jellyfin/Emby/Kodi）用戶，OpenAver 自身介面不顯示；順手美化燈箱中繼資訊視覺層次。
 - **v0.11.9**：掃描頁「補資料」升級成逐片進度卡 + 命中封面飛入圖書館（feature/94）——補資料時逐片可視進度（搜尋中／命中／查無／失敗／唯讀跳過），真封面命中飛入側邊欄「瀏覽」入口。
 - **v0.11.10**：設定頁命名區膠囊化 + 列表生成兩層 IA 重排（feature/95）——檔案命名格式從手打字串改成「變數膠囊 + 字面文字」視覺化編輯器、資料夾層級改動態清單（硬上限 3 層）；列表生成設定拆成日常常用（常駐）+ 離線 HTML 匯出（摺疊進階）。
+- **v0.11.11**：前端靜態守衛 pytest → lint 全面遷移（feature/96，test-deflation）——純內部工程里程碑（零產品碼、對使用者隱形）：把 `test_frontend_lint.py` 裡「讀原始碼做字串/結構斷言」的守衛搬回工具層（新增 `i18n_lint`／`static_guard_lint`／`css-guard` 三支 `.mjs` + eslint `SEL_*` 家族），`test_frontend_lint.py` 16,749→5,041 行（−70%）、36 個真 contract class relocate 進 `frontend_contracts/`；north-star＝「能用 lint 機械處理的不進 pytest、不耗 Codex 審」。
 
-測試數 4735 → 5523。
+測試數 4735 → 5523（v0.11.10）→ 4985（v0.11.11 test-deflation：守衛遷 lint 層等價承接，−538 非覆蓋損失）。
 
 ## 0.10.x 系列 (v0.10.0 ~ v0.10.11, 2026-06-18 ~ 2026-06-24)
 
