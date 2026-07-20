@@ -4,13 +4,15 @@
   "private": true,
   "description": "ESLint + stylelint devtools for OpenAver frontend",
   "scripts": {
-    "lint": "npm run lint:js && npm run lint:css && npm run lint:css-guard && npm run lint:html && npm run lint:i18n",
+    "lint": "npm run lint:js && npm run lint:css && npm run lint:css-guard && npm run lint:html && npm run lint:i18n && npm run lint:cjk",
     "lint:js": "eslint web/static/js/",
     "lint:css": "stylelint \"web/static/css/**/*.css\"",
     "lint:css-guard": "node scripts/css-guard.mjs",
     "lint:html": "node scripts/lint-settings-ia.mjs && node scripts/static_guard_lint.mjs",
     "lint:i18n": "node scripts/i18n_lint.mjs",
-    "test": "node --test \"web/static/js/**/__tests__/**/*.test.mjs\"",
+    "lint:cjk": "node scripts/cjk_guard_lint.mjs",
+    "test": "node --test \"web/static/js/**/__tests__/**/*.test.mjs\" \"scripts/__tests__/**/*.test.mjs\"",
+    "test:cjk-guard": "node --test \"scripts/__tests__/**/*.test.mjs\"",
     "test:tokenizer": "node --test \"web/static/js/pages/settings/__tests__/**/*.test.mjs\"",
     "test:dom-timing": "node --test \"web/static/js/shared/__tests__/**/*.test.mjs\"",
     "test:scanner-order": "node --test \"web/static/js/pages/scanner/__tests__/**/*.test.mjs\""
