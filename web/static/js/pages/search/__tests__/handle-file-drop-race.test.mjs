@@ -15,6 +15,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { searchStateFileList } from '../state/file-list.js';
 import { searchStateSearchFlow } from '../state/search-flow.js';
+import { searchStateBase } from '../state/base.js';
 
 globalThis.window = globalThis;
 
@@ -48,9 +49,9 @@ function makeParseFilenamesMock() {
 function makeFakeThis(overrides = {}) {
   return Object.assign(
     {},
+    searchStateBase(),      // requestId 真實初值（base.js:125）+ _abortControllers（base.js:99）
     searchStateSearchFlow(),
     searchStateFileList(),
-    { _abortControllers: {} }, // base.js:99 shim（searchStateBase() 專屬，未含在上兩者回傳物件內）
     overrides,
   );
 }
@@ -161,4 +162,56 @@ test('handleFileDrop: API 失敗（非 AbortError）→ errorText 顯示 number_
 
   assert.equal(fakeThis.errorText, 'search.error.number_parse_unavailable');
   assert.equal(fakeThis.pageState, 'error');
+});
+
+// Codex PR#112 review P2：這條與上面的 CD-11 mutation A/B 是不同層的競態——CD-11 那組是
+// 「拖 A 又拖 B」，靠 abort registry（_getAbortSignal 同 key abort）處理；這裡是「拖 A 途中
+// 使用者改走手動搜尋 B」，abort registry 管不到（不同呼叫路徑，沒人 abort handleFileDrop 的
+// controller），必須靠 doSearch/cancelSearch 共用的 requestId generation 機制守（search-flow.js
+// :107 `this.requestId++` / :602 同）。
+
+test('Codex P2: 拖檔 parse 中途使用者手動搜尋（requestId bump）→ stale continuation 不覆蓋新搜尋狀態', async () => {
+  const { parseFilenames, calls } = makeParseFilenamesMock();
+  window.SearchFile = { parseFilenames };
+  window.t = (key) => key;
+
+  const doSearchCalls = [];
+  const fakeThis = makeFakeThis({
+    doSearch(q) { doSearchCalls.push(q); },
+    showToast() {},
+  });
+
+  searchStateFileList().handleFileDrop.call(fakeThis, [{ name: 'DROP-001.mp4' }]);
+  assert.equal(calls.length, 1, '應觸發一次 parseFilenames 呼叫');
+
+  // 模擬使用者在拖檔 parse pending 期間手動搜尋 B：doSearch(B) 內部 cancelSearch()+requestId++
+  // 讓 generation 前進（doSearch 本身已有獨立測試覆蓋，這裡只驗 file-list.js 的 stale-check）。
+  fakeThis.requestId++;
+
+  // 拖檔 A 的 parse 這時才回來（stale continuation）
+  calls[0].resolve([{ filename: 'DROP-001.mp4', number: 'DROP-001', has_subtitle: false }]);
+  await flush();
+
+  assert.notEqual(fakeThis.searchQuery, 'DROP-001', 'stale 拖檔 continuation 不得寫入 searchQuery 覆蓋手動搜尋');
+  assert.deepEqual(doSearchCalls, [], 'stale 拖檔 continuation 不得呼叫 doSearch');
+  assert.equal(fakeThis.errorText ?? '', '', 'stale 拖檔 continuation 不得寫入 errorText');
+});
+
+test('Codex P2 對照（happy path）：拖檔 parse 期間 requestId 未變 → 正常寫入 searchQuery + 呼叫 doSearch（確認修法未誤殺正常拖檔）', async () => {
+  const { parseFilenames, calls } = makeParseFilenamesMock();
+  window.SearchFile = { parseFilenames };
+  window.t = (key) => key;
+
+  const doSearchCalls = [];
+  const fakeThis = makeFakeThis({
+    doSearch(q) { doSearchCalls.push(q); },
+    showToast() {},
+  });
+
+  searchStateFileList().handleFileDrop.call(fakeThis, [{ name: 'DROP-001.mp4' }]);
+  calls[0].resolve([{ filename: 'DROP-001.mp4', number: 'DROP-001', has_subtitle: false }]);
+  await flush();
+
+  assert.equal(fakeThis.searchQuery, 'DROP-001');
+  assert.deepEqual(doSearchCalls, ['DROP-001'], 'doSearch 應被拖檔 continuation 呼叫一次');
 });

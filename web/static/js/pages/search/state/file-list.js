@@ -417,8 +417,15 @@ export function searchStateFileList() {
 
     async _resolveAndSearchDroppedFile(file) {
         const signal = this._getAbortSignal('handleFileDrop');   // 同 setFileList:280／loadFavorite:436 的既有機制
+        // Codex PR#112 P2 fix: 捕獲 requestId generation——這條 async continuation 沒有共用
+        // abort registry 那層（拖檔互相取代），還需要 doSearch/cancelSearch 那層「新一輪手動搜尋
+        // 取代舊 async continuation」的權威機制（search-flow.js:107/602），否則拖檔 A 的 parse 在
+        // 使用者已手動搜尋 B 之後才 resolve，會覆蓋 B 的 searchQuery/state（CD-11 精神：重用
+        // this.requestId，不自創新 generation 欄位）。
+        const capturedRequestId = this.requestId;
         try {
             const [r] = await window.SearchFile.parseFilenames([file.name], { signal });
+            if (capturedRequestId !== this.requestId) return;   // 期間使用者已手動搜尋，這輪 stale，不覆蓋
             if (!r?.number) {
                 this.errorText = window.t('search.error.number_not_recognized');  // T6c: 沿用既有 key
                 this.pageState = 'error';
@@ -428,6 +435,7 @@ export function searchStateFileList() {
             this.doSearch(r.number);
         } catch (err) {
             if (err.name === 'AbortError') return;   // 舊請求被新拖曳取代，靜默退出——必要不是裝飾
+            if (capturedRequestId !== this.requestId) return;   // 同上：手動搜尋期間發生的失敗不覆蓋新搜尋狀態
             this.errorText = window.t('search.error.number_parse_unavailable');   // 新 key
             this.pageState = 'error';
         } finally {
