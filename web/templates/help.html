@@ -192,9 +192,9 @@
             <h6 class="mt-4">{{ t('help.scanner.h6_multiversion') }}</h6>
             <p>{{ t('help.scanner.multiversion_intro') }}</p>
             <pre class="bg-base-200 rounded-lg p-3 text-sm overflow-x-auto"><code>ABC-123/
-  ABC-123 - 有碼.mp4
-  ABC-123 - 無碼流出.mp4
-  ABC-123 - 中文字幕.mp4
+  ABC-123 - 有碼.mp4{# cjk-exempt(有碼): 檔名命名慣例真實範例，非 UI copy — TASK-103-T7 §F.3 #}
+  ABC-123 - 無碼流出.mp4{# cjk-exempt(無碼流出): 同上 #}
+  ABC-123 - 中文字幕.mp4{# cjk-exempt(中文字幕): 同上 #}
   ABC-123.nfo
   ABC-123-poster.jpg</code></pre>
             <ul>
@@ -471,9 +471,9 @@
                     </thead>
                     <tbody>
                         <tr><td><code>{num}</code></td><td>{{ t('help.format.var_num_desc') }}</td><td>SONE-205</td><td>—</td></tr>
-                        <tr><td><code>{title}</code></td><td>{{ t('help.format.var_title_desc') }}</td><td>新人出道...</td><td>{{ t('help.format.fallback_unknown_title') }}</td></tr>
-                        <tr><td><code>{actor}</code></td><td>{{ t('help.format.var_actor_desc') }}</td><td>三上悠亜</td><td>{{ t('help.format.fallback_unknown_actor') }}</td></tr>
-                        <tr><td><code>{actors}</code></td><td>{{ t('help.format.var_actors_desc') }}</td><td>三上悠亜, 明日花</td><td>{{ t('help.format.fallback_unknown_actor') }}</td></tr>
+                        <tr><td><code>{title}</code></td><td>{{ t('help.format.var_title_desc') }}</td><td>新人出道...</td><td>{{ t('help.format.fallback_unknown_title') }}</td></tr>{# cjk-exempt(新人出道): 格式變數對照表範例值，非 UI copy — TASK-103-T7 §F.3 #}
+                        <tr><td><code>{actor}</code></td><td>{{ t('help.format.var_actor_desc') }}</td><td>三上悠亜</td><td>{{ t('help.format.fallback_unknown_actor') }}</td></tr>{# cjk-exempt(三上悠亜): 同上 #}
+                        <tr><td><code>{actors}</code></td><td>{{ t('help.format.var_actors_desc') }}</td><td>三上悠亜, 明日花</td><td>{{ t('help.format.fallback_unknown_actor') }}</td></tr>{# cjk-exempt(三上悠亜|明日花): 同上 #}
                         <tr><td><code>{maker}</code></td><td>{{ t('help.format.var_maker_desc') }}</td><td>S1</td><td>{{ t('help.format.fallback_unknown_maker') }}</td></tr>
                         <tr><td><code>{date}</code></td><td>{{ t('help.format.var_date_desc') }}</td><td>2024-01-15</td><td>{{ t('help.format.fallback_unknown_date') }}</td></tr>
                         <tr><td><code>{year}</code></td><td>{{ t('help.format.var_year_desc') }}</td><td>2024</td><td>{{ t('help.format.fallback_unknown_year') }}</td></tr>

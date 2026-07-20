@@ -24,6 +24,7 @@ function checkSubtitle(filename) {
         }
     }
 
+    // eslint-disable-next-line local/no-cjk-literal -- [cjk-exempt: TEMPORARY — checkSubtitle() 內字幕比對常數，非 UI copy；T5 刪除 checkSubtitle 時必須移除本行 disable，否則 reportUnusedDisableDirectives 會 fail-closed RED]
     const chinesePatterns = ['中文字幕', '字幕', '中字', '[中字]', '【中字】'];
     for (const p of chinesePatterns) {
         if (filename.includes(p)) return true;
@@ -67,7 +68,9 @@ function cleanSourceSuffix(text) {
 }
 
 // 字幕 pattern 常數（對齊 Python core/scrapers/utils.py::_SUBTITLE_PATTERNS_*）
+// eslint-disable-next-line local/no-cjk-literal -- [cjk-exempt: stripSubtitleMarkers 用字幕標記比對資料，非 UI copy，現役路徑（file-list.js:357）]
 const _SUBTITLE_BRACKETS = ['[中文字幕]', '【中文字幕】', '[中字]', '【中字】'];
+// eslint-disable-next-line local/no-cjk-literal -- [cjk-exempt: stripSubtitleMarkers 用字幕標記比對資料，非 UI copy，現役路徑（file-list.js:357）]
 const _SUBTITLE_TEXT_MARKERS = ['中文字幕', '中字', '字幕'];  // 長 pattern 先
 
 /**

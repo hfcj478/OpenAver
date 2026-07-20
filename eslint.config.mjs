@@ -10,6 +10,68 @@
 // 不重疊的 file glob 區段，每個區段給該 file group 完整的 selector 清單。
 import js from "@eslint/js";
 
+// ── 103-T8b (CD-1R)：local/no-cjk-literal — JS 硬編碼中文守衛（AST，取代手刻 tokenizer）──
+// 偵測 Literal 字串／TemplateElement 內的 CJK。豁免只留 console.* 呼叫範圍（CD-3，往上
+// 找 parent 鏈；跨行天然成立，不需括號配對機器）；其餘豁免（chinesePatterns 等具名常數／
+// window.t fallback）改用行內 `eslint-disable-next-line local/no-cjk-literal --
+// [cjk-exempt: 理由]`（CD-1R：綁在該行不漂移，reportUnusedDisableDirectives 陳舊即紅）。
+//
+// Accepted residual（P1-2 同族排查，2026-07-20）：`eslint-disable-next-line` 是 ESLint 原生
+// 語意，一次抑制「下一行」該 rule 的**所有**回報，沒有「只抑制 N 個」的原生機制（不像模板側
+// cjk-exempt(N) 是我們自己發明、可以做成精確計數的標記）。理論上若日後有人在同一個已豁免的
+// disable-next-line 行上，又加進一段**與豁免理由無關**的新硬編碼中文，會被同一個 disable
+// 靜默吞掉——與 P1-2 是同一種「整行豁免溢出」，但這裡是 ESLint 標準行為，不是我們自造的
+// bug，改造成計數式豁免等於重新發明 ESLint 的 disable-comment 機制，複雜度不成比例。現況
+// 6 處行內 disable 每行本來就只有 1 個語義單元該被整行豁免（陣列常數／單一 property
+// value），不是「部分豁免」，故現況不構成真實風險；未來新增行內 disable 時人工留意「這行
+// 之後有沒有被加進不相干的中文」即可，不在本 task 做進一步機制化。
+const CJK_RE = /[一-鿿぀-ヿ㐀-䶿]/;
+export const NO_CJK_LITERAL_MESSAGE =
+  "CD-1R: JS 檔案禁止硬編碼中文字面（UI copy 請走 t()；非 UI copy 用行內 " +
+  "// eslint-disable-next-line local/no-cjk-literal -- [cjk-exempt: 理由]）。";
+// 只看「最近一層」CallExpression 祖先（找到第一個就回傳，不繼續往上）——豁免的是
+// console.* 呼叫本身的直接參數，不是「隨便某個外層祖先剛好是 console.*」。若改成
+// 遍歷全部祖先，`console.warn('a', foo('中文'))` 裡 foo(...) 的參數會被外層 console.warn
+// 誤豁免（extra-J6 mutation 戳出的坑）。
+function isInsideConsoleCall(node) {
+  for (let cur = node; cur; cur = cur.parent) {
+    if (cur.type === "CallExpression") {
+      return (
+        cur.callee.type === "MemberExpression" &&
+        cur.callee.object.type === "Identifier" &&
+        cur.callee.object.name === "console"
+      );
+    }
+  }
+  return false;
+}
+export const localPlugin = {
+  rules: {
+    "no-cjk-literal": {
+      meta: { type: "problem", docs: { description: "CD-1R: 禁止 JS 硬編碼中文字面" } },
+      create(context) {
+        function check(node, text) {
+          if (!CJK_RE.test(text) || isInsideConsoleCall(node)) return;
+          context.report({ node, message: NO_CJK_LITERAL_MESSAGE });
+        }
+        return {
+          Literal(node) {
+            if (typeof node.value === "string") check(node, node.value);
+          },
+          // Codex P1-1（實測驗證，T8b 卡片 §技術要點原寫的 `value.raw` 是錯的）：`raw` 是
+          // escape 前的原始碼字面（`中` 這種寫法在 raw 裡是 ASCII 反斜線序列，不含 CJK
+          // codepoint），`cooked` 才是解碼後的實際字元。只查 raw 會讓 `` `中文` ``
+          // 這種 escape 樣板字面漏檢——正是 T8 的假陰性 #3 換了個節點型別復活。兩者都查
+          // （`cooked` 在 tagged template 遇不合法 escape 時可能是 null，`?? ""` 兜底）。
+          TemplateElement(node) {
+            check(node, `${node.value.raw}${node.value.cooked ?? ""}`);
+          },
+        };
+      },
+    },
+  },
+};
+
 // ── 共用 selector 物件 ─────────────────────────────────────────
 const SEL_CREATE_ELEMENT = {
   selector:
@@ -206,6 +268,13 @@ const SEL_NO_WINDOW_OPEN_PATH = {
 };
 
 export default [
+  // ── 103-T8b：陳舊 eslint-disable 立即紅（CD-1R 附帶收益，取代舊方案 anchor 機器）──
+  {
+    linterOptions: {
+      reportUnusedDisableDirectives: "error",
+    },
+  },
+
   // ── 全域基礎設定 ──────────────────────────────────────────────
   {
     ...js.configs.recommended,
@@ -213,6 +282,23 @@ export default [
     rules: {
       // Alpine x-data 注入的 $store / $dispatch 等為 runtime global
       "no-undef": "off",
+    },
+  },
+
+  // ── 103-T8b (CD-1R)：local/no-cjk-literal — 全域 JS 硬編碼中文禁令 ─────
+  // 檔案豁免（motion-lab 資料頁與 host，spec-103 §3.1 點名隨模板一併豁免；vendor/** 目前
+  // 無此目錄，defensive ignore 沿用 cjk_guard_lint.mjs 舊房規）。
+  {
+    files: ["web/static/js/**/*.js"],
+    ignores: [
+      "web/static/js/pages/motion-lab.js",
+      "web/static/js/pages/motion-lab-state.js",
+      "web/static/js/pages/motion-lab/constellation-host.js",
+      "web/static/js/vendor/**",
+    ],
+    plugins: { local: localPlugin },
+    rules: {
+      "local/no-cjk-literal": "error",
     },
   },
 

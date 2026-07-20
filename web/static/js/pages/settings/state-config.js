@@ -144,8 +144,11 @@ export function stateConfig() {
         FOLDER_PREVIEW_DATA: {
             num: 'SSNI-618',
             maker: 'SOD',
+            // eslint-disable-next-line local/no-cjk-literal -- [cjk-exempt: 資料夾命名範本預覽樣例，非 UI copy — spec-103 §3.1]
             actor: '三上悠亞',
+            // eslint-disable-next-line local/no-cjk-literal -- [cjk-exempt: 資料夾命名範本預覽樣例，非 UI copy — spec-103 §3.1]
             actors: '三上悠亞, 明日花',
+            // eslint-disable-next-line local/no-cjk-literal -- [cjk-exempt: 資料夾命名範本預覽樣例，非 UI copy — spec-103 §3.1]
             title: '絕對領域',
             date: '2024-01-15',
             year: '2024',
