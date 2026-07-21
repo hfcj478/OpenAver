@@ -31,6 +31,7 @@ logger = get_logger(__name__)
 
 from core.config import load_config
 from core.database import init_db
+from core.database import backfill_readonly_nfo_mtime
 from core.metatube.state import metatube_state as _mt_startup_state
 
 
@@ -47,6 +48,21 @@ async def lifespan(app: FastAPI):
     # 移除 legacy clip_embedding / clip_model_id），確保 Video.from_row cls(**data)
     # 不會因 legacy schema 欄位收到未知 keyword 而 500。CD-57b-8 contract。
     init_db()
+
+    # TASK-104: one-time heal for pre-0.12.6 readonly rows whose nfo_mtime was
+    # hardcoded to 0.0 even though the sibling .nfo was really written next to
+    # the cover (core/database/migrate.py::backfill_readonly_nfo_mtime docstring
+    # has full context). Must run exactly once per app boot — NOT inside init_db()
+    # (called on many showcase requests) and NOT on any per-request path.
+    # Wrapped in try-except so any unexpected failure cannot crash startup.
+    try:
+        _backfill_config = load_config()
+        _backfill_path_mappings = _backfill_config.get("gallery", {}).get("path_mappings", {})
+        _healed = backfill_readonly_nfo_mtime(path_mappings=_backfill_path_mappings)
+        if _healed > 0:
+            logger.info("lifespan: backfilled nfo_mtime for %d readonly row(s)", _healed)
+    except Exception:
+        logger.warning("lifespan: backfill_readonly_nfo_mtime failed unexpectedly", exc_info=True)
 
     # TASK-63e-1: auto-reconnect metatube from persisted config.
     # Wrapped in try-except so any unexpected failure cannot crash startup.

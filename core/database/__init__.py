@@ -12,7 +12,7 @@ from .video import Video, VideoRepository
 from .alias import AliasRecord, AliasRepository
 from .tag_alias import TagAliasRecord, TagAliasRepository
 from .actress import Actress, ActressRepository
-from .migrate import migrate_json_to_sqlite
+from .migrate import migrate_json_to_sqlite, backfill_readonly_nfo_mtime
 
 __all__ = [
     "get_db_path",
@@ -28,4 +28,5 @@ __all__ = [
     "Actress",
     "ActressRepository",
     "migrate_json_to_sqlite",
+    "backfill_readonly_nfo_mtime",
 ]

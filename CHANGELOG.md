@@ -27,15 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 補劇照回報的張數改為「實際下載成功」的數量（非「嘗試」數）；一張都沒抓到時不會清空既有紀錄。
 - 批次補料對唯讀片成功後，掃描頁卡片狀態與封面動畫會正確更新（不再誤顯示成「沒變動」）；只有 NFO、沒封面的片會標為「無封面」而非硬拉一張不存在的縮圖（破圖）。
 - 唯讀片按放大鏡「補缺」（缺 NFO、封面還在）不再重寫既有封面（只補缺的那份），封面真的被換掉時（齒輪重刮換新圖）才自動重跑對焦——與非唯讀完全一致。
+- 修正舊版（0.11.x）唯讀來源產生的媒體庫，升級後**每部片都誤顯示放大鏡（補缺）圖示**的問題：那些片的資料其實完整（NFO 早已寫進輸出夾），只是舊版把資料庫的 NFO 時間戳記記成 0，讓介面誤判「缺 NFO」。本版升級時**自動回填**正確時間戳（依封面旁的同名 `.nfo` 實際時間），圖示即消失；只補值不刪值、找不到 `.nfo` 的片保持原狀。
 
 ### Internal
 - 抽出單片產生的共用核心：bulk 產生／放大鏡／齒輪／補劇照四條路共用同一套 resolve→write→upsert，杜絕目錄邏輯漂移與孤兒夾。
-- 封面來源三態策略（複製本地／不下載／遠端下載）＋ metadata 與封面來源解耦；`nfo_mtime` 改實寫值。
+- 封面來源三態策略（複製本地／不下載／遠端下載）＋ metadata 與封面來源解耦；`nfo_mtime` 改實寫值。舊庫殘留的 `nfo_mtime=0`（pre-T1／0.11.x）由 app 啟動時一次性 `backfill_readonly_nfo_mtime` 回填（`cover_path` 旁同名 `.nfo` 的 stat mtime）——冪等、只補不刪、不進 per-request `init_db`。
 - 唯讀端點從「拒絕」改「改道 output_dir」，語意走明確 `readonly_action` 欄位（非唯讀端完全忽略、byte-identical）。
 - 前端 `is_readonly_source` 欄位與相關死碼（批次 readonly 狀態卡、i18n key、zombie CSS＋守衛）連根移除，配 lint 負向守衛防回流。
 
 ### 測試
-- 全套 pytest **5500 passed, 1 skipped**（unit + integration，排除 smoke／e2e）＋ `ruff check .` 綠 ＋ `npm run lint` 綠（static_guard_lint／css-guard／cjk_guard）＋ `npm test`（node:test **219**，含四鈕 readonly_action intent 3 支）＋ readonly-route offload 正向守衛。
+- 全套 pytest **5505 passed, 1 skipped**（unit + integration，排除 smoke／e2e）＋ `ruff check .` 綠 ＋ `npm run lint` 綠（static_guard_lint／css-guard／cjk_guard）＋ `npm test`（node:test **219**，含四鈕 readonly_action intent 3 支）＋ readonly-route offload 正向守衛。
 - 來源金絲雀：**8 源全 PASS**（javbus／jav321／heyzo／d2pass／avsox／fc2／javdb／dmm，pre-merge live）。
 - **CDP 真機驗收**（headless Playwright 真 click、D:\123 唯讀來源）：① 生成列表就地 ingest 封面 hash-match copy（零網路）＋巢狀女優正確歸檔 ② 放大鏡真 click→ingest 零網路 ③ 補劇照 samples_only 只落劇照、nfo／封面 hash 不變、回實寫數 ④ 放大鏡／齒輪／補劇照四鈕唯讀解禁可點 ⑤ 來源零寫入。
 - 每 task 獨立 Sonnet review ＋ Codex plan review（5×P1）＋ Codex diff review（P1 巢狀 actor／2×P2 劇照數・batch 欄位，皆已修）＋ grok 整支 branch 第二意見（提 5、採納 3、假陽性 1、by-design 1；**增量 2**＝抓到四層 review 都漏的 data-loss：唯讀片先補劇照、之後齒輪重刮／放大鏡會清掉既有劇照〔磁碟+DB〕；封面重刮失敗會把 DB cover_path 清空破圖——兩者已修，改比照 enricher 保留既有值）＋ Codex GitHub PR review 兩輪（第一輪 2×P2：檔名無番號但 NFO 有番號的片被跳過、批次唯讀無封面片缺 reason 硬拉破圖縮圖；第二輪 2×P2：唯讀 fill_missing 重寫既有封面／換封面後對焦不重跑；第三輪 owner 判定為「唯讀平行實作不鏡射 enrich 合約」的連環 bug、拍板一次完整對齊：三個唯讀端點一律回傳完整 EnrichResult 形狀、認 write_nfo 旗標、reason 依實際可用封面判定、fetch-samples 形狀與 fetch_samples_only 逐欄對齊、db_to_sidecar 明確拒絕——皆對齊非唯讀行為，owner 確認後修；第四輪撤回第三輪過度對齊的 write_nfo skip-gate（會造成標題變更 rescrape 刪舊 NFO 但跳過寫新 NFO 的 data-loss）改「唯讀一律寫 NFO＋明確拒絕 write_nfo=false」，並補齊 ingest／rescrape 兩條 scrape fallback 都 thread caller 的 source／javbus_lang）＋ owner 真機回報修正（Jellyfin 格式 curated `-poster` 被重畫丟棄→改原樣複製）。

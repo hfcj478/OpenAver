@@ -2,8 +2,12 @@
 import json
 from pathlib import Path
 
+from core.logger import get_logger
+
 from . import connection
 from .video import Video, VideoRepository
+
+logger = get_logger(__name__)
 
 
 def migrate_json_to_sqlite(json_path: Path, db_path: Path = None,
@@ -81,3 +85,58 @@ def migrate_json_to_sqlite(json_path: Path, db_path: Path = None,
             pass
 
     return result
+
+
+def backfill_readonly_nfo_mtime(db_path=None, path_mappings=None) -> int:
+    """One-time heal for pre-0.12.6 readonly rows with a produced cover but a
+    stale nfo_mtime<=0 (the v0.11.x/88b readonly produce hardcoded 0.0 while the
+    .nfo was really written next to the cover in output_dir). showcase reads
+    has_nfo from nfo_mtime, so those videos show a spurious enrich icon. This
+    stats the sibling .nfo (derived from cover_path) and writes its real mtime.
+
+    Idempotent + safe: only rows with cover_path set AND nfo_mtime<=0 (or NULL)
+    are considered, and only when the sibling .nfo actually exists on disk; the
+    UPDATE only SETS nfo_mtime, never clears it. Rows whose .nfo is missing are
+    left untouched (they legitimately keep has_nfo=False). Returns the count healed.
+    """
+    from core.path_utils import uri_to_local_fs_path
+
+    if db_path is None:
+        db_path = connection.get_db_path()
+    if path_mappings is None:
+        path_mappings = {}
+
+    conn = connection.get_connection(db_path)
+    healed = 0
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT path, cover_path FROM videos "
+            "WHERE cover_path IS NOT NULL AND cover_path != '' "
+            "AND (nfo_mtime IS NULL OR nfo_mtime <= 0)"
+        )
+        rows = cursor.fetchall()
+
+        for video_path, cover_path in rows:
+            try:
+                cover_fs = uri_to_local_fs_path(cover_path, path_mappings)
+                nfo_path = Path(cover_fs).with_suffix('.nfo')
+                if not nfo_path.exists():
+                    continue
+                nfo_mtime = nfo_path.stat().st_mtime
+                cursor.execute(
+                    "UPDATE videos SET nfo_mtime = ? WHERE path = ?",
+                    (nfo_mtime, video_path),
+                )
+                healed += 1
+            except Exception:
+                logger.warning(
+                    "backfill_readonly_nfo_mtime: failed to heal row path=%r cover_path=%r",
+                    video_path, cover_path, exc_info=True
+                )
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    return healed
