@@ -6,12 +6,12 @@ import os
 import shutil
 import time
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
 from core.config import _STEM_IMAGE_MODES
 from core.database import Video, VideoRepository, get_connection
+from core.enrich_contract import EnrichResult, compute_has_servable_cover
 from core.focal_trigger import maybe_submit_video_focal
 from core.logger import get_logger
 from core.nfo_updater import parse_nfo
@@ -27,16 +27,8 @@ VALID_MODES = {"fill_missing", "db_to_sidecar", "refresh_full"}
 _FILL_MISSING_REQUIRED = ["title", "actresses", "maker", "director", "series", "label", "tags", "release_date"]
 
 
-@dataclass
-class EnrichResult:
-    success: bool
-    nfo_written: bool
-    cover_written: bool
-    extrafanart_written: int
-    fields_filled: List[str]
-    source_used: str
-    error: Optional[str]
-    reason: Optional[str] = None
+# EnrichResult 定義已遷入 core.enrich_contract（中性合約模組），此處 re-export
+# 保持全庫既有 `from core.enricher import EnrichResult` 匯入零改動（feature/105）。
 
 
 def _nfo_to_meta(root: ET.Element) -> dict:
@@ -566,30 +558,13 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
             if conn:
                 conn.close()
 
-    # reason=hit 必須是「前端 /thumb 真的服務得到」。/thumb（scanner.py get_thumb）
-    # 有兩道 gate，兩道都過才服務得到，reason=hit 必須同時鏡射：
-    #   gate 1（scanner.py:1276-1277）：DB cover_path 非空，否則 404。
-    #   gate 2（scanner.py:1290/1300/1332-1333）：cache miss 或 disabled 時要讀
-    #     實體封面檔（uri_to_local_fs_path 反解後 generate / fallback FileResponse），
-    #     檔不在 → 404。（cache hit 於 :1263 直接 serve WebP 不碰實體檔，見下方 false-negative）
-    # 故不能只查 DB cover_path 非空（只鏡射 gate 1，Codex PR #98 P2）：DB 有記
-    # cover_path、但該實體封面檔已被刪/移／path_mapping 失效解不到時，/thumb 於
-    # cache miss/disabled 會 404 → 飛入破圖，卻誤計 hit。
-    # 亦不能用磁碟 sidecar 真相（Path(fs_path).with_suffix('.jpg')）判：磁碟有 .jpg
-    # 但 DB cover_path 空（散落 sidecar 未入 DB／db·nfo-sourced 命中跳過 :514
-    # _db_upsert）會漏 gate 1（Codex P1，v0.11.9）。故重讀 DB 最終 cover_path，
-    # 並用 /thumb 同一組解析（uri_to_local_fs_path + 同 path_mappings）確認實體檔存在。
-    # 此重讀在所有寫檔 + _db_upsert + nfo_mtime UPDATE 之後（同步、已 commit），
-    # 故看到的是最終 DB 狀態。
-    # 已知並接受的 false-negative（安全方向）：cache hit（stale WebP 已快取）但實體
-    # 封面檔已刪時，/thumb 仍能從快取 serve（:1263），此處卻判 no_cover。代價是「服務
-    # 得到的封面不飛入」（不破圖）；反向 false-positive（判 hit 卻 404 破圖）代價更高，
-    # 故偏保守。
+    # reason=hit 的「/thumb 兩道 gate + 磁碟複驗 + false-negative 取捨」完整理由已
+    # 遷入 core.enrich_contract.compute_has_servable_cover 的 docstring（feature/105，
+    # 三呼叫點共用同一份磁碟真相）。此重讀在所有寫檔 + _db_upsert + nfo_mtime UPDATE
+    # 之後（同步、已 commit），故看到的是最終 DB 狀態。
     # db-ns-ok: fs_path_for_db, DB round-trip key（同 :437 path_uri）
-    final_row = repo.get_by_path(to_file_uri(fs_path_for_db))
-    cover_uri = final_row.cover_path if final_row else ''
-    has_servable_cover = bool(cover_uri) and os.path.exists(
-        uri_to_local_fs_path(cover_uri, path_mappings)
+    has_servable_cover = compute_has_servable_cover(
+        repo, to_file_uri(fs_path_for_db), path_mappings
     )
 
     return EnrichResult(

@@ -22,6 +22,7 @@ from core.database import Video, VideoRepository
 from core.db_inflow import try_inflow_upsert
 from core.focal_trigger import maybe_submit_video_focal
 from core.enricher import EnrichResult, enrich_single, fetch_samples_only, resolve_nfo_cover_paths
+from core.enrich_contract import compute_has_servable_cover
 from core.organizer import organize_file
 from core.path_utils import to_file_uri, uri_to_fs_path, uri_to_local_fs_path, coerce_to_file_uri
 from core.scraper import (
@@ -548,17 +549,15 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
             )
             thumbnail_cache.invalidate(canonical)
             cover_written = bool(assets.get('cover_fs'))
-            # Codex PR#113 P2 review round 3: `reason` must reflect whether a
-            # SERVABLE cover exists, not just whether THIS call wrote one —
-            # mirrors core.enricher.enrich_single's own decoupling (enricher.py
-            # :589-604, has_servable_cover based on a final DB+disk re-check).
-            # A fill_missing/overwrite=false pass on a video that already has a
-            # cover hits preserve_cover=True → cover_strategy=('none',) →
-            # cover_written=False, but the EXISTING cover (DB row, re-read
-            # above into `existing`) is still fully servable — reason must stay
-            # 'hit' or the scanner fly-in/badge (state-batch.js keys off
-            # status==='hit') wrongly suppresses for a preserve-cover pass.
-            has_servable_cover = bool(assets.get('cover_fs')) or bool(existing and existing.cover_path)
+            # Bug 1 fix (feature/105): `reason` must reflect whether a SERVABLE
+            # cover exists — DB has cover_path AND the physical file is on disk —
+            # not just whether the DB row has a cover_path. _produce_one已同步
+            # upsert（寫檔+_db_upsert）於上，故此處重讀 DB 最終 cover_path + 磁碟
+            # 複驗，與 core.enricher.enrich_single 共用同一個 compute_has_servable_cover
+            # 原子（消除唯讀漏磁碟複驗的破圖 false-positive）。key=canonical，與
+            # 上方 existing = repo.get_by_path(canonical) 及 _produce_one 的 upsert
+            # key 同一命名空間。
+            has_servable_cover = compute_has_servable_cover(repo, canonical, path_mappings)
             # Codex PR#113 P2#4（round 2）：對齊 core.enricher.enrich_single:528-547
             # ——只在「本次實際寫入新封面內容」時才作廢舊手動焦點、再排新的背景偵測。
             # preserve_cover=True 時 cover_strategy=('none',) 不產出檔案，
@@ -976,12 +975,19 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                                     "batch_enrich readonly item %s focal 排程失敗（不影響結果）",
                                     itm.number, exc_info=True,
                                 )
-                        # had_cover carried out in payload (not just used for the
-                        # preserve_cover gate above) — the 'ok' branch outside this
-                        # closure needs it to compute has_servable_cover for `reason`
-                        # (P2 review round 3), and `existing` itself is local to this
-                        # executor closure / not accessible after run_in_executor returns.
-                        return ('ok', (assets, meta, had_cover))
+                        # Bug 1 fix (feature/105): has_servable_cover MUST re-read
+                        # the final DB row + disk-verify (shared compute_has_servable_cover
+                        # atom, same as core.enricher.enrich_single). The DB read
+                        # (repo.get_by_path) is a BLOCKING sqlite call — it MUST stay
+                        # inside this executor closure (already off the event loop);
+                        # doing it in the async 'ok' branch below would block the loop.
+                        # _produce_one already upserted synchronously above, so this
+                        # reads the produced/preserved cover_path. key=uri (=canonical),
+                        # same namespace as existing = repo.get_by_path(uri) and
+                        # _produce_one's upsert key. Carried out via payload since
+                        # `repo`/`existing` are local to this closure.
+                        has_servable_cover = compute_has_servable_cover(repo, uri, _ro_mappings)
+                        return ('ok', (assets, meta, has_servable_cover))
 
                     loop = asyncio.get_running_loop()
                     status, payload = await loop.run_in_executor(None, _do_readonly)
@@ -993,25 +999,18 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                         # otherwise, caught above as 'error'), and the NFO write is
                         # always attempted now (P1 revert, round-3 review 2026-07-21 —
                         # write_nfo=false is rejected above, before this point).
-                        assets, item_meta, had_cover = payload or ({}, {}, False)
+                        # has_servable_cover was computed INSIDE the executor closure
+                        # (compute_has_servable_cover: final DB re-read + disk verify,
+                        # Bug 1 fix feature/105) and carried out via payload — the DB
+                        # read is blocking and must not run in this async context.
+                        # reason mirrors non-readonly EnrichResult semantics
+                        # (core/enricher.py) so state-batch.js _resolveCardStatus
+                        # doesn't fall back to its success-implies-'hit' default —
+                        # an NFO-only ingest (no servable cover) reports 'no_cover',
+                        # so the frontend never builds a /api/gallery/thumb URL for a
+                        # cover that isn't servable.
+                        assets, item_meta, has_servable_cover = payload or ({}, {}, False)
                         cover_written = bool(assets.get('cover_fs'))
-                        # Codex PR#113 P2 #2: mirror non-readonly EnrichResult.reason
-                        # semantics (core/enricher.py:603) so state-batch.js
-                        # _resolveCardStatus doesn't fall back to its
-                        # success-implies-'hit' default (:300) — an NFO-only
-                        # ingest (no cover) would otherwise be misreported as
-                        # 'hit', causing the frontend to build a /api/gallery/thumb
-                        # URL for a cover that was never written.
-                        # P2 review round 3: `reason` must reflect a SERVABLE cover
-                        # (this-call write OR an existing DB row cover_path), not
-                        # just this-call cover_written — same has_servable_cover
-                        # decoupling as enrich-single (see that branch's comment) /
-                        # core.enricher.enrich_single (enricher.py:589-604). had_cover
-                        # was computed inside the executor closure (before _produce_one
-                        # ran) from the pre-write DB row and carried out via payload
-                        # (preserve-cover means that row's cover_path is untouched by
-                        # this call, so it's still what's servable now).
-                        has_servable_cover = cover_written or had_cover
                         result_item = {
                             'type': 'result-item', 'number': item.number, 'file_path': item.file_path,
                             **asdict(EnrichResult(

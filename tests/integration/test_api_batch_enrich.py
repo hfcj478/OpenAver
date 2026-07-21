@@ -804,6 +804,12 @@ class TestBatchEnrichReadonlyCoverPreserveGate:
         # 維持原 had_cover=True 行為；cover_file_exists=False 模擬 round-6
         # 回報的 bug 場景（DB row 殘留、輸出檔已被刪除/對應不到）。
         mocker.patch("web.routers.scraper.os.path.exists", return_value=cover_file_exists)
+        # feature/105 patch-target migration (CD-105-8): has_servable_cover 的磁碟
+        # 複驗隨 compute_has_servable_cover 從 web.routers.scraper 搬進
+        # core.enrich_contract；顯式 patch 該命名空間（os.path 為共享 module
+        # singleton，機械上與上一行同物件，兩者一致即可）。cover_file_exists
+        # 同時餵 had_cover（scraper）與 has_servable_cover（enrich_contract）兩道 gate。
+        mocker.patch("core.enrich_contract.os.path.exists", return_value=cover_file_exists)
         mock_focal = mocker.patch("web.routers.scraper.maybe_submit_video_focal")
         return mock_produce, mock_repo, mock_focal
 
@@ -931,6 +937,29 @@ class TestBatchEnrichReadonlyCoverPreserveGate:
         assert mock_produce.call_args.kwargs["cover_strategy"] == ("none",)
         assert result_items[0]["cover_written"] is False
         assert result_items[0]["reason"] == "hit"
+
+    # ── feature/105 AC2 (Bug 1 fix), batch equivalence/regression guard: DB has
+    # residual cover_path but the physical cover file is gone → reason must be
+    # 'no_cover'. NOTE: batch never had Bug 1 — its pre-T1 form was
+    # `cover_written or had_cover`, and had_cover already carried a disk check, so
+    # this scenario returned 'no_cover' before T1 too. This test therefore LOCKS
+    # that the unification onto the shared compute_has_servable_cover atom
+    # PRESERVES that disk-verify guarantee (behavior-equivalent refactor). It goes
+    # RED if the shared atom's disk check is dropped (verified: reverting
+    # cover_uri_is_servable to `return bool(cover_uri)` flips this to 'hit'). ────
+    def test_residual_cover_path_but_file_deleted_reason_is_no_cover(self, client, mocker):
+        mocker.patch("web.routers.scraper.load_config", return_value=self._readonly_config())
+        mock_produce, _, _ = self._mock_routing(
+            mocker, existing_cover_path="file:///out/old.jpg",
+            produce_cover_fs="", cover_file_exists=False,
+        )
+
+        response = self._post(client, mode="fill_missing", overwrite_existing=False)
+
+        result_items = [e for e in parse_sse(response.text) if e["type"] == "result-item"]
+        assert result_items[0]["success"] is True
+        assert result_items[0]["cover_written"] is False
+        assert result_items[0]["reason"] == "no_cover"
 
     # ── P2#4: cover-written focal reset + re-submit ──────────────────────────
 

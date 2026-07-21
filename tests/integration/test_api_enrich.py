@@ -636,6 +636,13 @@ class TestEnrichSingleReadonlyCoverPreserveGate:
         # 的一般情境）維持原 had_cover=True 行為；cover_file_exists=False 用來
         # 模擬 round-6 回報的 bug 場景（DB row 殘留、輸出檔已被刪除/對應不到）。
         mocker.patch("web.routers.scraper.os.path.exists", return_value=cover_file_exists)
+        # feature/105 patch-target migration (CD-105-8): has_servable_cover 的磁碟
+        # 複驗隨 compute_has_servable_cover 從 web.routers.scraper 搬進
+        # core.enrich_contract；顯式 patch 該命名空間讓「哪個 mock 餵 has_servable_cover」
+        # 自我文件化（os.path 為共享 module singleton，機械上與上一行同物件，
+        # 兩者一致即可）。cover_file_exists 同時餵 had_cover（scraper）與
+        # has_servable_cover（enrich_contract）兩道 gate。
+        mocker.patch("core.enrich_contract.os.path.exists", return_value=cover_file_exists)
         mock_focal = mocker.patch("web.routers.scraper.maybe_submit_video_focal")
         return mock_produce, mock_repo, mock_focal
 
@@ -742,6 +749,29 @@ class TestEnrichSingleReadonlyCoverPreserveGate:
         assert mock_produce.call_args.kwargs["cover_strategy"] == ("none",)
         assert data["cover_written"] is False
         assert data["reason"] == "hit"
+
+    # ── feature/105 AC2 (Bug 1 fix): reason must be 'no_cover' when the DB has a
+    # residual cover_path but the physical cover file is gone on disk. Before the
+    # fix enrich-single only checked the DB row → wrongly reported 'hit' → the
+    # frontend built a /api/gallery/thumb URL that 404s (broken fly-in image).
+    # MUTATION LOCK: revert enrich-single's has_servable_cover to the DB-only
+    # `bool(assets.get('cover_fs')) or bool(existing and existing.cover_path)` and
+    # this test goes RED (reason flips back to 'hit'). ────────────────────────
+    def test_residual_cover_path_but_file_deleted_reason_is_no_cover(self, client, mocker):
+        mocker.patch("web.routers.scraper.load_config", return_value=_readonly_gallery_config("/tmp/ro_src"))
+        # DB row still has cover_path, but the output cover file no longer exists on
+        # disk (cover_file_exists=False) and this call wrote nothing (produce_cover_fs="").
+        mock_produce, _, _ = self._mock_routing(
+            mocker, existing_cover_path="file:///out/old.jpg",
+            produce_cover_fs="", cover_file_exists=False,
+        )
+
+        response = self._post(client, mode="fill_missing", overwrite_existing=False)
+
+        data = response.json()
+        assert data["success"] is True
+        assert data["cover_written"] is False
+        assert data["reason"] == "no_cover"
 
     def test_gear_refresh_full_overwrite_true_writes_regardless_of_had_cover(self, client, mocker):
         """gear rescrape（refresh_full + overwrite=True，state-rescrape.js:404/408
