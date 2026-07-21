@@ -509,15 +509,22 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
                 ))
             repo = VideoRepository()
             existing = repo.get_by_path(canonical)
-            # Codex PR#113 P2#3（round 2，owner-confirmed 全面對齊）：readonly enrich
-            # 對齊非唯讀 core.enricher._write_cover 的 skip 語意
+            # Codex PR#113 P2#3（round 2，owner-confirmed 全面對齊；round 6 修正）：
+            # readonly enrich 對齊非唯讀 core.enricher._write_cover 的 skip 語意
             # （os.path.exists(cover) and not overwrite_existing）——fill_missing
             # （放大鏡在「已有封面、缺 NFO」的片上點，見 state-lightbox.js:1634-1650）
             # 或 write_cover=false 時只補 NFO，絕不動既有封面（output_dir 的封面檔與
             # DB cover_path 皆保留）。refresh_full（gear 一律送 mode='refresh_full'
             # +overwrite_existing=true，見 state-rescrape.js:404/408；或放大鏡在無
             # 封面片上點）不受此擋，維持既有「一律寫」行為。
-            had_cover = bool(existing and existing.cover_path)
+            # round 6 fix（Codex PR#113 round-6，P2，found in 2 readonly branches）：
+            # had_cover 只看 DB `existing.cover_path` 不夠——DB row 可能殘留、輸出
+            # 封面檔已被刪除或路徑對應後在磁碟上不存在，這樣仍會誤判「已有封面」
+            # 而跳過重建，留下一張壞掉/消失的圖。改為額外要求檔案實際存在於磁碟，
+            # 與 _write_cover 的 os.path.exists(cover_path) 判斷真正一致。
+            had_cover = bool(existing and existing.cover_path) and os.path.exists(
+                uri_to_local_fs_path(existing.cover_path, path_mappings)
+            )
             preserve_cover = (not request.write_cover) or (
                 request.mode == 'fill_missing' and not request.overwrite_existing and had_cover
             )
@@ -910,12 +917,15 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                             return ('no_scrape', "找不到可用的番號資料")
                         repo = VideoRepository()
                         existing = repo.get_by_path(uri)
-                        # Codex PR#113 P2#3（round 2，owner-confirmed 全面對齊）：batch
-                        # readonly 對齊 enrich_single_endpoint 同一段 cover-preserve gate
-                        # （見該處註解）。BatchEnrichRequest 沒有 per-item mode/write_cover/
+                        # Codex PR#113 P2#3（round 2，owner-confirmed 全面對齊；round 6
+                        # 修正）：batch readonly 對齊 enrich_single_endpoint 同一段
+                        # cover-preserve gate（見該處註解，含 round-6 fix 說明）。
+                        # BatchEnrichRequest 沒有 per-item mode/write_cover/
                         # overwrite_existing 覆寫欄位（BatchEnrichItem 只帶 file_path/
                         # number/source/javbus_lang），一律用整批 request 的值。
-                        had_cover = bool(existing and existing.cover_path)
+                        had_cover = bool(existing and existing.cover_path) and os.path.exists(
+                            uri_to_local_fs_path(existing.cover_path, _ro_mappings)
+                        )
                         preserve_cover = (not request.write_cover) or (
                             request.mode == 'fill_missing' and not request.overwrite_existing and had_cover
                         )

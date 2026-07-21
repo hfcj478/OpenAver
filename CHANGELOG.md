@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 唯讀片刮不到資料時，不再每次掃描／批次補料都被重複端出來要求重刮——比照非唯讀，標記為「已嘗試過」。
 - 修正唯讀來源就地取用時，NFO 裡的**原文標題**（originaltitle）被漏讀、且重刮時會被清空的問題（現在正確保留，刮不到新值也不會覆蓋既有值）。
 - 修正「補劇照」若是某部片的第一個動作時，之後正式重建會另配一個 `NUMBER-2` 目錄、導致劇照跟 NFO／封面被拆到兩個資料夾的問題。
+- 修正唯讀片若封面圖檔已被刪除（但資料庫仍記著），按放大鏡「補缺」時會誤判「已有封面」而跳過、留下破圖的問題——現在會實際檢查磁碟上封面在不在，不在就重建（與非唯讀 `_write_cover` 一致）。
 
 ### Internal
 - 抽出單片產生的共用核心：bulk 產生／放大鏡／齒輪／補劇照四條路共用同一套 resolve→write→upsert，杜絕目錄邏輯漂移與孤兒夾。
@@ -39,10 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 前端 `is_readonly_source` 欄位與相關死碼（批次 readonly 狀態卡、i18n key、zombie CSS＋守衛）連根移除，配 lint 負向守衛防回流。
 
 ### 測試
-- 全套 pytest **5519 passed, 1 skipped**（unit + integration，排除 smoke／e2e）＋ `ruff check .` 綠 ＋ `npm run lint` 綠（static_guard_lint／css-guard／cjk_guard）＋ `npm test`（node:test **219**，含四鈕 readonly_action intent 3 支）＋ readonly-route offload 正向守衛。
+- 全套 pytest **5523 passed, 1 skipped**（unit + integration，排除 smoke／e2e）＋ `ruff check .` 綠 ＋ `npm run lint` 綠（static_guard_lint／css-guard／cjk_guard）＋ `npm test`（node:test **219**，含四鈕 readonly_action intent 3 支）＋ readonly-route offload 正向守衛。
 - 來源金絲雀：**8 源全 PASS**（javbus／jav321／heyzo／d2pass／avsox／fc2／javdb／dmm，pre-merge live）。
 - **CDP 真機驗收**（headless Playwright 真 click、D:\123 唯讀來源）：① 生成列表就地 ingest 封面 hash-match copy（零網路）＋巢狀女優正確歸檔 ② 放大鏡真 click→ingest 零網路 ③ 補劇照 samples_only 只落劇照、nfo／封面 hash 不變、回實寫數 ④ 放大鏡／齒輪／補劇照四鈕唯讀解禁可點 ⑤ 來源零寫入。
-- 每 task 獨立 Sonnet review ＋ Codex plan review（5×P1）＋ Codex diff review（P1 巢狀 actor／2×P2 劇照數・batch 欄位，皆已修）＋ grok 整支 branch 第二意見（提 5、採納 3、假陽性 1、by-design 1；**增量 2**＝抓到四層 review 都漏的 data-loss：唯讀片先補劇照、之後齒輪重刮／放大鏡會清掉既有劇照〔磁碟+DB〕；封面重刮失敗會把 DB cover_path 清空破圖——兩者已修，改比照 enricher 保留既有值）＋ Codex GitHub PR review 兩輪（第一輪 2×P2：檔名無番號但 NFO 有番號的片被跳過、批次唯讀無封面片缺 reason 硬拉破圖縮圖；第二輪 2×P2：唯讀 fill_missing 重寫既有封面／換封面後對焦不重跑；第三輪 owner 判定為「唯讀平行實作不鏡射 enrich 合約」的連環 bug、拍板一次完整對齊：三個唯讀端點一律回傳完整 EnrichResult 形狀、認 write_nfo 旗標、reason 依實際可用封面判定、fetch-samples 形狀與 fetch_samples_only 逐欄對齊、db_to_sidecar 明確拒絕——皆對齊非唯讀行為，owner 確認後修；第四輪撤回第三輪過度對齊的 write_nfo skip-gate（會造成標題變更 rescrape 刪舊 NFO 但跳過寫新 NFO 的 data-loss）改「唯讀一律寫 NFO＋明確拒絕 write_nfo=false」，並補齊 ingest／rescrape 兩條 scrape fallback 都 thread caller 的 source／javbus_lang）＋ owner 真機回報修正（Jellyfin 格式 curated `-poster` 被重畫丟棄→改原樣複製）；第五輪 owner 拍板「窮舉盤點一次收口」——除 Codex 兩 P2（not-found 未標 scrape_attempted_at＋stub row／samples-only 未記 output_dir 致 NUMBER-2 孤兒夾）外，盤點自查再抓兩條同族（original_title 從未鏡射被靜默清空、enrich-single not-found reason 應為 not_found），一次修完並排除 6 條 by-design 假分歧；第六輪 P1（pre-push 本機審抓到）：第五輪的 original_title 空值保留只做在 DB 層，NFO 寫入仍會清空 `<originaltitle>`（磁碟資料遺失＋NFO/DB 不一致），改在 `_produce_one` 寫資產前合成 effective 值讓 NFO／DB 共用同一份 meta。
+- 每 task 獨立 Sonnet review ＋ Codex plan review（5×P1）＋ Codex diff review（P1 巢狀 actor／2×P2 劇照數・batch 欄位，皆已修）＋ grok 整支 branch 第二意見（提 5、採納 3、假陽性 1、by-design 1；**增量 2**＝抓到四層 review 都漏的 data-loss：唯讀片先補劇照、之後齒輪重刮／放大鏡會清掉既有劇照〔磁碟+DB〕；封面重刮失敗會把 DB cover_path 清空破圖——兩者已修，改比照 enricher 保留既有值）＋ Codex GitHub PR review 兩輪（第一輪 2×P2：檔名無番號但 NFO 有番號的片被跳過、批次唯讀無封面片缺 reason 硬拉破圖縮圖；第二輪 2×P2：唯讀 fill_missing 重寫既有封面／換封面後對焦不重跑；第三輪 owner 判定為「唯讀平行實作不鏡射 enrich 合約」的連環 bug、拍板一次完整對齊：三個唯讀端點一律回傳完整 EnrichResult 形狀、認 write_nfo 旗標、reason 依實際可用封面判定、fetch-samples 形狀與 fetch_samples_only 逐欄對齊、db_to_sidecar 明確拒絕——皆對齊非唯讀行為，owner 確認後修；第四輪撤回第三輪過度對齊的 write_nfo skip-gate（會造成標題變更 rescrape 刪舊 NFO 但跳過寫新 NFO 的 data-loss）改「唯讀一律寫 NFO＋明確拒絕 write_nfo=false」，並補齊 ingest／rescrape 兩條 scrape fallback 都 thread caller 的 source／javbus_lang）＋ owner 真機回報修正（Jellyfin 格式 curated `-poster` 被重畫丟棄→改原樣複製）；第五輪 owner 拍板「窮舉盤點一次收口」——除 Codex 兩 P2（not-found 未標 scrape_attempted_at＋stub row／samples-only 未記 output_dir 致 NUMBER-2 孤兒夾）外，盤點自查再抓兩條同族（original_title 從未鏡射被靜默清空、enrich-single not-found reason 應為 not_found），一次修完並排除 6 條 by-design 假分歧；第六輪 P1（pre-push 本機審抓到）：第五輪的 original_title 空值保留只做在 DB 層，NFO 寫入仍會清空 `<originaltitle>`（磁碟資料遺失＋NFO/DB 不一致），改在 `_produce_one` 寫資產前合成 effective 值讓 NFO／DB 共用同一份 meta；第七輪（owner 定調最後一輪）2×P2：唯讀封面保留只看 DB `cover_path`、不查磁碟——輸出封面被刪除時 fill_missing 放大鏡誤判「已有封面」跳過重建留破圖，改為額外 `os.path.exists` 檢查、與非唯讀 `_write_cover:236` 真正一致（enrich-single＋batch 兩處）。
 - 本版新增 i18n key 只寫 zh_TW（其餘三語留空靠回退）。
 
 ## [0.12.5] - 2026-07-20

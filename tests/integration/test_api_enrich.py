@@ -607,6 +607,7 @@ class TestEnrichSingleReadonlyCoverPreserveGate:
         self, mocker, *, existing_cover_path="",
         plan_cover_strategy=("download", "http://x/new.jpg"),
         produce_cover_fs="/out/ro_src-abcdef/ABC-001/ABC-001.jpg",
+        cover_file_exists=True,
     ):
         mocker.patch("web.routers.scraper.resolve_owning_output_root", return_value=_owning_stub())
         mocker.patch(
@@ -624,10 +625,17 @@ class TestEnrichSingleReadonlyCoverPreserveGate:
             ),
         )
         mock_repo = mocker.patch("web.routers.scraper.VideoRepository")
-        # cover_path='' (default) → had_cover=False；帶字串 URI → had_cover=True.
+        # cover_path='' (default) → had_cover=False；帶字串 URI → had_cover=True
+        # (前提是 os.path.exists 也判存在，見下方 mock).
         mock_repo.return_value.get_by_path.return_value = MagicMock(
             size_bytes=1000, mtime=1.0, cover_path=existing_cover_path,
         )
+        # Codex PR#113 P2 round-6 fix：had_cover 現在還要求輸出封面檔實際存在於
+        # 磁碟（對齊 core.enricher._write_cover 的 os.path.exists(cover_path)
+        # 語意）——預設 True 讓既有測試（模型「DB 有 cover_path 且檔案也還在」
+        # 的一般情境）維持原 had_cover=True 行為；cover_file_exists=False 用來
+        # 模擬 round-6 回報的 bug 場景（DB row 殘留、輸出檔已被刪除/對應不到）。
+        mocker.patch("web.routers.scraper.os.path.exists", return_value=cover_file_exists)
         mock_focal = mocker.patch("web.routers.scraper.maybe_submit_video_focal")
         return mock_produce, mock_repo, mock_focal
 
@@ -665,6 +673,45 @@ class TestEnrichSingleReadonlyCoverPreserveGate:
 
         assert response.json()["success"] is True
         assert mock_produce.call_args.kwargs["cover_strategy"] == ("download", "http://x/new.jpg")
+
+    # ── Codex PR#113 P2 round-6（found in 2 readonly branches）：had_cover 必須
+    # 連同輸出封面檔是否實際存在於磁碟一起判斷，不能只看 DB 有沒有 cover_path
+    # （對齊 core.enricher._write_cover 的 os.path.exists(cover_path) 語意，見上方
+    # _write_cover skip 語意註解）────────────────────────────────────────────
+
+    def test_fill_missing_with_cover_path_but_file_missing_on_disk_rebuilds_cover(
+        self, client, mocker,
+    ):
+        """放大鏡-with-cover，但 DB 的 cover_path 對應到的輸出檔已被刪除（或路徑
+        對應後在磁碟上不存在）→ had_cover 必須是 False，不得 preserve，
+        cover_strategy 原樣傳給 _produce_one（重建封面）。round-6 回報的 bug：
+        readonly 分支只看 DB `existing.cover_path` 就當作「已有封面」而跳過重建，
+        與非唯讀 core.enricher._write_cover 的 os.path.exists 語意不一致。
+        MUTATION LOCK：把 had_cover 改回純 DB 判斷
+        （bool(existing and existing.cover_path)）會讓本測試 RED
+        （cover_strategy 會變成 ('none',)）。"""
+        mocker.patch("web.routers.scraper.load_config", return_value=_readonly_gallery_config("/tmp/ro_src"))
+        mock_produce, _, _ = self._mock_routing(
+            mocker, existing_cover_path="file:///out/old.jpg", cover_file_exists=False,
+        )
+
+        response = self._post(client, mode="fill_missing", overwrite_existing=False)
+
+        assert response.json()["success"] is True
+        assert mock_produce.call_args.kwargs["cover_strategy"] == ("download", "http://x/new.jpg")
+
+    def test_fill_missing_with_cover_path_and_file_present_preserves_cover(self, client, mocker):
+        """同場景但輸出封面檔仍實際存在於磁碟 → 維持既有 preserve 行為
+        （無回歸，鏡射 test_fill_missing_with_existing_cover_preserves_cover）。"""
+        mocker.patch("web.routers.scraper.load_config", return_value=_readonly_gallery_config("/tmp/ro_src"))
+        mock_produce, _, _ = self._mock_routing(
+            mocker, existing_cover_path="file:///out/old.jpg", cover_file_exists=True,
+        )
+
+        response = self._post(client, mode="fill_missing", overwrite_existing=False)
+
+        assert response.json()["success"] is True
+        assert mock_produce.call_args.kwargs["cover_strategy"] == ("none",)
 
     # ── P2 review round 3 (FIX#1): reason reflects a SERVABLE cover, not just
     # this-call cover_written ────────────────────────────────────────────────
