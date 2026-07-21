@@ -16,6 +16,7 @@ from __future__ import annotations
 import glob
 import hashlib
 import os
+import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -627,13 +628,40 @@ def _write_movie_assets(
     format_data: dict,
     source_fs_path: str,
     config: dict,
+    cover_strategy,
+    assets_mode: str = 'full',
     old_base: str = '',
     strm_mappings_getter=None,
 ) -> dict:
     """Write nfo + cover + -poster/-fanart + extrafanart to movie_dir.
 
-    Returns {'cover_fs': str, 'sample_fs': list[str]}.
-    cover_fs is '' when cover download fails or meta['cover'] is empty.
+    full mode (default) returns {'cover_fs': str, 'sample_fs': list[str],
+    'nfo_mtime': float}. cover_fs is '' when the cover step produces no file (see
+    cover_strategy below). nfo_mtime (TASK-104-T1 / CD-104-4) is the real
+    os.stat().st_mtime of the NFO just written — generate_nfo has already raised
+    on failure by the time this is read, so the file is guaranteed to exist.
+
+    samples_only mode (TASK-104-T1 / CD-104-1) returns ONLY {'sample_fs':
+    list[str]} — downloads meta['sample_images'] into movie_dir/extrafanart
+    UNCONDITIONALLY (NOT gated on config['download_sample_images']: an explicit
+    supplemental-fetch call means "yes, get samples") and touches NOTHING else —
+    no nfo/cover/poster/fanart/strm, no _clean_stale_extrafanart, no
+    _clean_stale_singletons. Keeps a "fetch more samples" action from ever
+    clobbering metadata/cover it wasn't asked to touch (Codex P1-c).
+
+    cover_strategy (TASK-104-T1 / CD-104-2) replaces the old binary
+    "None=download" rule with an explicit 3-state tuple:
+      ('copy', local_fs_path) — copy a LOCAL file already on disk into cover_fs
+        (ingest, T2: zero network). Copy failure (missing/unreadable source) →
+        has_cover=False, same graceful-failure semantics as a failed download —
+        never raises.
+      ('none',) — do not write a cover at all (ingest has a .nfo but no cover
+        image; must NOT silently fall back to downloading).
+      ('download', remote_url) — has_cover = bool(remote_url) and
+        download_image(remote_url, cover_fs); byte-identical to the pre-T1
+        unconditional-download branch (scrape / gear rescrape, C6).
+    poster/fanart generation is unchanged: generate_jellyfin_images(...) runs
+    whenever has_cover is True, regardless of which cover_strategy produced it.
 
     old_base (TASK-89a-T4, Codex #3; T5 follow-up, Codex PR review P2): when
     non-empty, this movie's own stale assets from the PREVIOUS run (different
@@ -645,15 +673,38 @@ def _write_movie_assets(
     succeeded, and only the ones whose new write actually succeeded this run —
     so a write that fails partway (cover download false, generate_nfo raising)
     leaves the previous run's assets on disk instead of deleting them up front
-    and then failing to produce replacements.
+    and then failing to produce replacements. (samples_only never reaches this
+    cleanup — see above.)
     """
     os.makedirs(movie_dir, exist_ok=True)
+
+    if assets_mode == 'samples_only':
+        ef_dir = Path(movie_dir) / 'extrafanart'
+        os.makedirs(ef_dir, exist_ok=True)
+        sample_fs: list = []
+        for i, url in enumerate(meta.get('sample_images', []), 1):
+            dest = str(ef_dir / f'fanart{i}.jpg')
+            if download_image(url, dest):
+                sample_fs.append(dest)
+        return {'sample_fs': sample_fs}
+
     new_base = base = _build_basename(format_data, source_fs_path, config)
     base_stem = str(Path(movie_dir) / base)
 
-    # 1) Cover: download from remote URL (C6 — always re-scrape, never read source image)
+    # 1) Cover: 3-state strategy (CD-104-2) — see docstring above.
     cover_fs = base_stem + '.jpg'
-    has_cover = bool(meta.get('cover')) and download_image(meta['cover'], cover_fs)
+    strategy_kind = cover_strategy[0]
+    if strategy_kind == 'copy':
+        try:
+            shutil.copyfile(cover_strategy[1], cover_fs)
+            has_cover = True
+        except OSError:
+            has_cover = False
+    elif strategy_kind == 'none':
+        has_cover = False
+    else:  # 'download' — byte-identical to the pre-T1 unconditional branch (C6)
+        remote_url = cover_strategy[1]
+        has_cover = bool(remote_url) and download_image(remote_url, cover_fs)
 
     # 2) poster/fanart (off mode also produces these — Acceptance #6)
     imgs = generate_jellyfin_images(
@@ -707,6 +758,12 @@ def _write_movie_assets(
     )
     if not nfo_ok:
         raise RuntimeError(f"NFO write failed: {nfo_fs}")
+    # CD-104-4 (TASK-104-T1): real write mtime, not a hardcoded 0.0 — nfo_ok is
+    # True here so the file is guaranteed to exist (generate_nfo already raised
+    # above otherwise). MUTATION LOCK: replacing this stat with a hardcoded 0.0
+    # is caught by test_readonly_producer.py::TestUpsertDbAssetsMode's
+    # nfo_mtime-positive test (see that file for the mutation-lock comment).
+    nfo_mtime = os.stat(nfo_fs).st_mtime
 
     # 5) strm sidecar — media-server flavours only (TASK-90a-T3). off / non
     # media-server → no strm. best-effort: a write failure returns False and
@@ -727,7 +784,7 @@ def _write_movie_assets(
     # (T5 follow-up, Codex PR review P2) — see docstring above for why this is
     # post-write rather than pre-write.
     _clean_stale_singletons(movie_dir, old_base, new_base, has_cover, has_poster, has_fanart, has_strm)
-    return {'cover_fs': cover_fs if has_cover else '', 'sample_fs': sample_fs}
+    return {'cover_fs': cover_fs if has_cover else '', 'sample_fs': sample_fs, 'nfo_mtime': nfo_mtime}
 
 
 def _upsert_db(
@@ -738,16 +795,31 @@ def _upsert_db(
     assets: dict,
     path_mappings: dict,
     output_dir: str,
+    assets_mode: str = 'full',
 ) -> None:
     """Manually construct Video and upsert to repo (CD-88b-7).
 
-    path = source_uri (streaming key).
-    cover_path / sample_images = local output URIs (via to_file_uri).
-    user_tags intentionally omitted → upsert preserves existing DB value.
-    output_dir MUST be a non-empty file:/// URI (TASK-89a-T1's upsert CASE-WHEN
-    treats '' as "leave existing value alone" — passing '' here would make the
-    very first write for a video look like a no-op and silently keep it '').
+    full mode (default): path = source_uri (streaming key). cover_path /
+    sample_images = local output URIs (via to_file_uri). user_tags intentionally
+    omitted → upsert preserves existing DB value. output_dir MUST be a non-empty
+    file:/// URI (TASK-89a-T1's upsert CASE-WHEN treats '' as "leave existing
+    value alone" — passing '' here would make the very first write for a video
+    look like a no-op and silently keep it ''). nfo_mtime (TASK-104-T1 /
+    CD-104-4) is the real write mtime threaded in via assets['nfo_mtime'] —
+    _write_movie_assets only returns that key in full mode, matching this branch.
+
+    samples_only mode (TASK-104-T1 / CD-104-1): does NOT construct/upsert a full
+    Video row — a supplemental-samples fetch must never touch cover_path/
+    nfo_mtime/metadata (Codex P1-c symmetry with _write_movie_assets). Only
+    sample_images is updated, via the dedicated repo.update_sample_images (same
+    DB path the existing fetch-samples feature already uses).
     """
+    if assets_mode == 'samples_only':
+        repo.update_sample_images(
+            source_uri, [to_file_uri(p, path_mappings) for p in assets['sample_fs']]
+        )
+        return
+
     v = Video(
         path=source_uri,
         number=meta['number'],
@@ -765,10 +837,73 @@ def _upsert_db(
         output_dir=output_dir,
         release_date=meta.get('date', ''),
         mtime=file_info['mtime'],
-        nfo_mtime=0.0,
+        nfo_mtime=assets['nfo_mtime'],
         scrape_attempted_at=time.time(),
     )
     repo.upsert(v)
+
+
+# ---------------------------------------------------------------------------
+# TASK-104-T1 (CD-104-1): single-file produce primitive — extracted from
+# produce_source's per-file try-block so ingest/rescrape/samples-only callers
+# (T2/T3: readonly gear/放大鏡/補劇照 endpoints) can reuse the SAME
+# resolve→write→upsert pipeline instead of a second, driftable copy. Landing
+# in the SAME movie_dir every time (via _resolve_movie_dir's read-and-reuse) is
+# what keeps every one of those callers from ever orphaning/overwriting a
+# sibling's assets.
+#
+# Deliberately excludes: _emit / the try-except wrapper / result counters
+# (orchestrator bookkeeping) and the skip check / extract_number / search_jav
+# (scrape-decision concerns) — all of those stay in produce_source's loop (and,
+# later, the readonly endpoints' own orchestration).
+# ---------------------------------------------------------------------------
+
+def _produce_one(
+    repo,
+    source,
+    config,
+    *,
+    file_info: dict,
+    meta: dict,
+    cover_strategy,
+    assets_mode: str = 'full',
+    existing,
+    output_root: str,
+    output_uri: str,
+    allocated_this_run: set,
+    path_mappings: dict,
+    strm_mappings_getter=None,
+) -> Path:
+    """Resolve movie_dir, write assets, upsert DB for ONE file. Returns movie_dir.
+
+    config here is scraper_cfg — the same section _resolve_movie_dir /
+    _write_movie_assets already take (matches produce_source's call site).
+    existing is the caller's own repo.get_by_path(source_uri) result (read ONCE
+    by the caller, not here) — T4's old_base reconstruction and T3's
+    read-and-reuse movie-dir logic both consume it.
+
+    source is accepted (not currently read in this body) for parity with the
+    CD-104-1 contract and for T2/T3 callers that will need it (e.g. resolving
+    ingest vs. rescrape intent upstream of this primitive).
+    """
+    src_uri = to_file_uri(file_info["path"], path_mappings)
+    fd = _format_data(meta, file_info["path"], config)
+    movie_dir, output_dir_uri = _resolve_movie_dir(
+        repo, src_uri, existing, output_root, output_uri,
+        fd, config, allocated_this_run, path_mappings,
+    )
+    old_base = _build_old_base(existing, file_info["path"], config)  # '' when no prior row/title/number
+    # PR #93 五審四次 P2 (option C): media-server 模式下用注入的 getter 讓
+    # _write_movie_assets 在真正落 .strm 那一刻才重讀 fresh strm_path_mappings
+    # （見 _write_movie_assets 內部該段落的完整解釋）。strm_mappings_getter=None
+    # （既有呼叫）→ 回退凍結 config、零重讀、行為不變。
+    assets = _write_movie_assets(
+        str(movie_dir), meta, fd, file_info["path"], config,
+        cover_strategy=cover_strategy, assets_mode=assets_mode,
+        old_base=old_base, strm_mappings_getter=strm_mappings_getter,
+    )
+    _upsert_db(repo, src_uri, file_info, meta, assets, path_mappings, output_dir_uri, assets_mode=assets_mode)
+    return movie_dir
 
 
 # ---------------------------------------------------------------------------
@@ -867,26 +1002,22 @@ def produce_source(source, config, repo, *, proxy_url="", on_progress=None, shou
             _emit(on_progress, result, src_uri, "no_scrape")
             continue
 
+        # CD-104-2 (TASK-104-T1): byte-identical to the old binary
+        # `bool(meta.get('cover')) and download_image(...)` branch — expressed as
+        # an explicit 3-state tuple so _write_movie_assets can also serve the
+        # (T2/T3) ingest-copy / no-cover cases without a hidden truthy/falsy
+        # cover_strategy inference living inside the writer.
+        cover_strategy = ('download', meta['cover']) if meta.get('cover') else ('none',)
+
         try:
-            fd = _format_data(meta, fi["path"], scraper_cfg)
             existing = repo.get_by_path(src_uri)  # T3: read once; T4 reuses title/actresses/maker/release_date
-            movie_dir, output_dir_uri = _resolve_movie_dir(
-                repo, src_uri, existing, output_root, output_uri,
-                fd, scraper_cfg, allocated_this_run, path_mappings,
+            movie_dir = _produce_one(
+                repo, source, scraper_cfg,
+                file_info=fi, meta=meta, cover_strategy=cover_strategy, assets_mode='full',
+                existing=existing, output_root=output_root, output_uri=output_uri,
+                allocated_this_run=allocated_this_run, path_mappings=path_mappings,
+                strm_mappings_getter=strm_mappings_getter,
             )
-            old_base = _build_old_base(existing, fi["path"], scraper_cfg)  # T4: '' when no prior row/title/number
-            # PR #93 五審四次 P2 (option C)：media-server 模式下，每片用注入的 getter 重讀 fresh
-            # strm_path_mappings（非 generate 起始凍結值）。封死斷線尾巴殘留——watcher 偵測到斷線
-            # 即清 generate token，但 producer 每片 checkpoint 才看 should_abort，會多做完當下這片；
-            # 此時另一分頁可能已存新映射（gate 見不到在飛 generate 而放行），該片若用凍結舊映射落檔則
-            # 永久 stale。傳 getter callable（非此刻 snapshot）往下，讓 _write_movie_assets 在
-            # _write_strm 前一刻才求值（五審五次 Codex：snapshot 在此求值後、封面/NFO 等寫檔仍需時間，
-            # 期間存的新映射會被漏掉）。getter=None（既有呼叫/測試）→ 回退凍結 config、零重讀、行為不變。
-            assets = _write_movie_assets(
-                str(movie_dir), meta, fd, fi["path"], scraper_cfg,
-                old_base=old_base, strm_mappings_getter=strm_mappings_getter,
-            )
-            _upsert_db(repo, src_uri, fi, meta, assets, path_mappings, output_dir_uri)
             result.created += 1
             _emit(on_progress, result, src_uri, "created", str(movie_dir), number)
         except Exception:

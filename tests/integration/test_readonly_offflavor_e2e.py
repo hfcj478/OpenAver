@@ -36,6 +36,7 @@ shared root with hash-suffix disambiguation).
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -186,13 +187,27 @@ def _off_root(src_path: Path, db_path: Path) -> Path:
 
 
 def _snapshot(root: Path) -> dict:
-    """Recursive {relpath: (size, mtime_ns)} snapshot for zero-write diffing."""
+    """Recursive {relpath: (size, mtime_ns, sha256_hex, st_ino)} snapshot for
+    zero-write diffing (CD-104-9, TASK-104-T1).
+
+    Extends the original (size, mtime_ns)-only snapshot with a content hash and
+    the inode number: a same-name overwrite that happens to land the same
+    size/mtime_ns (coarse mtime resolution on some filesystems, or a write that
+    replaces content but not stat metadata) is still caught by the hash, and an
+    unlink+recreate-with-the-same-bytes-and-timestamp swap is still caught by
+    st_ino changing — neither would flip the old 2-tuple. Used by T2/T3's
+    zero-write assertions (ingest / readonly-endpoint routing must never touch
+    the source tree) as well as this file's own existing zero-write/idempotent
+    tests, which keep passing unchanged since they only ever compare a snapshot
+    against itself (same computation before/after).
+    """
     snap: dict = {}
     for dirpath, _dirs, files in os.walk(root):
         for f in files:
             fp = Path(dirpath) / f
             st = fp.stat()
-            snap[str(fp.relative_to(root))] = (st.st_size, st.st_mtime_ns)
+            digest = hashlib.sha256(fp.read_bytes()).hexdigest()
+            snap[str(fp.relative_to(root))] = (st.st_size, st.st_mtime_ns, digest, st.st_ino)
     return snap
 
 
