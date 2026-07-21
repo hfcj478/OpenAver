@@ -810,7 +810,11 @@ class TestBatchEnrichReadonlyCoverPreserveGate:
         # singleton，機械上與上一行同物件，兩者一致即可）。cover_file_exists
         # 同時餵 had_cover（scraper）與 has_servable_cover（enrich_contract）兩道 gate。
         mocker.patch("core.enrich_contract.os.path.exists", return_value=cover_file_exists)
-        mock_focal = mocker.patch("web.routers.scraper.maybe_submit_video_focal")
+        # TASK-105-T6: reset+submit 收斂進 schedule_focal_after_cover_write（住
+        # core.focal_trigger）；maybe_submit_video_focal 的實際呼叫端隨之從
+        # web.routers.scraper 移到 core.focal_trigger（bare name 在該模組 global
+        # namespace 內解析），patch target 需對齊使用端（gotchas-backend.md §1）。
+        mock_focal = mocker.patch("core.focal_trigger.maybe_submit_video_focal")
         return mock_produce, mock_repo, mock_focal
 
     def _post(self, client, **overrides):

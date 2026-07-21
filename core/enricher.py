@@ -18,7 +18,7 @@ from core.enrich_contract import (
     enrich_success,
     should_preserve_cover,
 )
-from core.focal_trigger import maybe_submit_video_focal
+from core.focal_trigger import schedule_focal_after_cover_write
 from core.logger import get_logger
 from core.nfo_updater import parse_nfo
 from core.organizer import crop_to_poster, download_image, find_subtitle_files, generate_nfo
@@ -538,18 +538,10 @@ def enrich_single(  # ranker-invalidate-ok: (only updates nfo_mtime, not a corpu
         # 不進此塊，manual 值原樣保留。video_path_uri 須與 _db_upsert 寫入的 key 一致
         # （:190 / :594 to_file_uri(fs_path_for_db)），複用上方已算過的 path_uri。
         if cover_written:
-            repo.reset_focal_to_auto(path_uri)
-            # db-ns-ok: fs_path_for_db, DB round-trip value, no reverse mapping applied
-            maybe_submit_video_focal(
-                number,
-                meta.get("maker"),
-                to_file_uri(fs_path_for_db if fs_path_for_db is not None else fs_path),
-                local_cover,
-                # 99b-T2 caller #4：與 _db_upsert:619-620 計算 cover_uri 同式
-                # （to_file_uri(local_cover_path, path_mappings)），local_cover
-                # 即該處的 local_cover_path。cover_written=True 時 local_cover
-                # 必非空，仍加 `if local_cover else ""` 防未來 gate 條件漂移。
-                cover_path_uri=to_file_uri(local_cover, path_mappings) if local_cover else "",
+            # TASK-105-T6: reset+submit 收斂至共用 helper（video_uri=path_uri，
+            # 與 reset 現用值同源、byte-identical，見 TASK-105-T6.md 等值證明）。
+            schedule_focal_after_cover_write(
+                repo, path_uri, number, meta.get("maker"), local_cover, path_mappings
             )
 
     # nfo_mtime 獨立更新：不論 mode/source，只要 NFO 存在就同步 DB

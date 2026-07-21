@@ -19,7 +19,7 @@ from typing import List, Literal, Optional
 
 from core.database import VideoRepository
 from core.db_inflow import try_inflow_upsert
-from core.focal_trigger import maybe_submit_video_focal
+from core.focal_trigger import maybe_submit_video_focal, schedule_focal_after_cover_write
 from core.enricher import enrich_single, fetch_samples_only, resolve_nfo_cover_paths
 from core.enrich_contract import apply_cover_preserve, compute_has_servable_cover, cover_uri_is_servable, enrich_success
 from core.organizer import organize_file
@@ -544,13 +544,10 @@ def enrich_single_endpoint(request: EnrichRequest) -> dict:
             if cover_written:
                 try:
                     focal_repo = VideoRepository()  # 致命細節 1：不可重用上面的 repo 變數
-                    focal_repo.reset_focal_to_auto(canonical)
-                    maybe_submit_video_focal(
-                        meta['number'],
-                        meta.get('maker'),
-                        canonical,
-                        assets['cover_fs'],
-                        cover_path_uri=to_file_uri(assets['cover_fs'], path_mappings),
+                    # TASK-105-T6: reset+submit 收斂至共用 helper。
+                    schedule_focal_after_cover_write(
+                        focal_repo, canonical, meta['number'], meta.get('maker'),
+                        assets['cover_fs'], path_mappings,
                     )
                 except Exception:
                     logger.warning("readonly enrich focal 排程失敗（不影響改道結果）", exc_info=True)
@@ -916,13 +913,10 @@ async def batch_enrich_endpoint(request: BatchEnrichRequest):
                         if assets.get('cover_fs'):
                             try:
                                 focal_repo = VideoRepository()  # 致命細節 1：不可重用上面的 repo
-                                focal_repo.reset_focal_to_auto(uri)
-                                maybe_submit_video_focal(
-                                    meta['number'],
-                                    meta.get('maker'),
-                                    uri,
-                                    assets['cover_fs'],
-                                    cover_path_uri=to_file_uri(assets['cover_fs'], _ro_mappings),
+                                # TASK-105-T6: reset+submit 收斂至共用 helper。
+                                schedule_focal_after_cover_write(
+                                    focal_repo, uri, meta['number'], meta.get('maker'),
+                                    assets['cover_fs'], _ro_mappings,
                                 )
                             except Exception:
                                 logger.warning(
