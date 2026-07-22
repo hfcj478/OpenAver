@@ -154,10 +154,14 @@ class TestDateGatingGuard:
         # [lint-guard: pytest-justified] 同 TestEditModeCanEditFileGuard 理由：
         # canEditFile() 定義於 base.js、search.html 引用之，是跨檔 Alpine binding contract，
         # 不是單純字串存在檢查，static_guard_lint 無法表達此跨檔語意。
+        # 另 Codex PR#116 P1：picker 為單一持久 DOM 節點（x-show 只切 display），
+        # 需 `:value="current().date || ''"` 反應性重設 DOM .value，防切候選殘留上一候選日期
+        # （T7 型「拔 :value 造成殘值→畫面有日期但 model 空」回歸）。
         html = self._html()
         for expected in [
             "!canEditFile() || current().date",
             "canEditFile() && !current().date",
+            ":value=\"current().date || ''\"",
         ]:
             assert expected in html, f"search.html missing: {expected!r}"
 

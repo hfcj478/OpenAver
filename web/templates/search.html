@@ -565,6 +565,7 @@
                             <span class="info-value" id="resultDate" x-show="!canEditFile() || current().date" x-text="current().date || '-'">-</span>
                             <input type="date" x-show="canEditFile() && !current().date" id="resultDateInput"
                                    class="input input-bordered info-value"
+                                   :value="current().date || ''"
                                    @keydown="if (!['Tab','Escape'].includes($event.key)) $event.preventDefault()"
                                    @change="current().date = $event.target.value; saveState()">
                         </div>
