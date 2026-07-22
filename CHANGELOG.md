@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.8] - 2026-07-22
+
+本版把搜尋頁的 detail（詳情卡）做成「把這個檔案整理進庫之前，最後看一眼並手動修正」的地方（feature/106）。以前 scraper 抓錯／漏抓演員、或無碼片沒有發售日只能將就；現在拖檔進搜尋頁後，可在整理前直接改標題、改演員、補發售日，修正會隨整理一起寫進 NFO＋資料庫。純關鍵字搜尋（只是查資料、沒有要整理）維持唯讀、不出現任何編輯鈕。
+
+### Added
+#### ✏️ 整理前手動修正（拖檔／選檔進搜尋頁才有）
+- **演員可編**：演員那行多一支鉛筆，點開變成一個文字框，直接改名／加人／刪人／修「現名(舊名)」這種括號格式都在同一格。多人用頓號「、」、全形逗號「，」或半形逗號「,」分隔皆可。共演漏抓、無碼片沒帶演員，都能在這裡補齊。逐字存、不自動拆括號、不自動改名（打什麼存什麼）。
+- **發售日可編**：發售日改用系統的日期選擇器，只會產生正確的「年-月-日」或留空——不會有手打日期格式跑掉的問題。無碼片不知道確切日期時**留空即可**（不要為了填滿而亂猜，假精確反而劣化資料）。
+
+### Changed
+- **編輯鈕只在「有待整理的本地檔」時出現**：標題／中文標題／演員／發售日的編輯，只在你拖檔或選檔進來（有實際檔案要整理）時才顯示；純用關鍵字搜尋瀏覽時一律唯讀——那時沒有「整理」這個動作，編了也無處可送。（AI 翻譯鈕不受影響，照常可用。）
+
+### Fixed
+- **整理時送出你實際挑選的那個來源版本**：以前在詳情頁切到第二、第三個來源版本去看／編輯，按整理時卻固定送出「第一個」版本，你的挑選與編輯被默默丟棄。本版改為整理一律送出你當下正在看的那個版本（單片整理與整理全部都修）。連帶修好幾個相關邊界：跨檔往回翻、改番號重搜、翻到最後一頁等情況下「顯示一個、卻整理另一個」的落差。
+- **編輯到一半切換候選／檔案不再張冠李戴**：開著編輯框還沒按確認就按左右鍵／滾輪切換，之前可能把舊框的字寫到新的片上；本版改為切換時自動放棄未確認的編輯（要保留必須明確按 ✓）。邊界連續按鍵／滾輪／滑動時不會誤清正在打的字。
+- **移除清單裡的其他檔案，不會清掉你正在編輯的內容**：在編輯 A 片時移除清單中的 B 片，A 仍是當前檔、你的編輯會保留（順帶：移除無關檔案不再把當前片的候選重置回第一個）。
+
+### Internal
+純前端 UX：編輯的顯示條件收斂成單一判斷 `canEditFile()`（file 模式且有本地路徑），杜絕「漏加一個條件」造成關鍵字搜尋也冒出編輯鈕。編輯採 deferred（整理時一次套用），**不新增任何後端端點、不新增資料模型、scraper 完全不動**。
+
+### 測試
+- 全套 pytest **5606 passed, 1 skipped**（unit + integration，排除 smoke／e2e）＋ `ruff check .` 綠 ＋ `npm run lint` 綠（static_guard 1031／cjk_guard clean）＋ `npm test`（node:test **250**，含演員三分隔切割／候選選擇 `selectedCandidateIndex`／date 正規化／nav-discard／removeFile 保留編輯等守衛，皆 mutation 實測殺 mutant）。
+- 來源金絲雀：**8 源全 PASS**（javbus／jav321／heyzo／d2pass／avsox／fc2／javdb／dmm，pre-merge live）。
+- 每 task 獨立 Sonnet review（T2' 兩 nit／**T4 抓到 module-level export 在 Alpine `with()`-scope template 表達式不可見的 runtime 陷阱**、比照 openLocal 掛 mixin property 修正／T5 defensive nit）＋ Codex PR review（**P1：removeFile 移除非當前檔誤清未確認編輯**，已改為只在移除當前檔才 switchToFile）＋ grok 整支 branch 第二意見（**LGTM**；提 0／採納 0／假陽性 0／未查證 0／增量 0——逐條 file:line 查證無假審，確認單一 `canEditFile()` 閘、兩 snapshot、B1 no-op gating 與 plan 一致）＋ **CDP headless 真機驗收**（① keyword 純唯讀 ②演員括號不拆 ③全形逗號切多筆 ④date input 正確綁定 ⑤整理送對候選 ＋ AC13 nav-discard，全 PASS；真正 file-drop→NFO/DB 端到端由 owner 實機 hard-gate）。
+- 本版新增 i18n key 只寫 zh_TW（其餘三語留空靠回退）。
+
 ## [0.12.7] - 2026-07-22
 
 本版是一次「內部收斂＋順手修 bug」（feature/105）：把唯讀來源與一般來源在「刮完之後怎麼記帳、怎麼回報」這層——原本被抄成四份、每次改都漏抄一份的判斷邏輯——收斂成**單一實作、兩邊共用**，並替它上了機械守衛（債長不回來）。**絕大部分對使用者隱形**，實際會被感受到的是下面四個修復。

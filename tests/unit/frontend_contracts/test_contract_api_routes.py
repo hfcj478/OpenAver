@@ -79,6 +79,9 @@ class TestUserTagsApiGuard:
 
     def test_search_html_contains(self):
         """search.html 含 user-tags 守衛 + currentUserTags()"""
+        # [lint-guard: pytest-justified] tags+「+」按鈕的 file-mode 閘是跨檔 Alpine binding
+        # contract（search.html 引用 canEditFile()，定義在 base.js）——非單純字串存在檢查，
+        # static_guard_lint 無法表達跨檔語意；canEditFile 的 file+path 邏輯另由 node:test 守。
         html = self._html()
         for expected in [
             # 106-T1 CD-106-1/AC12：tags+ 的 file-mode/path 閘從 inline 三 conjunct
