@@ -15,7 +15,12 @@ export function parseActorsInput(str) {
 export function toDateInputValue(raw) {
     if (typeof raw !== 'string') return '';
     const trimmed = raw.trim();
-    return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return '';
+    // 日曆合法性 round-trip：2024-02-31 / 0000-00-00 / 2020-13-01 等格式對但日期不存在的值，
+    // 原生 date input 會顯示空白；此處也回 '' 讓「整理送出」與顯示一致（Codex PR#115 round3 P2）。
+    const dt = new Date(trimmed + 'T00:00:00Z');
+    if (isNaN(dt.getTime()) || dt.toISOString().slice(0, 10) !== trimmed) return '';
+    return trimmed;
 }
 
 export function searchStateResultCard() {

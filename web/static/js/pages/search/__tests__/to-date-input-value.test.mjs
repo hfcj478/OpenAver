@@ -52,3 +52,29 @@ test('toDateInputValue: "2020年1月1日"（中文日期）→ \'\'', () => {
 test('toDateInputValue: 前後空白合規格式 " 2020-01-01 " → trim 後直通 "2020-01-01"', () => {
   assert.equal(toDateInputValue(' 2020-01-01 '), '2020-01-01');
 });
+
+// Codex PR#115 round3 P2: 日曆合法性 round-trip（格式對但日期不存在需回 ''）
+
+test('toDateInputValue: "2024-02-31"（格式對但日期不存在）→ \'\'', () => {
+  assert.equal(toDateInputValue('2024-02-31'), '');
+});
+
+test('toDateInputValue: "2021-02-29"（2021 非閏年）→ \'\'', () => {
+  assert.equal(toDateInputValue('2021-02-29'), '');
+});
+
+test('toDateInputValue: "2020-02-29"（2020 是閏年，須通過）→ 原樣直通', () => {
+  assert.equal(toDateInputValue('2020-02-29'), '2020-02-29');
+});
+
+test('toDateInputValue: "2020-13-01"（月份超界）→ \'\'', () => {
+  assert.equal(toDateInputValue('2020-13-01'), '');
+});
+
+test('toDateInputValue: "2020-00-15"（月份為 0）→ \'\'', () => {
+  assert.equal(toDateInputValue('2020-00-15'), '');
+});
+
+test('toDateInputValue: "0000-00-00" → \'\'', () => {
+  assert.equal(toDateInputValue('0000-00-00'), '');
+});
