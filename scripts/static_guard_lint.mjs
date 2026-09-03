@@ -4867,6 +4867,21 @@ const RULES = [
     pattern: ['listdir', 'scandir', '.walk(', 'open('],
     note: '[TASK-142-T1 CD-13] core/source_reachability.py 不得出現 listdir／scandir／.walk(／open(（探測只碰根路徑本身，spec F1 驗收 7）',
   },
+
+  // ---- [TASK-143-T6 CD-143-7] readonly_producer 番號表單一來源，禁止自建 NUM_PATTERNS ----
+  {
+    file: 'core/readonly_producer.py',
+    kind: 'forbidden-string',
+    // 定義形狀正則，不是 raw 子字串：evalForbiddenString 是全文比對、**不剝** Python
+    // 註解與 docstring（本檔的 stripPythonNoise() 只接在 evalStructureCount 上），而
+    // core/readonly_producer.py 的 wrapper docstring 本來就含 NUM_PATTERNS 這個字面
+    // ⇒ raw 子字串守衛落地當下就會誤判自己人。
+    // 涵蓋三種**自然寫法**（T6 sonnet review P2）：裸賦值 / 型別註記 / self 屬性。
+    // 刻意不涵蓋改名（`_NUM_PATTERNS`、`PATTERNS`）與 setattr —— 那是刻意規避，
+    // 屬粗顆粒守衛已接受的代價（CD-143-7：只擋形狀，不做對帳矩陣）。
+    pattern: /^\s*(?:self\.)?NUM_PATTERNS\s*(?::[^=\n]*)?=/m,
+    note: '[TASK-143-T6 CD-143-7] core/readonly_producer.py 不得自建 NUM_PATTERNS 表（CD-143-2 單一來源是 core/gallery_scanner.py）',
+  },
 ];
 
 // ---- helpers ----
