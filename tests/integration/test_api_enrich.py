@@ -527,7 +527,7 @@ class TestEnrichSingleReadonlyGuard:
         canonical = coerce_to_file_uri("/tmp/ro_src/ABC-001.mp4", {})
         assert stub_video.path == canonical
         assert stub_video.number == "ABC-001"
-        assert stub_video.title == "ABC-001.mp4"
+        assert stub_video.title == "ABC-001"
 
         attempted_args = repo_instance.update_scrape_attempted_at.call_args.args
         assert attempted_args[0] == canonical

@@ -1799,10 +1799,12 @@ def _readonly_stub_not_found(repo, uri: str, number, fs_path: str) -> None:
     再 update_scrape_attempted_at 記帳。update_scrape_attempted_at 是 bare
     UPDATE...WHERE path=?，無 row 靜默 no-op，故必須先建樁（見 video.py:1144-1167）。
 
-    repo 由呼叫端傳（各站來源不同：S1/S2 現場新建、S3 呼叫端傳入共用實例）；
-    `if number:` guard（若有）留呼叫端 — helper body 無條件執行兩步。
+    repo 由呼叫端傳（各站來源不同：S1/S2 現場新建、S3 呼叫端傳入共用實例）。
+    T2（spec-143 §3.1）起兩個呼叫端都是無條件呼叫 — 唯讀列舉到的每個影片檔一律
+    建樁列，與一般掃描一致；`number` 為 None（檔名抽不出番號）也照建。
+    title 用 Path(fs_path).stem（不含副檔名），與一般掃描的標題格式逐字對齊。
     """
-    repo.insert_if_ignore(Video(path=uri, number=number, title=os.path.basename(fs_path)))
+    repo.insert_if_ignore(Video(path=uri, number=number, title=Path(fs_path).stem))
     repo.update_scrape_attempted_at(uri, time.time())
 
 
@@ -2156,12 +2158,9 @@ def produce_source(source, config, repo, *, proxy_url="", on_progress=None, shou
             fi["path"], number, scraper_cfg, action='ingest', proxy_url=proxy_url,
         )
         if not meta or not meta.get('number'):
-            # Only stub+record-attempt when a filename number exists (matches
-            # the old `if not number` branch's behavior byte-for-byte for the
-            # no-number-no-NFO case — no DB row for a file we can't identify
-            # at all).
-            if number:
-                _readonly_stub_not_found(repo, src_uri, number, fi["path"])
+            # T2: always stub a row (with or without a filename number), matching
+            # the non-readonly scan's "every listed file gets a DB row" contract.
+            _readonly_stub_not_found(repo, src_uri, number, fi["path"])
             result.no_scrape += 1
             _emit(on_progress, result, src_uri, "no_scrape")
             continue

@@ -3058,9 +3058,12 @@ class TestProduceSourceNoneNumberGuard:
         assert result.created == 0
         mock_extract.assert_called_once()
         mock_search.assert_not_called()
-        # 89b-T2 regression lock: no-number branch must NOT write to DB at all.
-        repo.insert_if_ignore.assert_not_called()
-        repo.update_scrape_attempted_at.assert_not_called()
+        # T2: no-number branch always stubs a row (title = stem, number=None).
+        repo.insert_if_ignore.assert_called_once()
+        inserted = repo.insert_if_ignore.call_args[0][0]
+        assert inserted.number is None
+        assert inserted.title == "nonnumber"
+        repo.update_scrape_attempted_at.assert_called_once()
         repo.upsert.assert_not_called()
 
     def test_none_number_emits_no_scrape_outcome(self):
@@ -3126,11 +3129,10 @@ class TestProduceSourceSidecarNfoBypassesFilenameNumberBail:
         upserted = repo.upsert.call_args[0][0]
         assert upserted.number == 'SIDECAR-001'
 
-    def test_no_filename_number_no_nfo_no_scrape_and_no_stub(self):
-        """(b) no filename number + no NFO -> no_scrape, and (unlike the
-        has-number case) NO stub row is created — matches the OLD `if not
-        number` branch's behavior byte-for-byte (regression, same assertions
-        as TestProduceSourceNoneNumberGuard)."""
+    def test_no_filename_number_no_nfo_no_scrape_and_stub_created(self):
+        """(b) no filename number + no NFO -> no_scrape, and (T2 onwards) a
+        stub row IS created — same outcome as TestProduceSourceNoneNumberGuard,
+        via this sidecar-bypass entry point."""
         from core.readonly_producer import produce_source
 
         source = _make_source()
@@ -3150,8 +3152,11 @@ class TestProduceSourceSidecarNfoBypassesFilenameNumberBail:
         mock_search.assert_not_called()
         assert result.no_scrape == 1
         assert result.created == 0
-        repo.insert_if_ignore.assert_not_called()
-        repo.update_scrape_attempted_at.assert_not_called()
+        repo.insert_if_ignore.assert_called_once()
+        inserted = repo.insert_if_ignore.call_args[0][0]
+        assert inserted.number is None
+        assert inserted.title == "nonumber"
+        repo.update_scrape_attempted_at.assert_called_once()
         repo.upsert.assert_not_called()
 
     def test_has_number_no_metadata_still_stubs(self):
@@ -3221,7 +3226,7 @@ class TestProduceSourceNotFoundAttempted:
         assert isinstance(inserted, Video)
         assert inserted.path == "file:///src/videos/NOTFOUND-001.mp4"
         assert inserted.number == "NOTFOUND-001"
-        assert inserted.title == "NOTFOUND-001.mp4"  # basename, WITH extension
+        assert inserted.title == "NOTFOUND-001"
         # minimal row: no cover/folder-related fields populated
         assert inserted.cover_path == ''
         assert inserted.output_dir == ''
@@ -3739,6 +3744,47 @@ class TestProduceSourcePrune:
         mock_thumb.invalidate.assert_not_called()
         assert result.pruned == 0
         assert result.pruned == 0
+
+
+class TestProduceSourceNoNumberStubPruned:
+    """TASK-143-T2: a no-number stub row created by the T2 path must be
+    pruned by the existing three-gate prune when the file leaves the source
+    (real temp_db, two-round produce_source — same shape as
+    TestProduceSourceNotFoundSecondRunSkipped)."""
+
+    def test_no_number_stub_pruned_when_file_removed(self, temp_db):
+        from core.database import VideoRepository
+        from core.readonly_producer import produce_source
+
+        repo = VideoRepository(temp_db)
+        source = _make_source()
+        config = _make_config()
+        files_r1 = [_make_file_info(path="/src/videos/nonnumber.mp4")]
+
+        # Round 1: no filename number → stub row (number=None, title=stem).
+        with patch("core.readonly_producer._list_source_videos", return_value=files_r1), \
+             patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
+             patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
+             patch("core.readonly_producer.extract_number", return_value=None):
+            result1 = produce_source(source, config, repo)
+
+        assert result1.no_scrape == 1
+        stub = repo.get_by_path("file:///src/videos/nonnumber.mp4")
+        assert stub is not None
+        assert stub.number is None
+        assert stub.title == "nonnumber"
+
+        # Round 2: original file gone; list still non-empty (OTHER-001) so the
+        # "files non-empty" prune gate stays open.
+        files_r2 = [_make_file_info(path="/src/videos/OTHER-001.mp4")]
+        with patch("core.readonly_producer._list_source_videos", return_value=files_r2), \
+             patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
+             patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
+             patch("core.readonly_producer.extract_number", return_value=None):
+            result2 = produce_source(source, config, repo)
+
+        assert result2.pruned == 1
+        assert repo.get_by_path("file:///src/videos/nonnumber.mp4") is None
 
 
 # ---------------------------------------------------------------------------
@@ -7345,7 +7391,7 @@ class TestReadonlyStubNotFound:
         assert isinstance(inserted, Video)
         assert inserted.path == "file:///src/videos/NOTFOUND-001.mp4"
         assert inserted.number == "NOTFOUND-001"
-        assert inserted.title == "NOTFOUND-001.mp4"  # basename, WITH extension
+        assert inserted.title == "NOTFOUND-001"  # Path(fs_path).stem, WITHOUT extension
         assert inserted.cover_path == ''
         assert inserted.output_dir == ''
         assert inserted.sample_images == []
