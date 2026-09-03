@@ -1630,6 +1630,7 @@ def resolve_ingest_plan(
 
     if meta is None:
         return None, ('none',)
+    meta['maker'] = VideoScanner().normalize_maker(meta.get('number') or '', meta.get('maker', ''))
     meta['sample_images'] = []
     # CD-126-2 等長契約：清空 sample_images 就必須連帶清空 preview——長度不等是**靜默錯位**
     # （圖片對到別張），比破圖難查。

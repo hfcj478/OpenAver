@@ -7912,3 +7912,133 @@ class TestT4bReadonlyFullSamplesFallback(_T4bReadonlyBase):
             assert mg.call_count == 3
         finally:
             self._clear_failed_hosts()
+
+
+# ===========================================================================
+# TASK-143-T3 (CD-143-6): resolve_ingest_plan maker normalization
+# ===========================================================================
+
+class TestResolveIngestPlanMakerNormalization:
+    """TASK-143-T3: resolve_ingest_plan 尾端片商正規化對齊（NFO 分支 ＋ 爬蟲分支）。"""
+
+    def _touch_video(self, tmp_path, name='SRC-001.mp4'):
+        p = tmp_path / name
+        p.write_bytes(b'FAKE')
+        return p
+
+    def test_nfo_branch_name_mapping_applied(self, tmp_path):
+        """NFO 分支：sidecar NFO 的 <maker> 為 'S1 NO.1 STYLE'（name_mapping key）
+        → resolve_ingest_plan 回傳之 meta['maker'] 被正規化為 'S1'。"""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path, 'S1-001.mp4')
+        nfo = video.with_suffix('.nfo')
+        nfo.write_text(
+            '<movie><num>S1-001</num><title>T</title><maker>S1 NO.1 STYLE</maker></movie>',
+            encoding='utf-8',
+        )
+
+        meta, cover_strategy = resolve_ingest_plan(str(video), 'S1-001', {}, action='ingest')
+
+        assert meta is not None
+        assert meta['maker'] == 'S1'
+
+    def test_scrape_branch_prefix_mapping_applied(self, tmp_path):
+        """爬蟲分支：search_jav 回傳 number='SSIS-001'、maker='Raw Maker Name'（不在 name_mapping）
+        → 透過 prefix_mapping['SSIS'] == 'S1' 正規化為 'S1'。"""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path, 'SSIS-001.mp4')
+        raw_meta = {
+            'number': 'SSIS-001',
+            'title': 'T',
+            'cover': '',
+            'maker': 'Raw Maker Name',
+        }
+
+        with patch('core.readonly_producer.search_jav', return_value=raw_meta):
+            meta, cover_strategy = resolve_ingest_plan(str(video), 'SSIS-001', {}, action='ingest')
+
+        assert meta is not None
+        assert meta['maker'] == 'S1'
+
+    def test_reverse_lock_name_mapping_takes_precedence_over_prefix_mapping(self, tmp_path):
+        """反向鎖：兩層對照對同一部片給出**不同答案**的真衝突樣本——
+        maker='S1 NO.1 STYLE'（name_mapping → 'S1'）＋ number='CRB-123'
+        （prefix_mapping['CRB'] → 'Caribbeancom'）。期望 'S1'：Step 1 原名對照
+        短路優先，證明加上前綴對照那一層沒有把原名對照擠掉。
+
+        取樣理由（T3 grok review P3）：前綴不在表內的樣本（如 'ZZZFAKE-001'）
+        守不住這條——把 normalize_maker 的 Step1/Step2 對調它照樣綠，因為只有
+        一層會命中。**反向鎖必須用兩層都命中且答案相異的樣本才有鑑別力。**"""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path, 'CRB-123.mp4')
+        raw_meta = {
+            'number': 'CRB-123',
+            'title': 'T',
+            'cover': '',
+            'maker': 'S1 NO.1 STYLE',
+        }
+
+        with patch('core.readonly_producer.search_jav', return_value=raw_meta):
+            meta, cover_strategy = resolve_ingest_plan(str(video), 'CRB-123', {}, action='ingest')
+
+        assert meta is not None
+        # 兩層都命中：name_mapping 給 'S1'、prefix_mapping 給 'Caribbeancom'。
+        assert meta['maker'] == 'S1'
+        assert meta['maker'] != 'Caribbeancom'
+
+    def test_focal_gate_flips_when_maker_normalized_to_uncensored(self, tmp_path):
+        """focal 連帶「會翻轉」：CRB-123 ＋ RawCRBMaker → 正規化前 requires_face_detection 為 False；
+        正規化後 maker 變 Caribbeancom，requires_face_detection 由 False 變 True。"""
+        from core.focal.gate import requires_face_detection
+        from core.readonly_producer import resolve_ingest_plan
+
+        num = 'CRB-123'
+        raw_maker = 'RawCRBMaker'
+
+        # 驗證初始條件：正規化前 gate 判定為 False
+        assert requires_face_detection(num, raw_maker) is False
+
+        video = self._touch_video(tmp_path, f'{num}.mp4')
+        raw_meta = {
+            'number': num,
+            'title': 'T',
+            'cover': '',
+            'maker': raw_maker,
+        }
+
+        with patch('core.readonly_producer.search_jav', return_value=raw_meta):
+            meta, _ = resolve_ingest_plan(str(video), num, {}, action='ingest')
+
+        assert meta is not None
+        assert meta['maker'] == 'Caribbeancom'
+        assert requires_face_detection(meta['number'], meta['maker']) is True
+
+    def test_focal_gate_remains_false_when_maker_normalized_to_censored(self, tmp_path):
+        """focal 連帶「不翻轉」：SSIS-002 ＋ Maker → 正規化後 maker 變 S1，
+        但 requires_face_detection 兩邊都是 False（maker 值變了、布林判定沒變，明確斷言兩件事）。"""
+        from core.focal.gate import requires_face_detection
+        from core.readonly_producer import resolve_ingest_plan
+
+        num = 'SSIS-002'
+        raw_maker = 'Maker'
+
+        # 驗證初始條件：正規化前 gate 判定為 False
+        assert requires_face_detection(num, raw_maker) is False
+
+        video = self._touch_video(tmp_path, f'{num}.mp4')
+        raw_meta = {
+            'number': num,
+            'title': 'T',
+            'cover': '',
+            'maker': raw_maker,
+        }
+
+        with patch('core.readonly_producer.search_jav', return_value=raw_meta):
+            meta, _ = resolve_ingest_plan(str(video), num, {}, action='ingest')
+
+        assert meta is not None
+        assert meta['maker'] == 'S1'  # 1. maker 值變了
+        assert requires_face_detection(meta['number'], meta['maker']) is False  # 2. 布林判定沒變
