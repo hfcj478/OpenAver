@@ -56,6 +56,31 @@ class TestMinSizeBytes:
         assert _min_size_bytes({"min_size_mb": 0}) == 0
 
 
+class TestExtractNumberParity:
+    def test_matches_scan_table_for_number_prefix_samples(self):
+        from core.gallery_scanner import VideoScanner
+        from core.readonly_producer import extract_number
+
+        scanner = VideoScanner()
+        samples = [
+            "200GANA-3360.mp4",
+            "259LUXU-001.mp4",
+            "PT-71.mp4",
+            "T28-103.mp4",
+        ]
+        for filename in samples:
+            assert extract_number(filename) == scanner.find_num_from_filename(filename)
+
+        assert extract_number("PT-71.mp4") == "PT-71"
+
+    def test_no_number_returns_none_not_empty_string(self):
+        from core.readonly_producer import extract_number
+
+        res = extract_number("nonumber.mp4")
+        assert res is None
+        assert res != ""
+
+
 # ---------------------------------------------------------------------------
 # _list_source_videos
 # ---------------------------------------------------------------------------

@@ -82,7 +82,7 @@ from core.path_utils import (
     uri_to_local_fs_path,
 )
 from core.readonly_source import _canonical_source_prefix
-from core.scraper import extract_number, search_jav, search_jav_single_source
+from core.scraper import search_jav, search_jav_single_source
 from core.video_extensions import get_video_extensions
 
 logger = get_logger(__name__)
@@ -124,6 +124,11 @@ class ProduceResult:
 def _min_size_bytes(gallery_config: dict) -> int:
     """Convert gallery.min_size_mb → bytes. Mirrors scanner.py:221."""
     return int(gallery_config.get("min_size_mb", 0)) * 1024 * 1024
+
+
+def extract_number(filename: str) -> Optional[str]:
+    """改向一般掃描 NUM_PATTERNS 表提問提取番號，找不到時回傳 None 而非空字串。"""
+    return VideoScanner().find_num_from_filename(filename) or None
 
 
 def _list_source_videos(
