@@ -589,3 +589,172 @@ class TestE10PathCanonicalization:
         # 檔案不存在 → 可能 4xx（E1 auto-stub or 404），但不應 500（內部錯誤）
         assert resp.status_code != 500, \
             f"UNC URI 導致 API 500，response={resp.text}"
+
+
+# ── T4: 唯讀來源自訂標籤寫進輸出夾 NFO（TASK-143-T4）──────────────────────────
+
+_MINIMAL_NFO = b"""<?xml version='1.0' encoding='utf-8'?>
+<movie>
+  <title>TEST-001</title>
+  <num>TEST-001</num>
+</movie>
+"""
+
+
+class TestT4ReadonlyUserTags:
+    """TASK-143-T4: 唯讀來源加／刪標籤 → 改寫輸出夾 NFO，來源零寫入。"""
+
+    def _setup_readonly(self, tmp_db, tmp_path, monkeypatch, *,
+                        with_source_nfo=True, with_output_nfo=True,
+                        output_dir_empty=False, extra_output_nfos=0):
+        """建唯讀來源 + 可選輸出夾，回傳 (client, src_dir, out_dir, file_uri)。"""
+        from web.routers import collection as collection_mod
+        from web.app import app
+        from core.database import Video, VideoRepository
+
+        src_dir = tmp_path / "ro_src"
+        src_dir.mkdir()
+        mp4 = src_dir / "TEST-001.mp4"
+        mp4.write_bytes(b"fake-video")
+        if with_source_nfo:
+            (src_dir / "TEST-001.nfo").write_bytes(_MINIMAL_NFO)
+
+        out_dir = None
+        output_dir_uri = ""
+        if not output_dir_empty:
+            out_dir = tmp_path / "ro_out" / "TEST-001"
+            out_dir.mkdir(parents=True)
+            if with_output_nfo:
+                (out_dir / "TEST-001.nfo").write_bytes(_MINIMAL_NFO)
+            for i in range(extra_output_nfos):
+                (out_dir / f"extra-{i}.nfo").write_bytes(_MINIMAL_NFO)
+            output_dir_uri = to_file_uri(str(out_dir))
+
+        file_uri = to_file_uri(str(mp4))
+        repo = VideoRepository(tmp_db)
+        repo.upsert(Video(
+            path=file_uri,
+            number="TEST-001",
+            title="TEST-001",
+            output_dir=output_dir_uri,
+            user_tags=[],
+        ))
+
+        fake_config = {
+            "gallery": {
+                "directories": [{"path": str(src_dir), "readonly": True, "output_path": ""}],
+                "path_mappings": {},
+            },
+            "scraper": {},
+        }
+        monkeypatch.setattr(collection_mod, "load_config", lambda: fake_config)
+        monkeypatch.setattr("web.routers.collection.get_db_path", lambda: tmp_db)
+
+        return TestClient(app), src_dir, out_dir, file_uri
+
+    def test_ac2_1_source_nfo_untouched_output_nfo_gets_tag(
+        self, tmp_db, tmp_path, monkeypatch
+    ):
+        """AC2-1: 來源有 NFO → 來源雜湊不變；輸出夾 NFO 帶新標籤。"""
+        from test_readonly_offflavor_e2e import _snapshot
+
+        client, src_dir, out_dir, file_uri = self._setup_readonly(
+            tmp_db, tmp_path, monkeypatch,
+            with_source_nfo=True, with_output_nfo=True,
+        )
+
+        before = _snapshot(src_dir)
+        resp = client.post("/api/user-tags", json={
+            "file_path": file_uri,
+            "add": ["T4TAG"],
+        })
+        after = _snapshot(src_dir)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert "T4TAG" in data["user_tags"]
+        assert data["nfo_updated"] is True
+        assert data["readonly_no_output"] is False
+        assert after == before, "來源目錄被寫入（零寫入承諾破掉）"
+
+        out_nfo = (out_dir / "TEST-001.nfo").read_text(encoding="utf-8")
+        assert "T4TAG" in out_nfo
+        assert "<user_tag>T4TAG</user_tag>" in out_nfo
+
+    def test_ac2_2_no_source_nfo_output_updated(self, tmp_db, tmp_path, monkeypatch):
+        """AC2-2: 來源無 NFO、輸出夾有 → 改寫輸出夾 NFO。"""
+        client, src_dir, out_dir, file_uri = self._setup_readonly(
+            tmp_db, tmp_path, monkeypatch,
+            with_source_nfo=False, with_output_nfo=True,
+        )
+
+        resp = client.post("/api/user-tags", json={
+            "file_path": file_uri,
+            "add": ["T4TAG2"],
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["nfo_updated"] is True
+        assert data["readonly_no_output"] is False
+
+        out_nfo = (out_dir / "TEST-001.nfo").read_text(encoding="utf-8")
+        assert "<user_tag>T4TAG2</user_tag>" in out_nfo
+        assert not (src_dir / "TEST-001.nfo").exists()
+
+    def test_ac2_2b_stub_no_output_dir_readonly_no_output(
+        self, tmp_db, tmp_path, monkeypatch
+    ):
+        """AC2-2b: 樁列 output_dir='' → 只存 DB、readonly_no_output、不呼叫 NFO 寫入。"""
+        from core.database import VideoRepository
+        from unittest.mock import patch
+
+        client, _src_dir, _out_dir, file_uri = self._setup_readonly(
+            tmp_db, tmp_path, monkeypatch,
+            output_dir_empty=True,
+        )
+
+        with patch("web.routers.collection.update_nfo_user_tags") as mock_nfo:
+            resp = client.post("/api/user-tags", json={
+                "file_path": file_uri,
+                "add": ["STUBTAG"],
+            })
+            mock_nfo.assert_not_called()
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["nfo_updated"] is False
+        assert data["readonly_no_output"] is True
+        assert "STUBTAG" in data["user_tags"]
+
+        repo = VideoRepository(tmp_db)
+        video = repo.get_by_path(file_uri)
+        assert video is not None
+        assert "STUBTAG" in video.user_tags
+
+    def test_ac2_defensive_multiple_nfo_in_output_dir(
+        self, tmp_db, tmp_path, monkeypatch
+    ):
+        """防禦性：輸出夾多份 .nfo → 不猜、回報未寫入、既有 NFO 不變。"""
+        from test_readonly_offflavor_e2e import _snapshot
+
+        client, _src_dir, out_dir, file_uri = self._setup_readonly(
+            tmp_db, tmp_path, monkeypatch,
+            with_source_nfo=True, with_output_nfo=True, extra_output_nfos=1,
+        )
+
+        before = _snapshot(out_dir)
+        resp = client.post("/api/user-tags", json={
+            "file_path": file_uri,
+            "add": ["MULTITAG"],
+        })
+        after = _snapshot(out_dir)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["nfo_updated"] is False
+        assert data["readonly_no_output"] is True
+        assert after == before, "多份 NFO 時不應改寫任何一份"

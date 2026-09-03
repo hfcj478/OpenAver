@@ -22,7 +22,8 @@ from core.database import Video, VideoRepository, get_connection, get_db_path
 from core.logger import get_logger
 from core.multipart_group import resolve_groups_bulk
 from core.nfo_updater import update_nfo_user_tags
-from core.path_utils import CURRENT_ENV, reverse_path_mapping, to_file_uri, uri_to_fs_path
+from core.path_utils import CURRENT_ENV, reverse_path_mapping, to_file_uri, uri_to_fs_path, uri_to_local_fs_path
+from core.readonly_producer import resolve_owning_output_root
 from core.scraper import extract_number, is_number_format
 
 logger = get_logger(__name__)
@@ -748,10 +749,13 @@ def post_user_tags(request: UserTagsRequest) -> dict:
     db_path = get_db_path()
     repo = VideoRepository(db_path)
 
+    config = load_config()
+    path_mappings = config.get("gallery", {}).get("path_mappings", {}) or {}
+
     # 0. 解析路徑 — 同時取得 canonical URI（DB key）+ local FS path（filesystem 操作）
     if not request.file_path:
         return {"success": False, "error": "file_path 不可為空"}
-    file_path, local_fs_path = _resolve_user_tag_paths(request.file_path)
+    file_path, local_fs_path = _resolve_user_tag_paths(request.file_path, path_mappings)
     if not file_path:
         return {"success": False, "error": "file_path 格式無效"}
 
@@ -804,15 +808,34 @@ def post_user_tags(request: UserTagsRequest) -> dict:
     if not updated:
         return {"success": False, "error": "DB 更新失敗"}
 
-    # 4. Surgical NFO update — 用 local_fs_path（WSL mapped mount 場景下與 DB key 不同）
+    # 4. Surgical NFO update — 唯讀來源改寫輸出夾那份，來源零寫入（CD-143-4）
     nfo_updated = False
-    try:
-        nfo_path = str(Path(local_fs_path).with_suffix(".nfo"))
-        nfo_updated = update_nfo_user_tags(nfo_path, merged_tags)
-    except Exception as e:
-        logger.warning("[user-tags] NFO 寫入失敗（忽略）: %s", e)
+    readonly_no_output = False
+    owning = resolve_owning_output_root(file_path, config)
+    if owning is not None:
+        if not video.output_dir:
+            # US1 樁列：從未成功 produce，輸出夾沒有任何東西（AC2-2b）
+            readonly_no_output = True
+        else:
+            try:
+                out_fs = Path(uri_to_local_fs_path(video.output_dir, path_mappings))
+                nfo_candidates = list(out_fs.glob("*.nfo"))
+                if len(nfo_candidates) == 1:
+                    nfo_updated = update_nfo_user_tags(str(nfo_candidates[0]), merged_tags)
+                else:
+                    # 理論上不會發生（full-mode produce 是 holistic，恰有一份 NFO）；
+                    # 防禦性 fallback，不 raise，走 AC2-2b 同款「不寫、回報未寫入」
+                    readonly_no_output = True
+            except Exception as e:
+                logger.warning("[user-tags] 唯讀輸出夾 NFO 寫入失敗（忽略）: %s", e)
+    else:
+        try:
+            nfo_path = str(Path(local_fs_path).with_suffix(".nfo"))
+            nfo_updated = update_nfo_user_tags(nfo_path, merged_tags)
+        except Exception as e:
+            logger.warning("[user-tags] NFO 寫入失敗（忽略）: %s", e)
 
-    return {"success": True, "user_tags": merged_tags, "nfo_updated": nfo_updated}
+    return {"success": True, "user_tags": merged_tags, "nfo_updated": nfo_updated, "readonly_no_output": readonly_no_output}
 
 
 @user_tags_router.get("/user-tags")
