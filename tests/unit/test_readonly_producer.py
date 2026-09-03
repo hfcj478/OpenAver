@@ -3480,7 +3480,7 @@ class TestProduceSourceExceptionDoesNotAbort:
         call_count = [0]
 
         def fake_write(movie_dir, meta_arg, fd_arg, src_path, cfg, cover_strategy=None,
-                      assets_mode='full', old_base='', strm_mappings_getter=None):
+                      assets_mode='full', old_base='', strm_mappings_getter=None, **kwargs):
             call_count[0] += 1
             if call_count[0] == 2:
                 raise OSError("disk full")
@@ -8042,3 +8042,97 @@ class TestResolveIngestPlanMakerNormalization:
         assert meta is not None
         assert meta['maker'] == 'S1'  # 1. maker 值變了
         assert requires_face_detection(meta['number'], meta['maker']) is False  # 2. 布林判定沒變
+
+
+# ---------------------------------------------------------------------------
+# TASK-143-T5: Readonly NFO user_tags threading
+# ---------------------------------------------------------------------------
+
+class TestWriteMovieAssetsUserTags:
+    def test_write_movie_assets_writes_user_tags_to_nfo(self, tmp_path):
+        from core.readonly_producer import _format_data, _write_movie_assets
+
+        movie_dir = tmp_path / "movie"
+        movie_dir.mkdir()
+        meta = {"number": "TEST-001", "title": "Test Title"}
+        config = {"external_manager": "off"}
+        fd = _format_data(meta, "/src/TEST-001.mp4", config)
+
+        _write_movie_assets(
+            str(movie_dir), meta, fd, "/src/TEST-001.mp4", config,
+            cover_strategy=("none",), user_tags=["★4"],
+        )
+
+        nfo_files = list(movie_dir.glob("*.nfo"))
+        assert len(nfo_files) == 1
+        content = nfo_files[0].read_text(encoding="utf-8")
+        assert "<user_tag>★4</user_tag>" in content
+
+    def test_write_movie_assets_default_user_tags_omits_tag_elements(self, tmp_path):
+        from core.readonly_producer import _format_data, _write_movie_assets
+
+        movie_dir = tmp_path / "movie_default"
+        movie_dir.mkdir()
+        meta = {"number": "TEST-002", "title": "Default Title"}
+        config = {"external_manager": "off"}
+        fd = _format_data(meta, "/src/TEST-002.mp4", config)
+
+        _write_movie_assets(
+            str(movie_dir), meta, fd, "/src/TEST-002.mp4", config,
+            cover_strategy=("none",),
+        )
+
+        nfo_files = list(movie_dir.glob("*.nfo"))
+        assert len(nfo_files) == 1
+        content = nfo_files[0].read_text(encoding="utf-8")
+        assert "<user_tag>" not in content
+
+
+class TestProduceOneUserTags:
+    def test_produce_one_passes_existing_user_tags_to_write_movie_assets(self, tmp_path):
+        from core.database import Video
+        from core.readonly_producer import _produce_one
+
+        output_root = tmp_path / "output"
+        output_root.mkdir()
+        file_info = {"path": "/src/TEST-001.mp4", "size": 1000, "mtime": 1.0}
+        meta = {"number": "TEST-001", "title": "Test"}
+        existing = Video(path="file:///src/TEST-001.mp4", number="TEST-001", title="Test", user_tags=["custom"])
+        repo = MagicMock()
+
+        with patch("core.readonly_producer._resolve_movie_dir",
+                   return_value=(tmp_path / "output" / "TEST-001", "file:///whatever-db-uri")), \
+             patch("core.readonly_producer._write_movie_assets",
+                   return_value={"nfo_mtime": 1.0, "cover_fs": "", "sample_fs": []}) as mock_write, \
+             patch("core.readonly_producer._upsert_db"):
+            _produce_one(
+                repo, None, {"scraper": {}},
+                file_info=file_info, meta=meta, cover_strategy=("none",),
+                assets_mode="full", existing=existing,
+                output_root=str(output_root), output_uri="file:///output",
+                allocated_this_run=set(), path_mappings={},
+            )
+        assert mock_write.call_args.kwargs["user_tags"] == ["custom"]
+
+    def test_produce_one_passes_empty_tags_when_existing_is_none(self, tmp_path):
+        from core.readonly_producer import _produce_one
+
+        output_root = tmp_path / "output"
+        output_root.mkdir()
+        file_info = {"path": "/src/TEST-001.mp4", "size": 1000, "mtime": 1.0}
+        meta = {"number": "TEST-001", "title": "Test"}
+        repo = MagicMock()
+
+        with patch("core.readonly_producer._resolve_movie_dir",
+                   return_value=(tmp_path / "output" / "TEST-001", "file:///whatever-db-uri")), \
+             patch("core.readonly_producer._write_movie_assets",
+                   return_value={"nfo_mtime": 1.0, "cover_fs": "", "sample_fs": []}) as mock_write, \
+             patch("core.readonly_producer._upsert_db"):
+            _produce_one(
+                repo, None, {"scraper": {}},
+                file_info=file_info, meta=meta, cover_strategy=("none",),
+                assets_mode="full", existing=None,
+                output_root=str(output_root), output_uri="file:///output",
+                allocated_this_run=set(), path_mappings={},
+            )
+        assert mock_write.call_args.kwargs["user_tags"] == []

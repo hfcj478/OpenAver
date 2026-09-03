@@ -1005,6 +1005,7 @@ def _write_movie_assets(
     assets_mode: str = 'full',
     old_base: str = '',
     strm_mappings_getter=None,
+    user_tags: Optional[list[str]] = None,
 ) -> dict:
     """Write nfo + cover + -poster/-fanart + extrafanart to movie_dir.
 
@@ -1199,6 +1200,7 @@ def _write_movie_assets(
         summary=meta.get('_summary', ''),
         rating=meta.get('_rating'),
         external_manager=external_manager,
+        user_tags=user_tags or [],
     )
     if not nfo_ok:
         raise RuntimeError(f"NFO write failed: {nfo_fs}")
@@ -1783,6 +1785,7 @@ def _produce_one(
         str(movie_dir), meta, fd, file_info["path"], config,
         cover_strategy=cover_strategy, assets_mode=assets_mode,
         old_base=old_base, strm_mappings_getter=strm_mappings_getter,
+        user_tags=(existing.user_tags if existing else []),
     )
     _upsert_db(
         repo, src_uri, file_info, meta, assets, path_mappings, output_dir_uri,
