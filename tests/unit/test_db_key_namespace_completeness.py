@@ -52,7 +52,8 @@ wrapper helper **本體**內部的 primitive sink（如 `_db_upsert` 內 `to_fil
 import ast
 from pathlib import Path
 
-EXCLUDE_PREFIXES = ("tests/", "archive/", "venv/", ".venv/", "build/", "node_modules/")
+# .claude/ 為本機 Claude Code session/worktree 目錄（於 .gitignore 排除，非產品程式碼）
+EXCLUDE_PREFIXES = ("tests/", "archive/", "venv/", ".venv/", "build/", "node_modules/", ".claude/")
 EXCLUDE_FILES = ("core/path_utils.py",)
 
 MARKER = "# db-ns-ok:"

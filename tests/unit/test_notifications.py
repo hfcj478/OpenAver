@@ -311,3 +311,58 @@ def test_start_notification_persistence_is_fail_soft(tmp_path, monkeypatch):
     assert any(
         n["title_key"] == "notif.fail_soft_probe" for n in notif_mod._notifications
     )
+
+
+def test_emit_notification_stays_memory_only_and_never_blocks(monkeypatch):
+    """DoD-2: emit_notification 必須維持「純記憶體」——這條路徑上一次 DB 連線都不准發生。
+
+    契約三件事，缺一不可：
+    1. **零 DB 連線**：整個呼叫期間 `sqlite3.connect` 的呼叫次數必須是 0。
+    2. **不卡**：呼叫耗時 < 0.1 秒。
+    3. **真的做了事**：那筆通知確實進了記憶體那一份。
+
+    ⚠️ **為什麼第 1 條是計數而不是「patch 成會拋、然後斷言沒拋」**（T8 review，grok 實測）：
+    `emit_notification()` 本身根本不碰 DB（寫入在背景 thread），所以把 `sqlite3.connect`
+    patch 成拋例外時，**那個 patch 在受測路徑上是死碼**——實測呼叫次數 0 ⇒
+    「沒有拋出來」是恆真的，什麼都沒證明。更糟的是它會誤導：把同步 `insert_notification`
+    搬回這條路徑的 mutation 之所以轉紅，是因為那個 patch **讓它拋了**，
+    不是因為耗時斷言——沒有 patch 時同步寫入只花約 40ms，`< 0.1s` 抓不住它。
+    而只要有人把同步寫入包進 `try/except` 吞掉，三條舊斷言就會**全綠**。
+
+    改成計數之後，「裸的同步寫入」與「包 try/except 吞掉的同步寫入」**兩種都擋得住**，
+    而且不依賴任何時間門檻。DB 真的鎖住時的存活由
+    `test_writer_thread_survives_db_locked_exception`（背景 thread 那條）負責，不在這裡重複。
+    """
+    import time
+    import uuid
+    from web.routers.notifications import emit_notification, _notifications
+
+    connect_calls = []
+    real_connect = sqlite3.connect
+
+    def _counting_connect(*args, **kwargs):
+        connect_calls.append(args[0] if args else None)
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr("sqlite3.connect", _counting_connect)
+
+    # 去重早退防呆（邊界條件②）：emit_notification() 對「同 title_key ＋ 同 message」
+    # 會提早 return，不走 appendleft／put_nowait。用唯一值確保走完整條路徑，
+    # 否則下面三條斷言都會在一個根本沒執行的路徑上假綠。
+    unique_key = f"notif.test_unique_{uuid.uuid4()}"
+    unique_msg = f"msg_{uuid.uuid4()}"
+
+    t0 = time.perf_counter()
+    emit_notification("info", unique_key, message=unique_msg)
+    elapsed = time.perf_counter() - t0
+
+    assert connect_calls == [], (
+        f"emit_notification 在呼叫端開了 DB 連線：{connect_calls!r}。"
+        "這條路徑必須維持純記憶體（appendleft ＋ put_nowait）——"
+        "一旦有人把同步 DB 寫入搬回來，批次補完 SSE 那條熱路徑會被 DB 鎖卡住。"
+    )
+    assert elapsed < 0.1, f"emit_notification 呼叫耗時過長：{elapsed:.4f}s >= 0.1s"
+    assert any(
+        n["title_key"] == unique_key and n["message"] == unique_msg
+        for n in _notifications
+    ), "通知沒有真的進到記憶體那一份（前兩條斷言在空操作上也會綠）"
