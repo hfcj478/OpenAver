@@ -172,3 +172,90 @@ class TestFavoriteScanParity:
         assert response["folder"] == str(tmp_path)
         assert response["total"] == 1
         assert str(video) in response["files"]
+
+
+class TestSingleFileErrorDoesNotKillTheRound:
+    """pre-merge SA-pre-9 P3-4：一個檔案問不到，不該讓整輪陣亡。
+
+    使用者流程：定時整理正在列檔，其中一個檔剛好讀不到（Windows 上被下載器獨佔、
+    NAS 那條連線正好斷了、下載器在這一瞬間把它搬走）→ 例外往外拋 → 整輪作廢 →
+    run-now 那輪變「定時整理失敗」、排程那輪直接跳過，**再等 12 小時**。
+    無人值守時這個代價不對等。
+
+    ⚠️ **`Path.is_file()` 只吞「可忽略」的 OSError**（ENOENT / ENOTDIR / ELOOP…，
+    見 CPython `pathlib._ignore_error`）——**PermissionError、EIO、ESTALE 會被它原樣往外拋**。
+    所以測「檔案不見了」抓不到這條守衛（`is_file()` 自己回 False 就跳過了，
+    第一版測試就是這樣寫的，mutation gate 當場判 SURVIVED）；
+    要行使它必須用**不可忽略**的錯誤，或打中 `is_file()` 與 `stat()` 之間那個窗口。
+    """
+
+    def test_unreadable_file_is_skipped_and_the_rest_still_listed(self, tmp_path, monkeypatch):
+        """不可忽略的 OSError（PermissionError）會穿過 `is_file()`——這條守衛要接住它。"""
+        folder = tmp_path / "fav"
+        folder.mkdir()
+        big = b"x" * (2 * 1024 * 1024)
+        (folder / "GOOD-001.mp4").write_bytes(big)
+        (folder / "LOCKED.mp4").write_bytes(big)
+        (folder / "GOOD-002.mp4").write_bytes(big)
+
+        config = {"scraper": {"video_extensions": [".mp4"]}, "gallery": {"min_size_mb": 1}}
+
+        real_stat = Path.stat
+
+        def flaky_stat(self, *a, **kw):
+            if self.name == "LOCKED.mp4":
+                raise PermissionError(13, "Permission denied", str(self))
+            return real_stat(self, *a, **kw)
+
+        monkeypatch.setattr(Path, "stat", flaky_stat)
+
+        names = sorted(Path(f).name for f in list_favorite_video_files(str(folder), config))
+        assert names == ["GOOD-001.mp4", "GOOD-002.mp4"], (
+            f"讀不到的那個檔跳過就好，其餘要照列，實際 {names}"
+        )
+
+    def test_file_vanishing_between_is_file_and_stat_is_skipped(self, tmp_path, monkeypatch):
+        """TOCTOU：`is_file()` 過了，量大小的時候檔案已經被下載器搬走。"""
+        folder = tmp_path / "fav"
+        folder.mkdir()
+        big = b"x" * (2 * 1024 * 1024)
+        (folder / "GOOD-001.mp4").write_bytes(big)
+        (folder / "VANISHING.mp4").write_bytes(big)
+
+        config = {"scraper": {"video_extensions": [".mp4"]}, "gallery": {"min_size_mb": 1}}
+
+        real_stat = Path.stat
+        seen = {}
+
+        def vanishing_stat(self, *a, **kw):
+            if self.name == "VANISHING.mp4":
+                # 第一次（is_file 問的那次）照常回答，第二次（量大小那次）才不見
+                if seen.get("n"):
+                    raise FileNotFoundError(2, "No such file or directory", str(self))
+                seen["n"] = 1
+            return real_stat(self, *a, **kw)
+
+        monkeypatch.setattr(Path, "stat", vanishing_stat)
+
+        names = sorted(Path(f).name for f in list_favorite_video_files(str(folder), config))
+        assert names == ["GOOD-001.mp4"], (
+            f"量大小時才消失的檔要跳過、不得讓整輪拋例外，實際 {names}"
+        )
+
+    def test_folder_level_permission_error_still_propagates(self, tmp_path, monkeypatch):
+        """反向鎖：資料夾層級的 PermissionError 不可以被那個 try 吞掉。
+
+        呼叫端（`get_favorite_files()`）要拿它組出「無權限讀取資料夾」的錯誤回應；
+        吞掉會讓那句話消失，使用者只看到一個空清單、不知道為什麼。
+        """
+        folder = tmp_path / "fav"
+        folder.mkdir()
+        config = {"scraper": {"video_extensions": [".mp4"]}, "gallery": {"min_size_mb": 0}}
+
+        def boom(self):
+            raise PermissionError(13, "Permission denied", str(self))
+
+        monkeypatch.setattr(Path, "iterdir", boom)
+
+        with pytest.raises(PermissionError):
+            list_favorite_video_files(str(folder), config)

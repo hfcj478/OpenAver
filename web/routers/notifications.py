@@ -69,7 +69,20 @@ def emit_notification(
         "task_type": task_type,
     }
     with _lock:
-        if any(n["title_key"] == title_key and n["message"] == message for n in _notifications):
+        # CD-144-2 的去重只比對**還沒被看過**的那幾筆。
+        # 「已讀」＝使用者打開過通知抽屜（base.html 的 toggleDrawer 會打
+        # POST /notifications/read 把當下全部標讀）——他已經看過這件事了，
+        # 同一件事再發生一次就是**新消息**，不是重複。
+        # 只比對記憶體 deque 會讓「定時整理失敗」這種每 12 小時重演一次的狀況
+        # 在使用者讀掉第一則之後**永遠不再出聲**：toast 說「已開始」、側欄什麼都沒有、
+        # 未讀角標也不亮，使用者以為排程在跑，其實每一輪都在失敗。
+        # 這樣改之後「連續相同狀況只發一次」仍然成立——未讀清單裡恆為一則。
+        if any(
+            n["title_key"] == title_key
+            and n["message"] == message
+            and n["id"] not in _read_ids
+            for n in _notifications
+        ):
             return
         if len(_notifications) == _notifications.maxlen:
             evicted = _notifications[-1]

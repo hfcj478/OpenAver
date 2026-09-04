@@ -83,22 +83,19 @@ def test_emit_evicts_orphan_read_id():
 
 
 def test_emit_notification_dedup_same_title_and_message():
-    """DoD-3 (M1): 同 title_key 且同 message 不重複寫入，時間戳與已讀狀態維持原樣。"""
+    """DoD-3 (M1): 同 title_key 且同 message 在**還沒被看過**之前不重複寫入。"""
     from web.routers.notifications import emit_notification, _notifications, _read_ids
     emit_notification("info", "notif.update_available", message="v1.0.0")
     assert len(_notifications) == 1
     first_id = _notifications[0]["id"]
     first_time = _notifications[0]["timestamp"]
 
-    # 標記為已讀
-    _read_ids.add(first_id)
-
-    # 連發相同 title_key 且相同 message
+    # 連發相同 title_key 且相同 message（都還沒讀過）→ 合併，時間戳不動
     emit_notification("info", "notif.update_available", message="v1.0.0")
     assert len(_notifications) == 1
     assert _notifications[0]["id"] == first_id
     assert _notifications[0]["timestamp"] == first_time
-    assert first_id in _read_ids
+    assert first_id not in _read_ids
 
     # 同 title_key 但不同 message → 應新增第二筆
     emit_notification("info", "notif.update_available", message="v1.0.1")
@@ -530,3 +527,53 @@ def test_stop_notification_persistence_is_bounded_by_its_timeout(tmp_path, monke
         stuck.join(timeout=2)
         with notif_mod._write_queue.mutex:
             notif_mod._write_queue.queue.clear()
+
+
+def test_read_notification_does_not_silence_the_next_occurrence():
+    """pre-merge SA-pre-9 P2-2：使用者看過之後，同一件事再發生要重新出聲。
+
+    使用者流程：開著定時整理 → 第一次失敗，側欄出現一則紅色「定時整理失敗」→
+    使用者打開通知抽屜（`base.html` 的 toggleDrawer 會 POST /notifications/read
+    把當下全部標讀）→ 之後每 12 小時又失敗一次，但去重只比對記憶體 deque
+    ⇒ **側欄再也不出現任何東西、未讀角標也不亮**，使用者以為排程在跑，
+    其實幾週來一部片都沒整理到。
+
+    這支釘的就是「已讀之後不再被去重吃掉」。
+    """
+    from web.routers.notifications import emit_notification, _notifications, _read_ids
+
+    emit_notification("error", "notif.auto_organize_failed", message="")
+    assert len(_notifications) == 1
+    first_id = _notifications[0]["id"]
+
+    # 使用者打開抽屜 → 全部標讀
+    _read_ids.add(first_id)
+
+    # 12 小時後同一件事再發生
+    emit_notification("error", "notif.auto_organize_failed", message="")
+
+    assert len(_notifications) == 2, (
+        "已讀之後同內容再發生必須新增一筆，否則背景失敗會永遠靜默"
+    )
+    newest = _notifications[0]
+    assert newest["id"] != first_id
+    assert newest["id"] not in _read_ids, "新那筆必須是未讀，未讀角標才會亮"
+
+
+def test_dedup_still_applies_when_an_unread_copy_exists_among_read_ones():
+    """反向鎖：deque 裡同時有已讀與未讀的同內容時，仍然不得再新增。
+
+    只寫上面那支的話，把去重整段刪掉也會綠。這支保證「未讀清單裡恆為一則」
+    ——spec §F5「連續相同狀況只發一次」那半沒有被這次修改弄壞。
+    """
+    from web.routers.notifications import emit_notification, _notifications, _read_ids
+
+    emit_notification("error", "notif.auto_organize_failed", message="")
+    _read_ids.add(_notifications[0]["id"])          # 第一則：已讀
+    emit_notification("error", "notif.auto_organize_failed", message="")   # 第二則：未讀
+    assert len(_notifications) == 2
+
+    emit_notification("error", "notif.auto_organize_failed", message="")   # 第三次
+    assert len(_notifications) == 2, (
+        "已經有一則未讀的同內容通知在了，不得再堆第二則未讀"
+    )

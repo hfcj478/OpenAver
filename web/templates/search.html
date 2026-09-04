@@ -524,10 +524,14 @@
                         </div>
                         <p class="auto-organize-panel__path" x-text="displayFolderPath()"></p>
                         <p class="auto-organize-panel__warning" x-text="window.t('search.auto_organize.folder_warning')">{{ t('search.auto_organize.folder_warning') }}</p>
-                        {# 這一列用 x-show，**不可以**用 x-if：x-if 會在 folderIsSet 變 true 的當下
-                           把按鈕從 DOM 拔掉，而 @click.outside 是靠 panel.contains(event.target)
-                           判斷的——目標元素已經不在 DOM 裡 ⇒ contains 回 false ⇒ 被當成「點到面板外面」
-                           ⇒ 整個面板關掉。實測：按下「就用這個資料夾」後面板消失，而 D4 要的是就地解鎖。 #}
+                        {# 這一列用 x-show，不要改回 x-if：x-if 會在 folderIsSet 變 true 的當下把整列
+                           從 DOM 拔掉，面板高度當場縮一截——使用者剛按下去的那個位置變成「面板外面」，
+                           下一下點擊就會被 @click.outside 收走。x-show 只切 display，節點留在樹上。
+                           ⚠️ 別把這裡寫成「x-if 拔掉 target ⇒ contains 回 false ⇒ 判成點在外面」——
+                           那個直覺解釋是**錯的**，vendor/alpine/alpine.min.js 的 outside handler 有
+                           `l.target.isConnected !== !1` 守衛，已經脫離文件樹的 target **不會**觸發它；
+                           而且 useResolvedFolder() 是 async，狀態要等 fetch 回來才變，那一下的
+                           outside 判定早就跑完了。詳見 gotchas-frontend.md 的 FE-ALPINE-16。 #}
                         <div class="auto-organize-panel__row" x-show="!folderIsSet">
                             <button type="button" class="btn btn-sm btn-outline"
                                     @click="useResolvedFolder()"

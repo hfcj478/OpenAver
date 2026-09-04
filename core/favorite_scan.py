@@ -34,12 +34,26 @@ def list_favorite_video_files(folder: str, config: dict) -> list:
 
     files = []
     for f in folder_path.iterdir():
-        if not f.is_file():
-            continue
-        if f.suffix.lower() not in video_exts:
-            continue
-        suffix = f.suffix.lower()
-        if min_size_bytes > 0 and suffix not in ZERO_SIZE_EXTENSIONS and f.stat().st_size < min_size_bytes:
+        # 單一檔案問不到就跳過它，不讓整輪陣亡。無人值守時代價不對等：
+        # 這一輪整個作廢，排程要再等 12 小時（run-now 則變成一則「定時整理失敗」）。
+        #
+        # 這個 try 實際接住的是兩種情況——**不是**「檔案不見了」（那個 is_file() 自己就吞了）：
+        #   ① `Path.is_file()` 只吞「可忽略」的 OSError（ENOENT/ENOTDIR/ELOOP…，見 CPython
+        #      pathlib._ignore_error）；**PermissionError／EIO／ESTALE 會被它原樣往外拋**
+        #      ——Windows 上被下載器獨佔的檔、NAS 那條連線正好斷掉的檔都走這條。
+        #   ② is_file() 與下面量大小那次 stat() 之間的窗口：過了第一關才被下載器搬走。
+        #
+        # 資料夾層級的 PermissionError 不受影響——那是 iterdir() 自己在 for 那一行拋的，
+        # 落不進這個 try，呼叫端照樣組得出「無權限讀取資料夾」的錯誤回應（有反向鎖守著）。
+        try:
+            if not f.is_file():
+                continue
+            if f.suffix.lower() not in video_exts:
+                continue
+            suffix = f.suffix.lower()
+            if min_size_bytes > 0 and suffix not in ZERO_SIZE_EXTENSIONS and f.stat().st_size < min_size_bytes:
+                continue
+        except OSError:
             continue
         files.append(str(f))
     return files

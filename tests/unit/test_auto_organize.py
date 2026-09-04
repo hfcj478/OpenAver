@@ -28,6 +28,18 @@ def isolated_db(tmp_path, monkeypatch):
     return db_path
 
 
+@pytest.fixture(autouse=True)
+def stub_inflow(mocker):
+    """整輪成功分支會呼叫 `try_inflow_upsert`（pre-merge SA-pre-9 P2-1）。
+
+    本檔既有測試一律 mock 掉 `organize_file`，`new_filename` 是假路徑，真的讓
+    `try_inflow_upsert` 跑起來只會讀一次真實 `config.json` 再回 `"not_linked"`——
+    沒有寫入風險但是無謂的 I/O 與對使用者環境的耦合。統一 stub 掉，
+    要驗它有沒有被呼叫的測試自己拿這個 mock。
+    """
+    return mocker.patch("core.auto_organize.try_inflow_upsert", return_value="not_linked")
+
+
 def make_config(fav_dir, translate_enabled=False, path_mappings=None, directories=None):
     return {
         "search": {"favorite_folder": str(fav_dir)},
@@ -520,3 +532,81 @@ class TestClearOnSuccess:
             "成功入庫之後那筆『查無結果』的記憶必須被刪掉，"
             "否則接下來最長 7 天，這部已經在片庫裡的片還會被當成『查過沒結果』跳過"
         )
+
+
+class TestInflowUpsertOnSuccess:
+    """pre-merge SA-pre-9 P2-1：自動整理成功的片必須跟手動整理一樣進 DB。
+
+    少了這一步，使用者流程是：最愛資料夾同時也是掃描頁追蹤的來源之一 → 定時整理
+    跑完，側欄說「新增 3 部」→ 打開瀏覽頁，**那 3 部不在**，要再跑一次掃描才出現；
+    而且迴圈結束那次 `reconcile_wishlist()` 走 `VideoRepository.get_by_numbers`，
+    查不到剛整理好的片 ⇒ spec §F5「自動入庫的片同輪從書籤消失」永遠不成立。
+    """
+
+    def test_success_calls_inflow_with_new_path_and_old_path(
+        self, tmp_path, isolated_db, mocker, stub_inflow
+    ):
+        fav = tmp_path / "fav"
+        fav.mkdir()
+        src = write_video(fav, "ABC-123.mp4")
+        config = make_config(fav)
+
+        mocker.patch("core.auto_organize.smart_search",
+                     return_value=[{"number": "ABC-123", "title": "T"}])
+        organized = default_organize_success()
+        organized["new_filename"] = str(tmp_path / "lib" / "ABC-123" / "ABC-123.mp4")
+        mocker.patch("core.auto_organize.organize_file", return_value=organized)
+        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
+
+        result = run_one_round(config)
+
+        assert result["added"] == ["ABC-123"]
+        stub_inflow.assert_called_once()
+        # 位置參數是整理**後**的路徑、`old_file_path` 是整理**前**的路徑——
+        # 兩者都要對，`old_file_path` 是 repath 的依據（帶錯 DB 會多出一列孤兒，
+        # 而不是把舊那列原地更新，使用者會在瀏覽頁看到同一部片兩張卡）。
+        args, kwargs = stub_inflow.call_args
+        assert args[0] == organized["new_filename"], (
+            f"要拿整理後的新路徑去 upsert，實際拿到 {args[0]!r}"
+        )
+        assert kwargs.get("old_file_path") == str(src), (
+            f"old_file_path 要是整理前的原始路徑（repath 依據），實際 {kwargs.get('old_file_path')!r}"
+        )
+
+    def test_duplicate_and_failed_do_not_call_inflow(self, tmp_path, isolated_db, mocker, stub_inflow):
+        """只有真的搬成功才進 DB。撞名（檔沒動）與失敗（檔沒動）都不能寫。"""
+        fav = tmp_path / "fav"
+        fav.mkdir()
+        write_video(fav, "DUP-001.mp4")
+        write_video(fav, "BAD-002.mp4")
+        config = make_config(fav)
+
+        mocker.patch("core.auto_organize.smart_search",
+                     side_effect=lambda number, *a, **kw: [{"number": number, "title": "T"}])
+        mocker.patch("core.auto_organize.organize_file", side_effect=lambda path, *a, **kw: (
+            {"duplicate": True, "duplicate_target": "other.mp4"}
+            if "DUP-001" in path else {"success": False, "error": "boom"}
+        ))
+        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
+
+        run_one_round(config)
+
+        stub_inflow.assert_not_called()
+
+    def test_missing_new_filename_does_not_call_inflow(self, tmp_path, isolated_db, mocker, stub_inflow):
+        """`organize_file` 回了 success 卻沒帶 new_filename 時不要拿 None 去 upsert。"""
+        fav = tmp_path / "fav"
+        fav.mkdir()
+        write_video(fav, "ABC-123.mp4")
+        config = make_config(fav)
+
+        mocker.patch("core.auto_organize.smart_search",
+                     return_value=[{"number": "ABC-123", "title": "T"}])
+        organized = default_organize_success()
+        organized["new_filename"] = ""
+        mocker.patch("core.auto_organize.organize_file", return_value=organized)
+        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
+
+        run_one_round(config)
+
+        stub_inflow.assert_not_called()

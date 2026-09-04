@@ -10,6 +10,7 @@ import os
 from typing import Callable, Optional
 
 from core.database import organize_failures
+from core.db_inflow import try_inflow_upsert
 from core.favorite_scan import detect_nfo, list_favorite_video_files, resolve_favorite_folder
 from core.organizer import extract_chinese_title, organize_file
 from core.path_utils import coerce_to_file_uri
@@ -112,6 +113,15 @@ def run_one_round(
             skipped_duplicate.append({"number": number, "target": target})
         elif organize_result.get('success'):
             organize_failures.clear_on_success(number)
+            # in-flow upsert：與手動整理（web/routers/scraper.py:276）同一個動作。
+            # 少了這一行，自動整理成功的片**不會進 DB**——瀏覽頁看不到它、
+            # 迴圈結束那次 reconcile_wishlist() 也查不到它（對帳走
+            # VideoRepository.get_by_numbers），spec §F5「自動入庫的片同輪從書籤消失」
+            # 因此永遠不成立。try_inflow_upsert 自帶 try/except、回字串不拋，
+            # 不在 Scanner 追蹤夾內時靜默回 "not_linked"。
+            target_file = organize_result.get('new_filename')
+            if target_file:
+                try_inflow_upsert(target_file, old_file_path=path)
             if organize_result.get('cover_path'):
                 added.append(number)
             else:
