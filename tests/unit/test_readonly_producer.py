@@ -7396,6 +7396,23 @@ class TestReadonlyStubNotFound:
         assert inserted.output_dir == ''
         assert inserted.sample_images == []
 
+    def test_empty_number_normalized_to_null(self):
+        """空字串 number → 寫 NULL（AC1-5：一般掃描寫的就是 `info.num or None`）。
+
+        這條守的是 **S1 那條路**（`enrich_one_readonly` → `request.number`，型別是
+        未經非空檢查的 `str`）；S3（`produce_source`）的 number 來自 `extract_number()`，
+        它已經回 None，所以走掃描的 e2e **殺不掉這顆 mutation**（等價突變，見
+        gotchas BE-TEST-30）。正規化寫在 helper 本體，這支就是它的正向鎖。
+        """
+        from core.readonly_producer import _readonly_stub_not_found
+
+        repo = MagicMock()
+        _readonly_stub_not_found(repo, "file:///src/videos/x.mp4", "", "/src/videos/x.mp4")
+
+        inserted = repo.insert_if_ignore.call_args[0][0]
+        assert inserted.number is None, "空字串必須正規化成 NULL，不是原樣寫進去"
+        assert inserted.title == "x"
+
     def test_uri_consistency_between_insert_and_update(self):
         """The uri passed to insert_if_ignore's Video.path must be the exact
         same value passed as update_scrape_attempted_at's first positional

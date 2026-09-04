@@ -52,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **搜尋頁的三個檔名解析入口仍用舊的那張表**（`/scrape-single`、`/parse-filename`、標籤端點的建列），本版不動——改它們會牽動搜尋頁的行為，不在這支的範圍內。
 - **對 AI 助理的能力說明只補了自訂標籤那一格**（新增「這次沒有任何 NFO 被更新」的回報欄位），唯讀重刮的 `readonly_action` 欄位仍未揭露。
 
-測試數 pytest 8078、npm test 1542。
+測試數 pytest 8080、npm test 1542。
 
 ## [0.15.11] - 2026-09-03
 

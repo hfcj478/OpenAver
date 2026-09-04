@@ -73,8 +73,20 @@ _FAKE_IMG_BYTES = b"\xff\xd8\xff\xe0FAKE-IMG"
 # acceptance assertions meaningful (card §"mock 必須寫真檔").
 # ---------------------------------------------------------------------------
 
+# 番號以此為前綴 → _fake_search_jav 回 None（＝線上查不到）。
+# spec-143 §3.1 那張表有兩列「刮不到」的樁列，要在測試裡分得出來就需要一個
+# 「抽得出番號、但查不到」的形狀；真機實測用的是 `TEST-1234.mp4`（`TEST-123456`
+# 反而抽不出番號——NUM_PATTERNS 不收 6 位數尾碼，那是另一列）。
+_UNSCRAPEABLE_PREFIX = "NOHIT-"
+
+
 def _fake_search_jav(number, source="auto", proxy_url="", javbus_lang=None):
-    """Return a scraped-meta dict per number. NO network."""
+    """Return a scraped-meta dict per number. NO network.
+
+    `NOHIT-*` 回 None ＝ 線上查不到（樁列那條路）。
+    """
+    if number and str(number).startswith(_UNSCRAPEABLE_PREFIX):
+        return None
     return {
         "number": number,
         "title": f"Title {number}",
@@ -1315,3 +1327,76 @@ class TestUriSourcePathIdempotent:
         outside.write_bytes(_FAKE_COVER_BYTES)
         r403 = client.get("/api/gallery/image", params={"path": str(outside)})
         assert r403.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# spec-143 §3.1（US1）：唯讀來源列舉到的每個影片檔一律建列，刮不到也要留下卡片。
+#
+# 這支的存在理由（pre-merge 2026-09-04）：T1／T2 的驗收當時是「開瀏覽器點一次」，
+# 不可重複執行、別人改壞也不會轉紅。真機實測（D:\123 放三個一定刮不到的檔）證明
+# 行為是對的之後，把那一趟的斷言寫成自動化——**特別是最後一格「那一列真的從
+# /api/showcase/videos 回得來」，那才是使用者說的「有沒有卡片」**，而整套測試在
+# 此之前沒有任何一支斷言過它。
+# ---------------------------------------------------------------------------
+
+def test_us1_unscrapeable_files_get_rows_and_reach_showcase(
+    tmp_path, monkeypatch, client, parse_sse_events
+):
+    """刮不到的兩種形狀都要建列、形狀與一般掃描一致、來源零寫入、且進得了 showcase。
+
+    | 檔名 | 期望 number | 期望 title | 對應 spec §3.1 表格 |
+    |---|---|---|---|
+    | `NOHIT-1234.mp4` | `NOHIT-1234` | `NOHIT-1234` | 檔名**有**番號、刮不到 |
+    | `測試影片無番號-5566.mp4` | **NULL** | `測試影片無番號-5566` | 檔名**無**番號 |
+
+    AC1-5 要的是 NULL 不是空字串（一般掃描寫的就是 `info.num or None`）；
+    title 不含副檔名。
+    """
+    from core.database import VideoRepository
+
+    src = _make_source_dir(tmp_path, "ro_src", ["NOHIT-1234", "測試影片無番號-5566"])
+    db_path = tmp_path / "test.db"
+    config = _make_config(
+        [{"path": str(src), "readonly": True, "output_path": ""}],
+        tmp_path / "out.html",
+    )
+    _wire(monkeypatch, config, db_path)
+    # showcase 端點自己 import 了 get_db_path / load_config，跟 scanner 那份不同一個
+    # landing point，不一起 patch 就會去讀使用者真實的 output/openaver.db。
+    monkeypatch.setattr("web.routers.showcase.get_db_path", lambda: db_path)
+    monkeypatch.setattr("web.routers.showcase.load_config", lambda: config)
+
+    before = _snapshot(src)
+    events = _run_generate(client, parse_sse_events)
+    after = _snapshot(src)
+
+    # ① 來源夾逐位元組不變（唯讀來源的承重牆）
+    assert after == before, "唯讀來源資料夾不得被寫入"
+
+    # ② 兩個檔都被算成「刮不到」，不是被當成成功
+    stats = _done_event(events)["readonly_stats"]
+    assert stats["no_scrape"] == 2, stats
+    assert stats["created"] == 0, stats
+
+    # ③ DB 兩列都在，且形狀與一般掃描一致
+    rows = {v.path: v for v in VideoRepository(db_path).get_all()}
+    assert len(rows) == 2, list(rows)
+    numbered = rows[to_file_uri(str(src / "NOHIT-1234.mp4"), {})]   # db-ns-ok: 測試斷言用 key
+    unnumbered = rows[to_file_uri(str(src / "測試影片無番號-5566.mp4"), {})]  # db-ns-ok: 同上
+
+    assert numbered.number == "NOHIT-1234"
+    assert numbered.title == "NOHIT-1234"
+    assert unnumbered.number is None, "AC1-5：抽不出番號時是 NULL，不是空字串"
+    assert unnumbered.title == "測試影片無番號-5566", "標題用不含副檔名的檔名"
+    # 樁列必須留下「已嘗試時間」，否則 prune 的候選條件認不得它（AC1-4）
+    assert numbered.scrape_attempted_at > 0
+    assert unnumbered.scrape_attempted_at > 0
+
+    # ④ ★ 真的看得到卡片 —— 使用者要的那一格
+    resp = client.get("/api/showcase/videos")
+    assert resp.status_code == 200
+    shown = {v["path"]: v for v in resp.json()["videos"]}
+    assert set(shown) == set(rows), "兩張卡都要出現在瀏覽頁"
+    assert shown[unnumbered.path]["title"] == "測試影片無番號-5566"
+    assert shown[unnumbered.path]["number"] == ""      # 序列化層把 NULL 轉成空字串
+    assert shown[unnumbered.path]["has_cover"] is False  # 破圖預設卡，⚙ 有地方長

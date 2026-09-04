@@ -10,10 +10,7 @@ from pathlib import Path
 import pytest
 from core.database import VideoRepository as RealRepo, init_db
 from core.path_utils import uri_to_local_fs_path
-from tests.integration.test_user_tags_api import TestT4ReadonlyUserTags
-
-# Prevent pytest from collecting tests from the imported helper class
-TestT4ReadonlyUserTags.__test__ = False
+from tests.integration.test_user_tags_api import setup_readonly_user_tags_env
 
 
 @pytest.fixture
@@ -26,7 +23,7 @@ def tmp_db(tmp_path):
 
 class TestReadonlyTagsSurviveRescrape:
     def test_readonly_tags_survive_rescrape(self, tmp_db, tmp_path, monkeypatch):
-        client, src_dir, out_dir, file_uri = TestT4ReadonlyUserTags()._setup_readonly(
+        client, src_dir, out_dir, file_uri = setup_readonly_user_tags_env(
             tmp_db, tmp_path, monkeypatch, with_source_nfo=False, with_output_nfo=True
         )
 

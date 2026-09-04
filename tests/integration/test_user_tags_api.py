@@ -601,56 +601,67 @@ _MINIMAL_NFO = b"""<?xml version='1.0' encoding='utf-8'?>
 """
 
 
+def setup_readonly_user_tags_env(tmp_db, tmp_path, monkeypatch, *,
+                                 with_source_nfo=True, with_output_nfo=True,
+                                 output_dir_empty=False, extra_output_nfos=0):
+    """建唯讀來源 + 可選輸出夾，回傳 (client, src_dir, out_dir, file_uri)。
+
+    **模組層函式，不是測試 class 的方法**（Codex PR #179 P1）：環境準備一旦寫成
+    class 的 method，別的測試檔要借用就得把整個 `Test*` class import 過去，於是又得
+    想辦法阻止 pytest 重複收集它——而「改那個 class 的 `__test__` 屬性」是**全域改動**：
+    一旦兩邊的模組身分合而為一（例如有人補了 `tests/integration/__init__.py`），
+    原始檔那幾支測試會整組靜默不被收集。純函式沒有這個攻擊面：名字不以 Test 開頭，
+    pytest 根本不會看它。同 `test_readonly_offflavor_e2e.py` 的既有慣例
+    （`_make_source_dir` / `_make_config` / `_wire` / `_snapshot` 全是模組層函式）。
+    """
+    from web.routers import collection as collection_mod
+    from web.app import app
+    from core.database import Video, VideoRepository
+
+    src_dir = tmp_path / "ro_src"
+    src_dir.mkdir()
+    mp4 = src_dir / "TEST-001.mp4"
+    mp4.write_bytes(b"fake-video")
+    if with_source_nfo:
+        (src_dir / "TEST-001.nfo").write_bytes(_MINIMAL_NFO)
+
+    out_dir = None
+    output_dir_uri = ""
+    if not output_dir_empty:
+        out_dir = tmp_path / "ro_out" / "TEST-001"
+        out_dir.mkdir(parents=True)
+        if with_output_nfo:
+            (out_dir / "TEST-001.nfo").write_bytes(_MINIMAL_NFO)
+        for i in range(extra_output_nfos):
+            (out_dir / f"extra-{i}.nfo").write_bytes(_MINIMAL_NFO)
+        output_dir_uri = to_file_uri(str(out_dir))
+
+    file_uri = to_file_uri(str(mp4))
+    repo = VideoRepository(tmp_db)
+    repo.upsert(Video(
+        path=file_uri,
+        number="TEST-001",
+        title="TEST-001",
+        output_dir=output_dir_uri,
+        user_tags=[],
+    ))
+
+    fake_config = {
+        "gallery": {
+            "directories": [{"path": str(src_dir), "readonly": True, "output_path": ""}],
+            "path_mappings": {},
+        },
+        "scraper": {},
+    }
+    monkeypatch.setattr(collection_mod, "load_config", lambda: fake_config)
+    monkeypatch.setattr("web.routers.collection.get_db_path", lambda: tmp_db)
+
+    return TestClient(app), src_dir, out_dir, file_uri
+
+
 class TestT4ReadonlyUserTags:
     """TASK-143-T4: 唯讀來源加／刪標籤 → 改寫輸出夾 NFO，來源零寫入。"""
 
-    def _setup_readonly(self, tmp_db, tmp_path, monkeypatch, *,
-                        with_source_nfo=True, with_output_nfo=True,
-                        output_dir_empty=False, extra_output_nfos=0):
-        """建唯讀來源 + 可選輸出夾，回傳 (client, src_dir, out_dir, file_uri)。"""
-        from web.routers import collection as collection_mod
-        from web.app import app
-        from core.database import Video, VideoRepository
-
-        src_dir = tmp_path / "ro_src"
-        src_dir.mkdir()
-        mp4 = src_dir / "TEST-001.mp4"
-        mp4.write_bytes(b"fake-video")
-        if with_source_nfo:
-            (src_dir / "TEST-001.nfo").write_bytes(_MINIMAL_NFO)
-
-        out_dir = None
-        output_dir_uri = ""
-        if not output_dir_empty:
-            out_dir = tmp_path / "ro_out" / "TEST-001"
-            out_dir.mkdir(parents=True)
-            if with_output_nfo:
-                (out_dir / "TEST-001.nfo").write_bytes(_MINIMAL_NFO)
-            for i in range(extra_output_nfos):
-                (out_dir / f"extra-{i}.nfo").write_bytes(_MINIMAL_NFO)
-            output_dir_uri = to_file_uri(str(out_dir))
-
-        file_uri = to_file_uri(str(mp4))
-        repo = VideoRepository(tmp_db)
-        repo.upsert(Video(
-            path=file_uri,
-            number="TEST-001",
-            title="TEST-001",
-            output_dir=output_dir_uri,
-            user_tags=[],
-        ))
-
-        fake_config = {
-            "gallery": {
-                "directories": [{"path": str(src_dir), "readonly": True, "output_path": ""}],
-                "path_mappings": {},
-            },
-            "scraper": {},
-        }
-        monkeypatch.setattr(collection_mod, "load_config", lambda: fake_config)
-        monkeypatch.setattr("web.routers.collection.get_db_path", lambda: tmp_db)
-
-        return TestClient(app), src_dir, out_dir, file_uri
 
     def test_ac2_1_source_nfo_untouched_output_nfo_gets_tag(
         self, tmp_db, tmp_path, monkeypatch
@@ -658,7 +669,7 @@ class TestT4ReadonlyUserTags:
         """AC2-1: 來源有 NFO → 來源雜湊不變；輸出夾 NFO 帶新標籤。"""
         from test_readonly_offflavor_e2e import _snapshot
 
-        client, src_dir, out_dir, file_uri = self._setup_readonly(
+        client, src_dir, out_dir, file_uri = setup_readonly_user_tags_env(
             tmp_db, tmp_path, monkeypatch,
             with_source_nfo=True, with_output_nfo=True,
         )
@@ -684,7 +695,7 @@ class TestT4ReadonlyUserTags:
 
     def test_ac2_2_no_source_nfo_output_updated(self, tmp_db, tmp_path, monkeypatch):
         """AC2-2: 來源無 NFO、輸出夾有 → 改寫輸出夾 NFO。"""
-        client, src_dir, out_dir, file_uri = self._setup_readonly(
+        client, src_dir, out_dir, file_uri = setup_readonly_user_tags_env(
             tmp_db, tmp_path, monkeypatch,
             with_source_nfo=False, with_output_nfo=True,
         )
@@ -710,7 +721,7 @@ class TestT4ReadonlyUserTags:
         from core.database import VideoRepository
         from unittest.mock import patch
 
-        client, _src_dir, _out_dir, file_uri = self._setup_readonly(
+        client, _src_dir, _out_dir, file_uri = setup_readonly_user_tags_env(
             tmp_db, tmp_path, monkeypatch,
             output_dir_empty=True,
         )
@@ -740,7 +751,7 @@ class TestT4ReadonlyUserTags:
         """防禦性：輸出夾多份 .nfo → 不猜、回報未寫入、既有 NFO 不變。"""
         from test_readonly_offflavor_e2e import _snapshot
 
-        client, _src_dir, out_dir, file_uri = self._setup_readonly(
+        client, _src_dir, out_dir, file_uri = setup_readonly_user_tags_env(
             tmp_db, tmp_path, monkeypatch,
             with_source_nfo=True, with_output_nfo=True, extra_output_nfos=1,
         )
@@ -768,7 +779,7 @@ class TestT4ReadonlyUserTags:
         warning、回 readonly_no_output:false ⇒ **畫面上一則提示都沒有**，使用者以為
         Jellyfin 待會就看得到。那正是 spec-143 §3.2 要消滅的靜默失敗，只是從例外路徑復活。
         """
-        client, _src_dir, _out_dir, file_uri = self._setup_readonly(
+        client, _src_dir, _out_dir, file_uri = setup_readonly_user_tags_env(
             tmp_db, tmp_path, monkeypatch,
             with_source_nfo=False, with_output_nfo=True,
         )
