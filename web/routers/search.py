@@ -731,24 +731,14 @@ def get_favorite_files() -> dict:
         }
     """
     from core.config import load_config
-    from core.path_utils import expand_env_vars, get_environment
+    from core.favorite_scan import list_favorite_video_files, resolve_favorite_folder
 
     config = load_config()
     original_folder = config.get('search', {}).get('favorite_folder', '').strip()
 
     # 處理資料夾路徑
     try:
-        if not original_folder:
-            # 空字串 = 使用系統下載資料夾
-            if get_environment() == 'wsl':
-                # WSL 環境：使用 Windows 下載資料夾
-                folder = expand_env_vars('%USERPROFILE%\\Downloads')
-            else:
-                # 其他環境：使用本地 home 下載資料夾
-                folder = str(Path.home() / "Downloads")
-        else:
-            # 使用 expand_env_vars 處理環境變數並轉換路徑
-            folder = expand_env_vars(original_folder)
+        folder = resolve_favorite_folder(config)
     except ValueError as e:
         logger.error("路徑轉換失敗: %s", e)
         return {
@@ -765,23 +755,9 @@ def get_favorite_files() -> dict:
             "folder": original_folder or folder
         }
 
-    # 過濾設定
-    video_exts = get_video_extensions(config)
-    min_size_mb = config.get("gallery", {}).get("min_size_mb", 0)
-    min_size_bytes = min_size_mb * 1024 * 1024
-
     # 掃描資料夾（不遞迴，只掃描第一層）
-    files = []
     try:
-        for f in folder_path.iterdir():
-            if not f.is_file():
-                continue
-            if f.suffix.lower() not in video_exts:
-                continue
-            suffix = f.suffix.lower()
-            if min_size_bytes > 0 and suffix not in ZERO_SIZE_EXTENSIONS and f.stat().st_size < min_size_bytes:
-                continue
-            files.append(str(f))
+        files = list_favorite_video_files(folder, config)
     except PermissionError:
         return {
             "success": False,
@@ -827,6 +803,7 @@ def _filter_files_sync(paths: list) -> dict:
     整段同步阻塞 I/O，由 filter_files 經 await asyncio.to_thread 移出 event loop。
     """
     from core.config import load_config
+    from core.favorite_scan import detect_nfo
     from core.path_utils import normalize_path
 
     # 載入設定
@@ -835,10 +812,9 @@ def _filter_files_sync(paths: list) -> dict:
     min_size_mb = config.get("gallery", {}).get("min_size_mb", 0)
     min_size_bytes = min_size_mb * 1024 * 1024
 
-    filtered = []
     # P2-T6: inaccessible 桶＝無讀權限（PermissionError）＋未掛載/UNC（啟發式），與 not_found 分流
     rejected = {"extension": 0, "size": 0, "not_found": 0, "inaccessible": 0}
-    nfo_stem_cache: dict = {}
+    candidates = []  # [(original_path, normalized_path), ...]，保留原始迭代順序
 
     for original_path in paths:
         # 轉換路徑格式（Windows -> WSL）
@@ -871,21 +847,14 @@ def _filter_files_sync(paths: list) -> dict:
                 rejected["size"] += 1
                 continue
 
-        # NFO 同 stem 偵測（case-insensitive，父目錄 listing cache）
-        parent = p.parent
-        if parent not in nfo_stem_cache:
-            try:
-                nfo_stem_cache[parent] = {
-                    s.stem.lower()
-                    for s in parent.iterdir()
-                    if s.suffix.lower() == ".nfo" and s.is_file()
-                }
-            except (OSError, PermissionError):
-                nfo_stem_cache[parent] = set()
-        has_nfo = p.stem.lower() in nfo_stem_cache[parent]
+        candidates.append((original_path, path))
 
-        # 保留原始路徑（前端需要），帶 has_nfo 欄位
-        filtered.append({"path": original_path, "has_nfo": has_nfo})
+    # NFO 同 stem 偵測（case-insensitive，批次一次算完，父目錄 listing cache 才有效）
+    nfo_map = detect_nfo([path for _, path in candidates])
+    filtered = [
+        {"path": original_path, "has_nfo": nfo_map.get(path, False)}
+        for original_path, path in candidates
+    ]
 
     return {
         "success": True,
