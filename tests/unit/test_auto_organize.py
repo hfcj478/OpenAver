@@ -40,8 +40,9 @@ def stub_inflow(mocker):
     return mocker.patch("core.auto_organize.try_inflow_upsert", return_value="not_linked")
 
 
-def make_config(fav_dir, translate_enabled=False, path_mappings=None, directories=None):
-    return {
+def make_config(fav_dir, translate_enabled=False, path_mappings=None, directories=None,
+                locale=None):
+    config = {
         "search": {"favorite_folder": str(fav_dir)},
         "scraper": {"video_extensions": [".mp4"]},
         "gallery": {
@@ -51,6 +52,9 @@ def make_config(fav_dir, translate_enabled=False, path_mappings=None, directorie
         },
         "translate": {"enabled": translate_enabled},
     }
+    if locale is not None:
+        config["general"] = {"locale": locale}
+    return config
 
 
 def write_video(fav_dir, name, size=1024):
@@ -610,3 +614,79 @@ class TestInflowUpsertOnSuccess:
         run_one_round(config)
 
         stub_inflow.assert_not_called()
+
+
+class TestTranslateServiceConstruction:
+    """Codex PR #181 一審：翻譯服務怎麼建出來的，兩條都是承重。"""
+
+    def _run(self, tmp_path, mocker, config, create_side_effect=None, create_return=None):
+        fav = tmp_path / "fav"
+        fav.mkdir(exist_ok=True)
+        write_video(fav, "ABC-123.mp4")
+        mocker.patch("core.auto_organize.smart_search",
+                     return_value=[{"number": "ABC-123", "title": "日本語タイトル", "actors": []}])
+        mocker.patch("core.auto_organize.organize_file", return_value=default_organize_success())
+        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
+        kwargs = {}
+        if create_side_effect is not None:
+            kwargs["side_effect"] = create_side_effect
+        else:
+            fake = create_return if create_return is not None else mocker.MagicMock()
+            if create_return is None:
+                fake.translate_single = AsyncMock(return_value="翻譯後標題")
+            kwargs["return_value"] = fake
+        create_mock = mocker.patch("core.auto_organize.create_translate_service", **kwargs)
+        return run_one_round(config), create_mock
+
+    def test_configured_locale_is_passed_to_the_factory(self, tmp_path, isolated_db, mocker):
+        """P1：使用者設定的語言必須傳給工廠。
+
+        使用者流程：把介面語言設成日文、開了翻譯與定時整理 → 每 12 小時無人值守跑一輪 →
+        日文標題全被翻成**繁體中文**寫進檔名、資料夾名與 NFO 的 <title>
+        （core/organizer.py:1092 / :1211 / :1336）→ 只能一部一部重刮救回來。
+
+        對日文使用者尤其致命：三個 provider 的 translate_single 都有
+        `if self.target_language == "ja": return title` 這條專門保護日文使用者的短路，
+        服務若永遠用 "zh-TW" 建出來，那條短路**從來打不到**。
+        """
+        config = make_config(tmp_path / "fav", translate_enabled=True, locale="ja")
+        _, create_mock = self._run(tmp_path, mocker, config)
+
+        create_mock.assert_called_once()
+        args, kwargs = create_mock.call_args
+        passed = kwargs.get("target_language", args[1] if len(args) > 1 else None)
+        assert passed == "ja", (
+            f"必須把 config['general']['locale'] 傳給 create_translate_service，實際傳了 {passed!r}"
+        )
+
+    def test_missing_locale_falls_back_to_zh_tw(self, tmp_path, isolated_db, mocker):
+        """反向鎖：config 沒有 general.locale 時仍是 zh-TW（不得拋 KeyError、不得傳 None）。"""
+        config = make_config(tmp_path / "fav", translate_enabled=True)   # 不給 general
+        _, create_mock = self._run(tmp_path, mocker, config)
+
+        args, kwargs = create_mock.call_args
+        passed = kwargs.get("target_language", args[1] if len(args) > 1 else None)
+        assert passed == "zh-TW"
+
+    def test_factory_failure_degrades_to_no_translation_and_round_continues(
+        self, tmp_path, isolated_db, mocker
+    ):
+        """第二條：翻譯服務建不起來時，整輪不得陣亡。
+
+        使用者流程：把翻譯 provider 切到 Gemini、勾了啟用，但 API Key 還沒貼就存檔
+        （設定頁沒有跨欄位驗證，存得出這個狀態）→ 每 12 小時整輪 **0 部片被處理**，
+        畫面只有一則「定時整理失敗，請查閱日誌」，看不出是翻譯設定沒配好。
+
+        翻譯是加分項不是前提 ⇒ 建不起來就這一輪不翻譯，照常整理。
+        """
+        config = make_config(tmp_path / "fav", translate_enabled=True, locale="zh-TW")
+        result, create_mock = self._run(
+            tmp_path, mocker, config,
+            create_side_effect=ValueError("Gemini API Key is required"),
+        )
+
+        create_mock.assert_called_once()
+        assert result["added"] == ["ABC-123"], (
+            f"翻譯服務建不起來只該讓這一輪不翻譯，不該讓整輪 0 部片，實際 {result}"
+        )
+        assert result["failed"] == [], "建構失敗不得把片算成 failed（DoD-8 同一個政策）"

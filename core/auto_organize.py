@@ -12,6 +12,7 @@ from typing import Callable, Optional
 from core.database import organize_failures
 from core.db_inflow import try_inflow_upsert
 from core.favorite_scan import detect_nfo, list_favorite_video_files, resolve_favorite_folder
+from core.logger import get_logger
 from core.organizer import extract_chinese_title, organize_file
 from core.path_utils import coerce_to_file_uri
 from core.readonly_source import is_path_readonly, readonly_source_prefixes, writable_source_prefixes
@@ -19,6 +20,8 @@ from core.scraper import smart_search
 from core.scrapers.utils import extract_number, has_japanese
 from core.translate_service import create_translate_service
 from core.wishlist_reconcile import reconcile_wishlist
+
+logger = get_logger(__name__)
 
 
 def run_one_round(
@@ -54,7 +57,33 @@ def run_one_round(
     scraper_config = config.get('scraper', {})
     translate_config = config.get('translate', {})
     translate_enabled = translate_config.get('enabled', False)
-    translate_service = create_translate_service(translate_config) if translate_enabled else None
+    # locale 一定要傳（Codex PR #181 P1）：`create_translate_service` 的 target_language
+    # 預設是 "zh-TW"，少傳這一個參數 ⇒ **不論使用者把介面語言設成什麼，一律翻成繁中**，
+    # 而這裡的翻譯結果會蓋掉標題、進**檔名／資料夾名／NFO <title>**（core/organizer.py:1092、
+    # :1211、:1336），是無人值守的批次寫入。手動那條路（web/routers/translate.py:65-68）
+    # 本來就有傳，只有這條新路徑漏了。
+    # 對日文使用者尤其致命：三個 provider 的 translate_single 都有
+    # `if self.target_language == "ja": return title` 這條**專門保護日文使用者的短路**，
+    # 但服務永遠是用 "zh-TW" 建出來的 ⇒ 那條短路從來打不到，日文標題全被翻成繁中。
+    #
+    # 建構本身也要保護（Codex PR #181 第二條）：provider=gemini 而 API key 是空字串時
+    # `GeminiTranslateService.__init__` 直接拋 ValueError（設定頁存得出這個狀態——
+    # 沒有跨欄位驗證，「切到 Gemini、還沒貼 key 就存檔」是很平常的順序）。
+    # 這一行在 per-file try/except 之外 ⇒ 整輪 0 部片被處理，使用者只看到一則
+    # 「定時整理失敗，請查閱日誌」，看不出是翻譯設定沒配好。
+    # 翻譯是**加分項不是前提**，建不起來就降級成「這一輪不翻譯」，繼續整理（與 DoD-8
+    # 「翻譯失敗不擋、不計 failed」同一個政策）。
+    translate_service = None
+    if translate_enabled:
+        locale = config.get('general', {}).get('locale', 'zh-TW')
+        try:
+            translate_service = create_translate_service(translate_config, locale)
+        except Exception:
+            logger.warning(
+                "[auto_organize] 翻譯服務建不起來（provider 未配好？），本輪不翻譯照常整理",
+                exc_info=True,
+            )
+            translate_service = None
 
     completed = 0
     for path in files:
@@ -96,7 +125,7 @@ def run_one_round(
         metadata = dict(results[0])  # CD-144-5：原樣，不加不減（不覆蓋 number）
 
         chinese_title = extract_chinese_title(filename, number, metadata.get('actors'))
-        if not chinese_title and translate_enabled and has_japanese(metadata.get('title', '')):
+        if not chinese_title and translate_service is not None and has_japanese(metadata.get('title', '')):
             try:
                 translated = asyncio.run(translate_service.translate_single(metadata['title']))
             except Exception:
