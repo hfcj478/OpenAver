@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 import asyncio
+import contextlib
 import ipaddress
 import os
 import re
@@ -22,6 +23,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from web.static_cache import NoCacheStaticFiles
+from web.auto_organize_scheduler import auto_organize_loop
 from fastapi.templating import Jinja2Templates
 
 # 版本號（從 core/version.py 統一管理）
@@ -125,6 +127,10 @@ async def lifespan(app: FastAPI):
     # 執行中途被 GC 回收 —— 存 app.state（app 已建立、比 module global 乾淨，無需 global）。
     app.state.startup_check_task = asyncio.create_task(_startup_update_check())
 
+    # TASK-144-T5: 12 小時排程 loop；create_task 回傳值須保留強引用（同上一段理由，
+    # event loop 只持 weak ref，task 可能執行中途被 GC 回收）。
+    app.state.auto_organize_task = asyncio.create_task(auto_organize_loop())
+
     try:
         await source_reachability.schedule_reprobe_if_stale()
     except Exception:
@@ -132,7 +138,9 @@ async def lifespan(app: FastAPI):
 
     yield
     # ── shutdown ──────────────────────────────────────────────
-    # 目前無 shutdown 邏輯（setup_logging 是 module-level，不需 teardown）
+    app.state.auto_organize_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await app.state.auto_organize_task
 
 
 # FastAPI 應用

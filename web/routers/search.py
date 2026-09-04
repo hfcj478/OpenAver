@@ -44,6 +44,9 @@ from core.maker_mapping import load_prefix_mapping
 from core.source_config import validate_source_id
 from core.source_settings import get_switchable_source_ids_ordered, is_uncensored_mode_effective
 from core.auto_organize_state import mark_manual_activity, request_abort
+from core.config import load_config, mutate_config
+from core.favorite_scan import resolve_favorite_folder
+from web import auto_organize_scheduler
 
 from core.scraper import (
     search_jav, smart_search, is_partial_number, is_number_format,
@@ -937,3 +940,63 @@ def get_local_status(numbers: str = Query(..., description="逗號分隔的番�
             }
 
     return result
+
+
+class AutoOrganizeConfigRequest(BaseModel):
+    enabled: bool
+
+
+@router.post("/search/auto-organize/config")
+def update_auto_organize_config(body: AutoOrganizeConfigRequest) -> dict:
+    """開關「自動整理」排程（輕量端點，比照 web/routers/config.py:211
+    update_general_field() 的「單一欄位」形狀）。
+
+    未設最愛資料夾時只允許寫 False（D8：未設資料夾不准開排程）。sync def：
+    mutate_config 走檔案 I/O，依 async-offload 守衛（BE-ASYNC-01）不可寫成
+    async def 卡 event loop。
+    """
+    config = load_config()
+    favorite_folder = config.get("search", {}).get("favorite_folder", "").strip()
+    if body.enabled and not favorite_folder:
+        return {"success": False, "error": "favorite_folder_unset"}
+
+    def _mut(cfg):
+        cfg.setdefault("search", {}).setdefault("auto_organize", {})["enabled"] = body.enabled
+
+    mutate_config(_mut)
+    # 撥開關的當下重新計時（[NEEDS CLARIFICATION]⑤ 裁決：同步呼叫，成功寫入之後、
+    # 回應之前）——不重置的話，關掉再開回來仍沿用舊的到期時間，可能立刻觸發。
+    auto_organize_scheduler.reset_due_time()
+    return {"success": True}
+
+
+@router.post("/search/auto-organize/use-resolved-folder")
+def use_resolved_auto_organize_folder() -> dict:
+    """把目前「手動用的那個路徑」（含系統下載資料夾 fallback）寫進
+    search.favorite_folder（spec §F1「就用這個資料夾」）。
+    """
+    config = load_config()
+    resolved = resolve_favorite_folder(config)
+
+    def _mut(cfg):
+        cfg.setdefault("search", {})["favorite_folder"] = resolved
+
+    mutate_config(_mut)
+    return {"success": True, "folder": resolved}
+
+
+@router.post("/search/auto-organize/run-now")
+async def run_auto_organize_now() -> dict:
+    """立刻執行一次；毫秒級返回，輪在背景 task 跑（見
+    web/auto_organize_scheduler.py 檔頭 🚫：絕不可 await 整輪跑完）。
+
+    ⚠️ 必須是 `async def`，不可比照 update_auto_organize_config() 寫成
+    sync def：`enter_and_start()` 內部呼叫 `asyncio.create_task()`，這支
+    API 只有在**目前執行緒就是 event loop 執行緒**時才不拋
+    `RuntimeError: no running event loop`。sync def 的 handler body 被
+    Starlette 丟進 threadpool 執行（另一條 OS thread），不是 event loop
+    執行緒——會讓這支端點每次呼叫都 500。本函式體內完全沒有 `await`
+    不影響「毫秒級返回」：FastAPI 對 `async def` handler 直接在 event loop
+    上執行，沒有 threadpool 調度的額外開銷，反而更快。
+    """
+    return auto_organize_scheduler.enter_and_start("run_now")

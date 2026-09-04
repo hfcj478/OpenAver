@@ -884,6 +884,10 @@
     "thumb_prewarm_start": "開始建立封面縮圖快取",
     "thumb_prewarm_done": "封面縮圖快取已完成",
     "update_available": "OpenAver 有新版本",
+    "auto_organize_summary": "自動整理",
+    "auto_organize_aborted": "自動整理已中止",
+    "auto_organize_folder_unreachable": "自動整理：無法存取最愛資料夾",
+    "auto_organize_readonly": "自動整理：最愛資料夾是唯讀來源",
     "wishlist_auto_removed": "書籤自動更新",
     "wishlist_reconcile_failed": "書籤對帳失敗，請查閱日誌"
   },
