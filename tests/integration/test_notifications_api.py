@@ -8,13 +8,37 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
-def reset_buffer():
+def reset_buffer(monkeypatch, tmp_path):
     import web.routers.notifications as notif_mod
-    notif_mod._notifications.clear()
-    notif_mod._read_ids.clear()
+    from core.database.connection import init_db
+
+    test_db = tmp_path / "integ_test.db"
+    init_db(test_db)
+    monkeypatch.setattr("core.database.connection.get_db_path", lambda: test_db)
+
+    with notif_mod._lock:
+        notif_mod._notifications.clear()
+        notif_mod._read_ids.clear()
+    while not notif_mod._write_queue.empty():
+        try:
+            notif_mod._write_queue.get_nowait()
+            notif_mod._write_queue.task_done()
+        except Exception:
+            break
+
     yield
-    notif_mod._notifications.clear()
-    notif_mod._read_ids.clear()
+
+    with notif_mod._lock:
+        notif_mod._notifications.clear()
+        notif_mod._read_ids.clear()
+    notif_mod.stop_notification_persistence()
+    while not notif_mod._write_queue.empty():
+        try:
+            notif_mod._write_queue.get_nowait()
+            notif_mod._write_queue.task_done()
+        except Exception:
+            break
+
 
 
 @pytest.fixture
@@ -108,3 +132,174 @@ def test_scanner_no_directory_emits_no_started(client):
     assert "notif.scanner_started" not in notif_keys, f"scanner_started 不應在 no-directory 路徑出現，但找到：{notif_keys}"
     # 驗證：SSE stream 包含 error 事件
     assert any("error" in e for e in events), "no-directory 路徑應產生 SSE error 事件"
+
+
+def test_notification_persists_across_restart(client, tmp_path, monkeypatch):
+    """DoD-1 (M3): 發通知落 DB，模擬重啟後 GET /api/notifications 仍看得到它，且已讀狀態不變。"""
+    from core.database.connection import init_db
+    import web.routers.notifications as notif_mod
+    from web.routers.notifications import emit_notification, start_notification_persistence, _write_queue
+
+    test_db = tmp_path / "persist_test.db"
+    monkeypatch.setattr("core.database.connection.get_db_path", lambda: test_db)
+    init_db(test_db)
+
+    # 啟動持久化
+    start_notification_persistence()
+
+    emit_notification("info", "notif.persist_key", message="persisted message")
+    _write_queue.join()
+
+    # 模擬 process 重啟：清空記憶體緩衝
+    # 先**真的**停掉舊 writer（哨兵 ＋ join），不要只把指標設成 None：
+    # 那會留下一條仍活著、仍在消費同一個 module-level 佇列、而且綁著**舊 db_path**
+    # 的孤兒 thread，把接下來該寫進新庫的通知寫到舊庫去。
+    notif_mod.stop_notification_persistence()
+    with notif_mod._lock:
+        notif_mod._notifications.clear()
+        notif_mod._read_ids.clear()
+
+    # 重啟開機：呼叫 start_notification_persistence()
+    start_notification_persistence()
+
+    body = client.get("/api/notifications").json()
+    assert len(body["items"]) == 1
+    assert body["items"][0]["title_key"] == "notif.persist_key"
+    assert body["items"][0]["message"] == "persisted message"
+    assert body["items"][0]["is_read"] is False
+    assert body["unread_count"] == 1
+
+
+def test_notification_clear_persists_across_restart(client, tmp_path, monkeypatch):
+    """DoD-6 (M6): DELETE /api/notifications 清空後重啟，抽屜仍為空，不得從 DB 復活。"""
+    from core.database.connection import init_db
+    import web.routers.notifications as notif_mod
+    from web.routers.notifications import emit_notification, start_notification_persistence, _write_queue
+
+    test_db = tmp_path / "clear_persist_test.db"
+    monkeypatch.setattr("core.database.connection.get_db_path", lambda: test_db)
+    init_db(test_db)
+
+    start_notification_persistence()
+
+    emit_notification("info", "notif.to_be_cleared")
+    _write_queue.join()
+
+    # 清空
+    res = client.delete("/api/notifications")
+    assert res.json()["ok"] is True
+    _write_queue.join()
+
+    # 模擬 process 重啟
+    # 先**真的**停掉舊 writer（哨兵 ＋ join），不要只把指標設成 None：
+    # 那會留下一條仍活著、仍在消費同一個 module-level 佇列、而且綁著**舊 db_path**
+    # 的孤兒 thread，把接下來該寫進新庫的通知寫到舊庫去。
+    notif_mod.stop_notification_persistence()
+    with notif_mod._lock:
+        notif_mod._notifications.clear()
+        notif_mod._read_ids.clear()
+
+    start_notification_persistence()
+
+    body = client.get("/api/notifications").json()
+    assert body["items"] == []
+    assert body["unread_count"] == 0
+
+
+def test_notification_read_persists_across_restart(client, tmp_path, monkeypatch):
+    """DoD-6: POST /api/notifications/read 標記已讀後重啟，重啟後通知仍是已讀。"""
+    from core.database.connection import init_db
+    import web.routers.notifications as notif_mod
+    from web.routers.notifications import emit_notification, start_notification_persistence, _write_queue
+
+    test_db = tmp_path / "read_persist_test.db"
+    monkeypatch.setattr("core.database.connection.get_db_path", lambda: test_db)
+    init_db(test_db)
+
+    start_notification_persistence()
+
+    emit_notification("info", "notif.to_be_read")
+    _write_queue.join()
+
+    res = client.post("/api/notifications/read")
+    assert res.json()["ok"] is True
+    _write_queue.join()
+
+    # 模擬 process 重啟
+    # 先**真的**停掉舊 writer（哨兵 ＋ join），不要只把指標設成 None：
+    # 那會留下一條仍活著、仍在消費同一個 module-level 佇列、而且綁著**舊 db_path**
+    # 的孤兒 thread，把接下來該寫進新庫的通知寫到舊庫去。
+    notif_mod.stop_notification_persistence()
+    with notif_mod._lock:
+        notif_mod._notifications.clear()
+        notif_mod._read_ids.clear()
+
+    start_notification_persistence()
+
+    body = client.get("/api/notifications").json()
+    assert len(body["items"]) == 1
+    assert body["items"][0]["is_read"] is True
+    assert body["unread_count"] == 0
+
+
+def test_loadback_order_preserves_newest_first(client, tmp_path, monkeypatch):
+    """DoD-7: DB 裡有 N 筆時間戳不同的通知，重啟後 GET 回傳的順序與重啟前逐筆相同（最新的在最前面）。"""
+    import time
+    from core.database.connection import init_db
+    import web.routers.notifications as notif_mod
+    from web.routers.notifications import emit_notification, start_notification_persistence, _write_queue
+
+    test_db = tmp_path / "order_test.db"
+    monkeypatch.setattr("core.database.connection.get_db_path", lambda: test_db)
+    init_db(test_db)
+
+    start_notification_persistence()
+
+    for i in range(5):
+        emit_notification("info", f"notif.item_{i}", message=f"msg_{i}")
+        time.sleep(0.01)  # 確保 timestamp 嚴格遞增
+    _write_queue.join()
+
+    before_body = client.get("/api/notifications").json()
+    before_ids = [item["id"] for item in before_body["items"]]
+    assert len(before_ids) == 5
+
+    # 模擬 process 重啟
+    # 先**真的**停掉舊 writer（哨兵 ＋ join），不要只把指標設成 None：
+    # 那會留下一條仍活著、仍在消費同一個 module-level 佇列、而且綁著**舊 db_path**
+    # 的孤兒 thread，把接下來該寫進新庫的通知寫到舊庫去。
+    notif_mod.stop_notification_persistence()
+    with notif_mod._lock:
+        notif_mod._notifications.clear()
+        notif_mod._read_ids.clear()
+
+    start_notification_persistence()
+
+    after_body = client.get("/api/notifications").json()
+    after_ids = [item["id"] for item in after_body["items"]]
+    assert after_ids == before_ids
+
+
+def test_start_persistence_idempotent(tmp_path, monkeypatch):
+    """DoD-9: 重複呼叫 start_notification_persistence() 不啟動兩條 thread，不使 deque 出現重複通知。"""
+    from core.database.connection import init_db
+    import web.routers.notifications as notif_mod
+    from web.routers.notifications import emit_notification, start_notification_persistence, _write_queue
+
+    test_db = tmp_path / "idempotent_test.db"
+    monkeypatch.setattr("core.database.connection.get_db_path", lambda: test_db)
+    init_db(test_db)
+
+    start_notification_persistence()
+    first_thread = notif_mod._writer_thread
+
+    emit_notification("info", "notif.idem_key", message="idem msg")
+    _write_queue.join()
+
+    assert len(notif_mod._notifications) == 1
+
+    # 第二次呼叫
+    start_notification_persistence()
+    assert notif_mod._writer_thread is first_thread
+    assert len(notif_mod._notifications) == 1
+

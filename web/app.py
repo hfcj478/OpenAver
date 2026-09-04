@@ -78,6 +78,7 @@ async def lifespan(app: FastAPI):
     # 移除 legacy clip_embedding / clip_model_id），確保 Video.from_row cls(**data)
     # 不會因 legacy schema 欄位收到未知 keyword 而 500。CD-57b-8 contract。
     init_db()
+    start_notification_persistence()
 
     # TASK-114a-T2: 認證閘門的 schema 就緒動作，與 init_db() 同一段落一起跑
     # （CD-114a-3：兩者刻意不合併成同一支函式，但啟動時機一致）。idempotent
@@ -169,7 +170,7 @@ from web.routers import tags as tags_router
 from web.routers import notifications as notifications_router
 # TASK-107-P1-T2: import emit_notification at module level so lifespan can call
 # it directly and tests can patch("web.app.emit_notification") at the use-site.
-from web.routers.notifications import emit_notification
+from web.routers.notifications import emit_notification, start_notification_persistence
 from web.routers import similar as similar_router
 from web.routers import settings_link as settings_link_router
 from web.routers import scraper_sources as scraper_sources_router

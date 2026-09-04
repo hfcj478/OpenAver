@@ -15,6 +15,12 @@ from .actress import Actress, ActressRepository
 from .actress_library import get_library_actresses
 from .migrate import migrate_json_to_sqlite, backfill_readonly_nfo_mtime
 from .wishlist import WishlistRepository
+from .notifications import (
+    insert_notification,
+    mark_notifications_read,
+    clear_all_notifications,
+    load_recent_notifications,
+)
 
 __all__ = [
     "get_db_path",
@@ -33,4 +39,9 @@ __all__ = [
     "migrate_json_to_sqlite",
     "backfill_readonly_nfo_mtime",
     "WishlistRepository",
+    "insert_notification",
+    "mark_notifications_read",
+    "clear_all_notifications",
+    "load_recent_notifications",
 ]
+
