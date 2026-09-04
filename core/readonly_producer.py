@@ -1812,7 +1812,11 @@ def _safe_file_stats(fs_path: str) -> tuple:
     """
     try:
         return os.path.getsize(fs_path), os.path.getmtime(fs_path)
-    except OSError:
+    except OSError as e:
+        # 吞掉但留痕（與 b9dc36fc「exists 探測的意外例外也留痕」對稱）：不留這一行的話，
+        # 碟斷線時卡片的大小變成未知、流程照樣回報成功，而 debug.log 查不到是哪個路徑、
+        # 什麼錯誤造成的。fallback 本身不變——量不到大小不該讓整條產出流程失敗。
+        logger.warning("[readonly] 讀不到檔案統計，size/mtime 記為 0: %s — %s", fs_path, e)
         return 0, 0.0
 
 
