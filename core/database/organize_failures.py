@@ -103,3 +103,16 @@ def clear_on_success(
 
 def duplicate_key(fs_path: str, path_mappings: dict) -> str:
     return to_file_uri(fs_path, path_mappings)
+
+
+def get_duplicate_target(key: str, db_path: Optional[Path] = None) -> str:
+    with closing(get_connection(db_path)) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT duplicate_target FROM organize_failures WHERE reason = 'duplicate' AND key = ?",
+            (_normalize_key("duplicate", key),),
+        )
+        row = cursor.fetchone()
+        if row is None or not row[0]:
+            return ""
+        return str(row[0])

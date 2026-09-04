@@ -262,6 +262,13 @@ export function searchStateFileList() {
         file.number = number.trim();
         file.searched = false;
         file.searchResults = [];
+        file.skipReason = '';
+        file.duplicateTarget = undefined;
+        // T6 review：scrapeStatus 也要一起清。setFileList() 現在會在**列檔階段**就把記憶命中的
+        // 檔標成 'duplicate'（過去這個值只在真的按下整理、撞到檔名時才出現），所以重輸番號後
+        // 若不清掉，重新搜到候選之後「產生 NFO」鈕與橘色「重複」鈕會同時出現，而橘色那顆
+        // 點開是空白（duplicateTarget 已被上一行清掉）。重置慣例照 batch.js:526。
+        file.scrapeStatus = null;
 
         this.switchToFile(index, 'first', true);
     },
@@ -315,6 +322,7 @@ export function searchStateFileList() {
         // requestId-mismatch 早退，卻不清理 _searchSnapshot/activeEventSource，見 Codex 第3輪 P2）
         this._abortControllers['handleFileDrop']?.abort();
         var hasNfoMap = {};
+        var skipMap = {};
         // P2-T6（功能 D）：宣告在 try 外——空列表檢查（下方）在同 try 內須看得到（Codex 三審#1）。
         // 桌面 pywebview 拖入未掛載/UNC/無權限檔時，filter-files 回 rejected.inaccessible，
         // 表面化為 path_inaccessible 並中止，取代誤導的「無法識別番號」。
@@ -350,7 +358,13 @@ export function searchStateFileList() {
                         this.showToast(window.t('search.error.path_inaccessible'), 'error');
                     }
                     paths = result.files.map(f => f.path);
-                    result.files.forEach(f => { hasNfoMap[f.path] = !!f.has_nfo; });
+                    result.files.forEach(f => {
+                        hasNfoMap[f.path] = !!f.has_nfo;
+                        skipMap[f.path] = {
+                            skipReason: f.skip_reason || '',
+                            duplicateTarget: f.duplicate_target || '',
+                        };
+                    });
                 }
             } catch (err) {
                 if (err.name === 'AbortError') return;  // T4.3: 新搜尋取代，靜默退出
@@ -417,7 +431,11 @@ export function searchStateFileList() {
                 const path = paths[i];
                 const filename = filenames[i];
                 const result = parseResults[i];
-                return {
+                const skipInfo = skipMap[path] || { skipReason: '', duplicateTarget: '' };
+                const isNotFound = skipInfo.skipReason === 'not_found';
+                const isDuplicate = skipInfo.skipReason === 'duplicate';
+
+                const fileObj = {
                     path: path,
                     filename: filename,
                     number: result.number,
@@ -429,11 +447,17 @@ export function searchStateFileList() {
                     chineseTitle: window.SearchFile.extractChineseTitle(filename, result.number),
                     searchResults: [],
                     hasMoreResults: false,
-                    searched: false,
+                    searched: isNotFound || isDuplicate,
                     has_nfo: hasNfoMap[path] || false,
                     user_tags: [],
                     selectedCandidateIndex: 0,
+                    skipReason: skipInfo.skipReason,
                 };
+                if (isDuplicate) {
+                    fileObj.scrapeStatus = 'duplicate';
+                    fileObj.duplicateTarget = skipInfo.duplicateTarget || '';
+                }
+                return fileObj;
             });
             this.currentFileIndex = 0;
             this.listMode = 'file';

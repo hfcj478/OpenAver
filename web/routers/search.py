@@ -813,6 +813,8 @@ def _filter_files_sync(paths: list) -> dict:
     from core.config import load_config
     from core.favorite_scan import detect_nfo
     from core.path_utils import normalize_path
+    from core.scrapers.utils import extract_number
+    from core.database import organize_failures
 
     # 載入設定
     config = load_config()
@@ -859,10 +861,28 @@ def _filter_files_sync(paths: list) -> dict:
 
     # NFO 同 stem 偵測（case-insensitive，批次一次算完，父目錄 listing cache 才有效）
     nfo_map = detect_nfo([path for _, path in candidates])
-    filtered = [
-        {"path": original_path, "has_nfo": nfo_map.get(path, False)}
-        for original_path, path in candidates
-    ]
+    path_mappings = config.get("gallery", {}).get("path_mappings", {})
+    filtered = []
+    for original_path, path in candidates:
+        skip_reason = ""
+        duplicate_target = ""
+
+        # 番號一律從 basename 取：與 core/auto_organize.py::run_one_round 同源（CD-144-8 要求兩邊算出同一個鍵），等價性由 tests/unit/test_number_extraction_key_parity.py 守
+        number = extract_number(Path(path).name)
+        if number:
+            dup_key = organize_failures.duplicate_key(path, path_mappings)
+            if organize_failures.should_skip("duplicate", dup_key):
+                skip_reason = "duplicate"
+                duplicate_target = organize_failures.get_duplicate_target(dup_key)
+            elif organize_failures.should_skip("not_found", number.upper()):
+                skip_reason = "not_found"
+
+        filtered.append({
+            "path": original_path,
+            "has_nfo": nfo_map.get(path, False),
+            "skip_reason": skip_reason,
+            "duplicate_target": duplicate_target,
+        })
 
     return {
         "success": True,

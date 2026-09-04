@@ -62,7 +62,9 @@ def run_one_round(
             aborted_after = completed
             break
 
-        number = extract_number(path)
+        filename = os.path.basename(path)
+        # 番號一律從 basename 取：與 web/routers/search.py::_filter_files_sync 同源（CD-144-8 要求兩邊算出同一個鍵），等價性由 tests/unit/test_number_extraction_key_parity.py 守
+        number = extract_number(filename)
         if not number:
             continue  # 無番號跳過，不計數，不呼叫 on_file_start
 
@@ -92,7 +94,6 @@ def run_one_round(
 
         metadata = dict(results[0])  # CD-144-5：原樣，不加不減（不覆蓋 number）
 
-        filename = os.path.basename(path)
         chinese_title = extract_chinese_title(filename, number, metadata.get('actors'))
         if not chinese_title and translate_enabled and has_japanese(metadata.get('title', '')):
             try:
