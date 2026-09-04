@@ -625,7 +625,11 @@ _TOOLS: list[dict] = [
     },
     {
         "name": "user_tags",
-        "description": "管理用戶自訂標籤（評分、書籤、分類等）。存入 DB + NFO <user_tag> 元素，不被 scraper refresh 覆蓋",
+        "description": (
+            "管理用戶自訂標籤（評分、書籤、分類等）。存入 DB + NFO <user_tag> 元素，不被 scraper refresh 覆蓋。"
+            "唯讀來源的片寫的是輸出夾那份 NFO（原始資料夾零寫入）；該片還沒產出輸出夾時，"
+            "標籤仍會存進 DB，但回傳 readonly_no_output=true 表示這次沒有任何 NFO 被更新。"
+        ),
         "method": "POST",
         "path": "/api/user-tags",
         "input_schema": {
@@ -641,6 +645,7 @@ _TOOLS: list[dict] = [
             "success": "boolean",
             "user_tags": "[string] — 更新後的完整 user_tags 清單",
             "nfo_updated": "boolean — NFO 是否同步更新",
+            "readonly_no_output": "boolean — 唯讀來源且找不到可更新的輸出夾 NFO 時為 true（標籤已存進 DB，但媒體伺服器讀到的 NFO 沒變）。一般片恆為 false",
         },
         "side_effect": True,
         "confirmation_required": False,

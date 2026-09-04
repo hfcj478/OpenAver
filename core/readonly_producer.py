@@ -1079,6 +1079,12 @@ def _write_movie_assets(
     never repopulates it, silently wiping 補劇照 output for any video that
     gets re-produced. Any hypothetical future caller that DOES pass full-mode
     samples still gets correct clean+rewrite semantics.
+
+    user_tags (TASK-143-T5, CD-143-5): forwarded verbatim to generate_nfo so a
+    rescrape REGENERATES <user_tag> instead of dropping it (the DB row keeps them
+    either way — what was lost is the copy a media server reads). _produce_one
+    must read them BEFORE _upsert_db overwrites the row. None → [] → byte-identical
+    to pre-T5, which is why the ~40 direct test call sites need no change.
     """
     os.makedirs(movie_dir, exist_ok=True)
 
@@ -1807,8 +1813,12 @@ def _readonly_stub_not_found(repo, uri: str, number, fs_path: str) -> None:
     T2（spec-143 §3.1）起兩個呼叫端都是無條件呼叫 — 唯讀列舉到的每個影片檔一律
     建樁列，與一般掃描一致；`number` 為 None（檔名抽不出番號）也照建。
     title 用 Path(fs_path).stem（不含副檔名），與一般掃描的標題格式逐字對齊。
+    `number or None` 落在 helper 本體而非呼叫端：兩個呼叫端的 number 來源不同
+    （S3 來自 extract_number 已是 None、S1 來自 request.number 是未經非空檢查的 str），
+    正規化寫在這裡才是 CD-143-3「樁列形狀 ＝ 抽到的值 or None」的單一合約點——
+    AC1-5 要的是 NULL 不是空字串（一般掃描寫的就是 `info.num or None`）。
     """
-    repo.insert_if_ignore(Video(path=uri, number=number, title=Path(fs_path).stem))
+    repo.insert_if_ignore(Video(path=uri, number=number or None, title=Path(fs_path).stem))
     repo.update_scrape_attempted_at(uri, time.time())
 
 

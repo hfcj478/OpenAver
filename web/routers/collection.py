@@ -827,6 +827,10 @@ def post_user_tags(request: UserTagsRequest) -> dict:
                     # 防禦性 fallback，不 raise，走 AC2-2b 同款「不寫、回報未寫入」
                     readonly_no_output = True
             except Exception as e:
+                # 例外路徑同樣要回報「沒有 NFO 被更新」——否則 spec-143 §3.2 要消滅的
+                # 那個靜默失敗會從這裡復活（畫面一則提示都沒有，使用者以為 Jellyfin
+                # 待會就看得到）。三個分支（無輸出夾／NFO 份數不對／IO 例外）語意一致。
+                readonly_no_output = True
                 logger.warning("[user-tags] 唯讀輸出夾 NFO 寫入失敗（忽略）: %s", e)
     else:
         try:

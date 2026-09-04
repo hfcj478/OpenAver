@@ -758,3 +758,32 @@ class TestT4ReadonlyUserTags:
         assert data["nfo_updated"] is False
         assert data["readonly_no_output"] is True
         assert after == before, "多份 NFO 時不應改寫任何一份"
+
+    def test_ac2_io_exception_also_reports_no_output(
+        self, tmp_db, tmp_path, monkeypatch
+    ):
+        """例外路徑（輸出夾在 NAS 上、權限／IO 錯誤）同樣要回報「沒有 NFO 被更新」。
+
+        使用者流程：對唯讀來源的片加標籤 → 輸出夾寫入時丟例外 → 過去後端只 log 一行
+        warning、回 readonly_no_output:false ⇒ **畫面上一則提示都沒有**，使用者以為
+        Jellyfin 待會就看得到。那正是 spec-143 §3.2 要消滅的靜默失敗，只是從例外路徑復活。
+        """
+        client, _src_dir, _out_dir, file_uri = self._setup_readonly(
+            tmp_db, tmp_path, monkeypatch,
+            with_source_nfo=False, with_output_nfo=True,
+        )
+        monkeypatch.setattr(
+            "web.routers.collection.update_nfo_user_tags",
+            lambda *a, **kw: (_ for _ in ()).throw(OSError("NAS 掉線")),
+        )
+
+        resp = client.post("/api/user-tags", json={
+            "file_path": file_uri,
+            "add": ["IOTAG"],
+        })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True          # 標籤仍進 DB
+        assert data["nfo_updated"] is False
+        assert data["readonly_no_output"] is True

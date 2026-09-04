@@ -49,6 +49,7 @@ from core.focal_trigger import maybe_submit_video_focal
 from core.organizer import generate_jellyfin_images, HEADERS as _EMBED_HEADERS
 from core.config import load_config, iter_gallery_sources, get_gallery_source_paths, STEM_IMAGE_MODES
 from core.readonly_producer import produce_source, resolve_output_root
+from core.readonly_source import is_path_readonly, readonly_source_prefixes, writable_source_prefixes
 from core.generate_state import try_mark_generate_active, mark_generate_done
 from core import thumbnail_cache
 from core.scraper import smart_search
@@ -952,6 +953,52 @@ def clear_cache():  # ranker-invalidate-ok: (DELETE FROM videos only in docstrin
         return {"success": False, "error": "清除快取失敗"}
 
 
+def _build_nfo_update_cache(all_videos, config) -> tuple:
+    """建構 `check_cache_needs_update` 相容的 cache，**並濾掉唯讀來源的列**。
+
+    唯讀零寫入（spec-143 不變式：唯讀 ＝ 一般掃描 ＋ 產物落輸出夾）：
+    `update_videos_generator` 寫的是**來源影片旁**的 sidecar NFO
+    （`core/nfo_updater.py` 的 `get_nfo_path_from_video` ＝ 影片路徑 `.with_suffix('.nfo')`），
+    對唯讀來源就是寫回使用者叫我們別碰的那個資料夾——而唯讀列的 `nfo_mtime` 指的是
+    **輸出夾**那份的 mtime、恆 > 0，不濾掉一定會入選。
+
+    判準與 `web/routers/scraper.py` 的批次入口同一套：config 算一次前綴集、逐項純比對、零 I/O。
+    **`/update-check` 與 `/update` 共用本 helper**——兩邊各抄一份唯讀判定必然漂移，
+    而漂移的形狀是「按鈕說要更新 N 部、實際只更新 M 部」。
+
+    回傳 ``(cache, skipped_readonly, path_mappings)``。
+    """
+    gallery_config = config.get('gallery', {})
+    path_mappings = gallery_config.get('path_mappings', {})
+    ro_prefixes = readonly_source_prefixes(gallery_config, path_mappings)
+    writable_prefixes = writable_source_prefixes(gallery_config, path_mappings)
+
+    cache = {}
+    skipped_readonly = 0
+    for v in all_videos:
+        if ro_prefixes and is_path_readonly(
+            coerce_to_file_uri(v.path, path_mappings), ro_prefixes, writable_prefixes
+        ):
+            skipped_readonly += 1
+            continue
+        cache[v.path] = {
+            'nfo_mtime': v.nfo_mtime,
+            'info': {
+                'title': v.title,
+                'date': v.release_date,
+                'actor': ','.join(v.actresses) if v.actresses else '',
+                'genre': ','.join(v.tags) if v.tags else '',
+                'maker': v.maker,
+                'num': v.number or '',
+                'director': v.director or '',
+                'duration': v.duration,
+                'series': v.series or '',
+                'label': v.label or '',
+            }
+        }
+    return cache, skipped_readonly, path_mappings
+
+
 @router.get("/update-check")
 def check_update():
     """檢查需要更新的影片數量（從 SQLite 讀取）"""
@@ -964,24 +1011,7 @@ def check_update():
         repo = VideoRepository(db_path)
         all_videos = repo.get_all()
 
-        # 建構相容 check_cache_needs_update 的格式
-        cache = {}
-        for v in all_videos:
-            cache[v.path] = {
-                'nfo_mtime': v.nfo_mtime,
-                'info': {
-                    'title': v.title,
-                    'date': v.release_date,
-                    'actor': ','.join(v.actresses) if v.actresses else '',
-                    'genre': ','.join(v.tags) if v.tags else '',
-                    'maker': v.maker,
-                    'num': v.number or '',
-                    'director': v.director or '',
-                    'duration': v.duration,
-                    'series': v.series or '',
-                    'label': v.label or '',
-                }
-            }
+        cache, _skipped_readonly, _path_mappings = _build_nfo_update_cache(all_videos, load_config())
 
         stats = check_cache_needs_update(cache)
 
@@ -1077,24 +1107,13 @@ def generate_nfo_update() -> Generator[str, None, None]:
             yield _sse_event({"type": "done", "message": "沒有影片資料", "updated": 0})
             return
 
-        # 建構相容 check_cache_needs_update 的格式
-        cache = {}
-        for v in all_videos:
-            cache[v.path] = {
-                'nfo_mtime': v.nfo_mtime,
-                'info': {
-                    'title': v.title,
-                    'date': v.release_date,
-                    'actor': ','.join(v.actresses) if v.actresses else '',
-                    'genre': ','.join(v.tags) if v.tags else '',
-                    'maker': v.maker,
-                    'num': v.number or '',
-                    'director': v.director or '',
-                    'duration': v.duration,
-                    'series': v.series or '',
-                    'label': v.label or '',
-                }
-            }
+        cache, skipped_readonly, path_mappings = _build_nfo_update_cache(all_videos, load_config())
+        if skipped_readonly:
+            yield _sse_event({
+                "type": "log",
+                "level": "info",
+                "message": f"略過 {skipped_readonly} 部唯讀來源影片（不寫回來源資料夾）"
+            })
 
         # 檢查需要更新的影片
         stats = check_cache_needs_update(cache)
@@ -1109,8 +1128,7 @@ def generate_nfo_update() -> Generator[str, None, None]:
             "message": f"執行 NFO 檢查 ({len(paths_to_update)} 部)..."
         })
 
-        # 執行更新
-        path_mappings = load_config().get('gallery', {}).get('path_mappings', {})
+        # 執行更新（path_mappings 沿用 _build_nfo_update_cache 算好的那份，不重讀 config）
         for msg in update_videos_generator(cache, paths_to_update, path_mappings):
             yield _sse_event(msg)
 
