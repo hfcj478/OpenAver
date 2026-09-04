@@ -690,3 +690,59 @@ class TestTranslateServiceConstruction:
             f"翻譯服務建不起來只該讓這一輪不翻譯，不該讓整輪 0 部片，實際 {result}"
         )
         assert result["failed"] == [], "建構失敗不得把片算成 failed（DoD-8 同一個政策）"
+
+
+class TestNfoEnumerationFailsClosed:
+    """Codex PR #181 二審 P0：列不到最愛資料夾時，這一輪一個檔都不准動。
+
+    使用者流程：最愛資料夾在 NAS 上，設定是「不建資料夾」（片子平放在那一層、
+    檔名已經是正規格式、旁邊有你自己編過的 .nfo）→ 定時整理列完檔之後、
+    偵測 NFO 之前那一瞬間 NAS 掉線 → 整夾已經刮好的片全部被當成沒刮過 →
+    重新上網搜、**把封面重下一次、把 NFO 整份重寫** → 你手動編過的欄位沒了。
+
+    ⚠️ 原子佔位在這條路上**擋不住**：`organize_file` 的搬移那整段包在
+    `if file_path != target_path:` 底下（`core/organizer.py:1247`），
+    「不建資料夾 ＋ 檔名已正規」時兩者相等 ⇒ `O_EXCL` 根本不會被執行到，
+    直接往下寫封面（`:1279`）與 NFO（`:1333`）。
+    """
+
+    def test_round_returns_folder_unreachable_and_touches_nothing(
+        self, tmp_path, isolated_db, mocker
+    ):
+        fav = tmp_path / "fav"
+        fav.mkdir()
+        write_video(fav, "ABC-123.mp4")
+        config = make_config(fav)
+
+        mocker.patch("core.auto_organize.detect_nfo",
+                     side_effect=OSError(5, "Input/output error"))
+        search_spy = mocker.patch("core.auto_organize.smart_search")
+        organize_spy = mocker.patch("core.auto_organize.organize_file")
+        reconcile_spy = mocker.patch("core.auto_organize.reconcile_wishlist")
+
+        result = run_one_round(config)
+
+        assert result == {"folder_unreachable": True}, (
+            f"要走既有的 folder_unreachable 哨兵（scheduler 已有分支與文案），實際 {result}"
+        )
+        search_spy.assert_not_called()
+        organize_spy.assert_not_called()
+        reconcile_spy.assert_not_called()
+
+    def test_detect_nfo_is_called_in_strict_mode(self, tmp_path, isolated_db, mocker):
+        """反向鎖：自動這條路一定要用 strict=True 問，否則上面那個哨兵永遠不會發生。"""
+        fav = tmp_path / "fav"
+        fav.mkdir()
+        write_video(fav, "ABC-123.mp4")
+        config = make_config(fav)
+
+        detect_spy = mocker.patch("core.auto_organize.detect_nfo", return_value={})
+        mocker.patch("core.auto_organize.smart_search", return_value=[])
+        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
+
+        run_one_round(config)
+
+        detect_spy.assert_called_once()
+        assert detect_spy.call_args.kwargs.get("strict") is True, (
+            "必須以 strict=True 呼叫 detect_nfo，否則列不到目錄會被靜默當成「沒有 NFO」"
+        )

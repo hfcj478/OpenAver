@@ -51,7 +51,21 @@ def run_one_round(
         return {"readonly": True}
 
     files = list_favorite_video_files(folder, config)
-    nfo_map = detect_nfo(files)
+    # 列不到目錄就**這一輪什麼都不動**（Codex PR #181 二審 P0）。
+    # 政策跟 list_favorite_video_files 那邊是一對：
+    #   單一檔案問不到 → 跳過那個檔（還有 N-1 部可以做）
+    #   整個資料夾問不到 → 一部都不做（我們不知道哪些片已經刮好了）
+    # 沿用既有的 folder_unreachable 哨兵——scheduler 已經有這個分支與通知文案
+    # （`notif.auto_organize_folder_unreachable`「定時整理：無法存取最愛資料夾」），
+    # 不新增機制、不新增 i18n。`folder` 由 scheduler 的 setdefault 補上。
+    try:
+        nfo_map = detect_nfo(files, strict=True)
+    except OSError:
+        logger.warning(
+            "[auto_organize] 偵測 NFO 時列不到最愛資料夾，本輪不處理任何檔案：%s",
+            folder, exc_info=True,
+        )
+        return {"folder_unreachable": True}
 
     proxy_url = config.get('search', {}).get('proxy_url', '')
     scraper_config = config.get('scraper', {})
@@ -129,7 +143,12 @@ def run_one_round(
             try:
                 translated = asyncio.run(translate_service.translate_single(metadata['title']))
             except Exception:
-                translated = ""  # 翻譯失敗不擋，原標題入庫，不計 failed（DoD-8）
+                # 不擋、不計 failed（DoD-8），但要留痕（Codex PR #181 二審 P3）：
+                # 無人值守跑完只會回報「成功」，沒有這一行就查不出為什麼標題沒翻。
+                logger.warning(
+                    "[auto_organize] 翻譯失敗，%s 沿用原標題", number, exc_info=True,
+                )
+                translated = ""
             if translated:
                 metadata['translated_title'] = translated
 

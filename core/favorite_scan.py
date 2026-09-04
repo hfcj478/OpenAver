@@ -59,11 +59,23 @@ def list_favorite_video_files(folder: str, config: dict) -> list:
     return files
 
 
-def detect_nfo(paths: list) -> dict:
+def detect_nfo(paths: list, *, strict: bool = False) -> dict:
     """對每個路徑判斷旁邊有沒有同 stem 的 .nfo（對應原 880-885 nfo_stem_cache）。
 
     paths 是呼叫端已經正規化好的路徑字串；回傳 dict 用同一個字串當 key，
     呼叫端逐一 `nfo_map[path]` 取值。
+
+    `strict`：**列不到目錄時要不要把「不知道」說出來**（Codex PR #181 二審 P0）。
+
+    - `strict=False`（預設，手動清單那條路用）：列不到就當成「這夾沒有 .nfo」。
+      這是 `main` 就有的行為，逐字搬過來未改——手動路徑的後果只是清單上少了
+      「已有 NFO」的標記，**下一步還要人按下去**，沒有任何東西會自己動。
+    - `strict=True`（自動整理那條路用）：列不到就把 `OSError` 往外拋。
+      無人值守時「不知道」**不可以**被讀成「沒有 NFO」：那會讓整夾已經刮好的片
+      被當成沒刮過重跑一輪，而 `organize_file` 在「不建資料夾 ＋ 檔名已經是正規格式」
+      的設定下 `file_path == target_path`，搬移那段整段跳過（`core/organizer.py:1247`）
+      ⇒ 原子佔位**根本不會被觸發** ⇒ 直接往下把封面重下一次、把 NFO 整份重寫
+      （`:1279` / `:1333`），使用者手動編過的欄位就這樣沒了。
     """
     nfo_stem_cache = {}
     result = {}
@@ -78,6 +90,8 @@ def detect_nfo(paths: list) -> dict:
                     if s.suffix.lower() == ".nfo" and s.is_file()
                 }
             except (OSError, PermissionError):
+                if strict:
+                    raise
                 nfo_stem_cache[parent] = set()
         result[path_str] = p.stem.lower() in nfo_stem_cache[parent]
     return result

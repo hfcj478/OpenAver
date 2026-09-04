@@ -259,3 +259,54 @@ class TestSingleFileErrorDoesNotKillTheRound:
 
         with pytest.raises(PermissionError):
             list_favorite_video_files(str(folder), config)
+
+
+class TestDetectNfoStrictMode:
+    """Codex PR #181 二審 P0：列不到目錄時，「不知道」不可以被讀成「沒有 NFO」。"""
+
+    def test_default_mode_keeps_the_manual_path_behaviour(self, tmp_path, monkeypatch):
+        """反向鎖：預設模式維持 main 的行為（列不到＝當成沒有 NFO），手動清單不受影響。
+
+        手動路徑的後果只是清單上少了「已有 NFO」的標記，下一步還要人按下去，
+        沒有任何東西會自己動——改它反而會動到既有行為。
+        """
+        folder = tmp_path / "fav"
+        folder.mkdir()
+        video = folder / "ABC-123.mp4"
+        video.write_bytes(b"x")
+
+        def boom(self):
+            raise OSError(5, "Input/output error", str(self))
+
+        monkeypatch.setattr(Path, "iterdir", boom)
+
+        result = detect_nfo([str(video)])
+        assert result == {str(video): False}
+
+    def test_strict_mode_propagates_so_the_round_can_fail_closed(self, tmp_path, monkeypatch):
+        """strict=True 要把 OSError 往外拋，讓自動整理那一輪能夠什麼都不做。"""
+        folder = tmp_path / "fav"
+        folder.mkdir()
+        video = folder / "ABC-123.mp4"
+        video.write_bytes(b"x")
+
+        def boom(self):
+            raise OSError(5, "Input/output error", str(self))
+
+        monkeypatch.setattr(Path, "iterdir", boom)
+
+        with pytest.raises(OSError):
+            detect_nfo([str(video)], strict=True)
+
+    def test_strict_mode_is_normal_when_enumeration_works(self, tmp_path):
+        """strict 不改變成功路徑的答案。"""
+        folder = tmp_path / "fav"
+        folder.mkdir()
+        with_nfo = folder / "HAS-001.mp4"
+        with_nfo.write_bytes(b"x")
+        (folder / "HAS-001.nfo").write_text("<movie/>", encoding="utf-8")
+        without = folder / "NONE-002.mp4"
+        without.write_bytes(b"x")
+
+        result = detect_nfo([str(with_nfo), str(without)], strict=True)
+        assert result == {str(with_nfo): True, str(without): False}
