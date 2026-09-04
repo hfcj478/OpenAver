@@ -43,6 +43,8 @@ from core.image_host_policy import (
 from core.maker_mapping import load_prefix_mapping
 from core.source_config import validate_source_id
 from core.source_settings import get_switchable_source_ids_ordered, is_uncensored_mode_effective
+from core.auto_organize_state import mark_manual_activity, request_abort
+
 from core.scraper import (
     search_jav, smart_search, is_partial_number, is_number_format,
     is_prefix_only, search_partial, search_actress, strip_internal_nfo_keys
@@ -551,6 +553,7 @@ async def search_stream(
     - status: 搜尋狀態更新
     - result: 搜尋結果
     """
+    mark_manual_activity()
     q = q.strip()
     if not q or len(q) < 2:
         async def error_gen():
@@ -730,6 +733,8 @@ def get_favorite_files() -> dict:
             "total": 50
         }
     """
+    mark_manual_activity()
+    request_abort()
     from core.config import load_config
     from core.favorite_scan import list_favorite_video_files, resolve_favorite_folder
 

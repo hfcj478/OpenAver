@@ -1909,3 +1909,44 @@ class TestBatchSearch:
         # summary.total 是去重後的數量（2），不是原始輸入數量（3）
         assert data['summary']['total'] == 2, \
             f"Expected summary.total == 2 (deduped), got {data['summary']['total']}"
+
+
+class TestAutoOrganizeHooks:
+    """DoD-6: 驗證三個掛載點對 auto_organize_state 的分工與呼叫。"""
+
+    def test_favorite_files_marks_activity_and_requests_abort(self, client, mocker):
+        """GET /api/search/favorite-files 兩支都打：mark_manual_activity 與 request_abort。"""
+        from web.routers import search as search_module
+        spy_mark = mocker.spy(search_module, "mark_manual_activity")
+        spy_abort = mocker.spy(search_module, "request_abort")
+
+        client.get("/api/search/favorite-files")
+
+        assert spy_mark.call_count == 1
+        assert spy_abort.call_count == 1
+
+    def test_search_stream_only_marks_activity(self, client, mocker):
+        """GET /api/search/stream 只打 mark_manual_activity，絕不呼叫 request_abort。"""
+        from web.routers import search as search_module
+        spy_mark = mocker.spy(search_module, "mark_manual_activity")
+        spy_abort = mocker.spy(search_module, "request_abort")
+
+        client.get("/api/search/stream?q=AB")
+
+        assert spy_mark.call_count == 1
+        assert spy_abort.call_count == 0
+
+    def test_scrape_single_only_marks_activity(self, client, mocker):
+        """POST /api/scrape-single 只打 mark_manual_activity，絕不呼叫 request_abort。"""
+        from web.routers import scraper as scraper_module
+        spy_mark = mocker.spy(scraper_module.auto_organize_state, "mark_manual_activity")
+        spy_abort = mocker.spy(scraper_module.auto_organize_state, "request_abort")
+
+        client.post(
+            "/api/scrape-single",
+            json={"file_path": "/nonexistent/test.mp4", "number": "ABC-123"},
+        )
+
+        assert spy_mark.call_count == 1
+        assert spy_abort.call_count == 0
+

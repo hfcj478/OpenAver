@@ -41,6 +41,7 @@ from core.readonly_producer import (
     enrich_one_readonly, ReadonlyProduceError,
 )
 from core import thumbnail_cache
+from core import auto_organize_state
 from web.routers.notifications import emit_notification as _emit_notif
 from core.wishlist_reconcile import reconcile_wishlist, format_wishlist_removed_message
 
@@ -187,6 +188,7 @@ def scrape_single(request: ScrapeRequest) -> dict:
     4. 下載封面
     5. 生成 NFO
     """
+    auto_organize_state.mark_manual_activity()
     file_path = request.file_path
     number = request.number
 
