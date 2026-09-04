@@ -7352,6 +7352,44 @@ class TestResolveOwningOutputRoot:
         assert result[0].path == str(good)
 
 
+class TestFileInfoFor:
+    """Codex PR #179 round 3：樁列的 0 不得被 ⚙ 重刮沿用。"""
+
+    def _existing(self, size, mtime):
+        from core.database import Video
+        return Video(path="file:///x.mp4", size_bytes=size, mtime=mtime)
+
+    def test_zero_stats_existing_is_restatted(self, tmp_path):
+        from core.readonly_producer import _file_info_for
+        f = tmp_path / "v.mp4"
+        f.write_bytes(b"1234567890")
+
+        info = _file_info_for(str(f), self._existing(0, 0.0))
+
+        assert info["size"] == 10, "樁列的 0 必須被現場量到的值取代"
+        assert info["mtime"] > 0
+
+    def test_real_stats_existing_is_kept(self, tmp_path):
+        from core.readonly_producer import _file_info_for
+        f = tmp_path / "v.mp4"
+        f.write_bytes(b"1234567890")
+
+        info = _file_info_for(str(f), self._existing(999, 1700000000.0))
+
+        assert info["size"] == 999, "既有的真實值不得被覆蓋"
+        assert info["mtime"] == 1700000000.0
+
+    def test_no_existing_row_stats_the_file(self, tmp_path):
+        from core.readonly_producer import _file_info_for
+        f = tmp_path / "v.mp4"
+        f.write_bytes(b"12345")
+
+        info = _file_info_for(str(f), None)
+
+        assert info["size"] == 5
+        assert info["mtime"] > 0
+
+
 class TestReadonlyStubNotFound:
     """TASK-105-T5 (T2-a): _readonly_stub_not_found(repo, uri, number, fs_path)
     collapses the 3 not-found stub call sites (S1 scraper.py enrich-single,
@@ -7412,6 +7450,32 @@ class TestReadonlyStubNotFound:
         inserted = repo.insert_if_ignore.call_args[0][0]
         assert inserted.number is None, "空字串必須正規化成 NULL，不是原樣寫進去"
         assert inserted.title == "x"
+
+    def test_stub_carries_file_stats_from_scan(self):
+        """掃描端已經有 size/mtime，樁列要帶著走（不重複 stat）。"""
+        from core.readonly_producer import _readonly_stub_not_found
+
+        repo = MagicMock()
+        _readonly_stub_not_found(
+            repo, "file:///src/x.mp4", "X-001", "/src/does-not-exist.mp4",
+            size_bytes=4242, mtime=1700000000.0,
+        )
+
+        inserted = repo.insert_if_ignore.call_args[0][0]
+        assert inserted.size_bytes == 4242
+        assert inserted.mtime == 1700000000.0
+
+    def test_stub_stats_fall_back_to_zero_when_file_unreadable(self, tmp_path):
+        """沒帶 size/mtime 且檔案讀不到（碟斷線）→ 回 0，不得炸掉整條產出流程。"""
+        from core.readonly_producer import _readonly_stub_not_found
+
+        repo = MagicMock()
+        _readonly_stub_not_found(repo, "file:///src/x.mp4", "X-001",
+                                 str(tmp_path / "vanished.mp4"))
+
+        inserted = repo.insert_if_ignore.call_args[0][0]
+        assert inserted.size_bytes == 0
+        assert inserted.mtime == 0.0
 
     def test_uri_consistency_between_insert_and_update(self):
         """The uri passed to insert_if_ignore's Video.path must be the exact

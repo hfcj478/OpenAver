@@ -1400,3 +1400,10 @@ def test_us1_unscrapeable_files_get_rows_and_reach_showcase(
     assert shown[unnumbered.path]["title"] == "測試影片無番號-5566"
     assert shown[unnumbered.path]["number"] == ""      # 序列化層把 NULL 轉成空字串
     assert shown[unnumbered.path]["has_cover"] is False  # 破圖預設卡，⚙ 有地方長
+
+    # ⑤ 樁列也要帶檔案大小與修改時間（Codex PR #179 round 3）——留 0 的話這幾張卡
+    #    大小永遠顯示未知、依修改時間排序永遠沉在 epoch 0。
+    for row in (numbered, unnumbered):
+        assert row.size_bytes == len(b"FAKE-VIDEO-BYTES"), row.path
+        assert row.mtime > 0, row.path
+    assert shown[unnumbered.path]["size"] == len(b"FAKE-VIDEO-BYTES")

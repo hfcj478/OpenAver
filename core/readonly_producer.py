@@ -1804,7 +1804,38 @@ def _produce_one(
 # TASK-105-T5 (T2-a/T2-b): readonly-only Tier-2 convergence helpers
 # ---------------------------------------------------------------------------
 
-def _readonly_stub_not_found(repo, uri: str, number, fs_path: str) -> None:
+def _safe_file_stats(fs_path: str) -> tuple:
+    """回 (size_bytes, mtime)；檔案讀不到（碟斷線／權限）時回 (0, 0.0) 而不是炸掉。
+
+    唯讀來源可能住在會斷線的 NAS 上，而「量不到大小」不該讓整條產出流程失敗——
+    那是 `_list_source_videos` 早就採用的態度（`on_skip` 吞掉 OSError 繼續走）。
+    """
+    try:
+        return os.path.getsize(fs_path), os.path.getmtime(fs_path)
+    except OSError:
+        return 0, 0.0
+
+
+def _file_info_for(fs_path: str, existing) -> dict:
+    """_produce_one 要的 {path, size, mtime}：**existing 的值有內容才用，否則現場量**。
+
+    Codex PR #179 round 3。舊寫法是 `existing.size_bytes if existing else os.path.getsize(...)`
+    ——在 T2 之前那是對的（抽不出番號的檔案根本沒有列，`existing` 是 None ⇒ 走 stat）。
+    T2 讓**每個**唯讀檔在這一步之前都已經有一列樁列，而樁列的 size/mtime 都是 0，
+    於是那個三元式永遠走左邊、把 0 一路帶下去：**使用者按 ⚙ 重刮把卡片補完整之後，
+    大小仍然顯示未知、依修改時間排序仍然沉在 epoch 0**（實測 `SONE-205` 那一列）。
+    這是本 branch 自己造成的回歸，不是既有行為。
+    """
+    stat_size, stat_mtime = _safe_file_stats(fs_path)
+    return {
+        "path": fs_path,
+        "size": (existing.size_bytes if existing and existing.size_bytes else stat_size),
+        "mtime": (existing.mtime if existing and existing.mtime else stat_mtime),
+    }
+
+
+def _readonly_stub_not_found(repo, uri: str, number, fs_path: str, *,
+                             size_bytes=None, mtime=None) -> None:
     """唯讀 not-found 樁列（順序不可反）：先 insert_if_ignore 建樁 row、
     再 update_scrape_attempted_at 記帳。update_scrape_attempted_at 是 bare
     UPDATE...WHERE path=?，無 row 靜默 no-op，故必須先建樁（見 video.py:1144-1167）。
@@ -1817,8 +1848,21 @@ def _readonly_stub_not_found(repo, uri: str, number, fs_path: str) -> None:
     （S3 來自 extract_number 已是 None、S1 來自 request.number 是未經非空檢查的 str），
     正規化寫在這裡才是 CD-143-3「樁列形狀 ＝ 抽到的值 or None」的單一合約點——
     AC1-5 要的是 NULL 不是空字串（一般掃描寫的就是 `info.num or None`）。
+
+    `size_bytes` / `mtime`（Codex PR #179 round 3）：樁列也要帶檔案大小與修改時間。
+    掃描端（S3）已經從 `_list_source_videos` 拿到這兩個值，直接傳進來不重複 stat；
+    S1（單片 enrich）沒有那份清單，省略即由 `_safe_file_stats` 現場量。
+    留 0 的後果是使用者看得到的：`/api/showcase/videos` 會把它們吐給前端，
+    那幾張卡的大小永遠顯示未知、依修改時間排序時永遠沉在 epoch 0。
     """
-    repo.insert_if_ignore(Video(path=uri, number=number or None, title=Path(fs_path).stem))
+    if size_bytes is None or mtime is None:
+        stat_size, stat_mtime = _safe_file_stats(fs_path)
+        size_bytes = stat_size if size_bytes is None else size_bytes
+        mtime = stat_mtime if mtime is None else mtime
+    repo.insert_if_ignore(Video(
+        path=uri, number=number or None, title=Path(fs_path).stem,
+        size_bytes=size_bytes, mtime=mtime,
+    ))
     repo.update_scrape_attempted_at(uri, time.time())
 
 
@@ -1983,11 +2027,7 @@ def enrich_one_readonly(
         cover_strategy, write_cover, overwrite_existing, had_cover
     )
     # step 7
-    file_info = {
-        "path": fs_path,
-        "size": existing.size_bytes if existing else os.path.getsize(fs_path),
-        "mtime": existing.mtime if existing else os.path.getmtime(fs_path),
-    }
+    file_info = _file_info_for(fs_path, existing)
     # step 8 — C2 typed 邊界：只包這一個呼叫，前後任何步驟都不得進這個 try。
     # _produce_one now returns (movie_dir, assets). NFO is always written
     # (P1 revert, round-3 review 2026-07-21 — write_nfo=false is rejected by
@@ -2174,7 +2214,10 @@ def produce_source(source, config, repo, *, proxy_url="", on_progress=None, shou
         if not meta or not meta.get('number'):
             # T2: always stub a row (with or without a filename number), matching
             # the non-readonly scan's "every listed file gets a DB row" contract.
-            _readonly_stub_not_found(repo, src_uri, number, fi["path"])
+            _readonly_stub_not_found(
+                repo, src_uri, number, fi["path"],
+                size_bytes=fi["size"], mtime=fi["mtime"],
+            )
             result.no_scrape += 1
             _emit(on_progress, result, src_uri, "no_scrape")
             continue
