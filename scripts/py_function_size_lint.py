@@ -190,14 +190,24 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "難以追蹤資源釋放順序。",
     ),
     ("core/readonly_producer.py", "_write_movie_assets"): (
-        235,
+        243,
         "109 剛落地的唯讀單片產出主流程，寫入 nfo/cover/poster/fanart 等多個資產，需要維持"
         "同一次 I/O 序列的可推理性（部分失敗時的處置順序）；剛穩定，暫不再拆避免二次擾動。"
         " ── 218→235（v0.14.6 / TASK-126-T4b）：封面與 extrafanart 各接上代理備胎，"
         "外加 CD-126-9 那條「primary 來自 cover_strategy[1]、fallback 來自 meta」隱含耦合的"
         "說明註解（pre-merge Stage 2 P3-5；刻意用註解不用 runtime assert，"
         "因為那會在唯讀產出跑到一半時崩掉，比它要防的「封面錯一張」更糟）。"
-        "同 organize_file 條的 helper backlog。",
+        " ── 235→237（v0.15.12 / TASK-143-T5）：+2 行是「把呼叫端已查好的 user_tags "
+        "穿到 generate_nfo」的整條線（一個 `user_tags: Optional[list[str]] = None` 參數 "
+        "＋ 一個 `user_tags=user_tags or []` kwarg），沒有可再壓縮的空間，也不新增任何分支——"
+        "函式的圈複雜度不變，長度增加純粹來自參數穿線。不在此拆函式的理由與上一段相同。"
+        "同 organize_file 條的 helper backlog。"
+        " ── 237→243（v0.15.12 pre-merge，SA-pre-9 P3）：**+6 行全部是 docstring**——"
+        "上一段那條參數穿線當初沒有在逐參數說明區留下對應段落（`assets_mode`／`cover_strategy`／"
+        "`old_base`／`strm_mappings_getter` 都有），reviewer 讀 diff 時查不到 `user_tags` 的合約"
+        "（尤其是 CD-143-5「呼叫端必須在 _upsert_db 之前讀」那條時序要求）。"
+        "**零可執行行、零分支、圈複雜度不變**；本閘量的是 AST 的 end_lineno-lineno+1，"
+        "docstring 一併計入，所以補文件也要調基準。",
     ),
     ("build.py", "download_and_install_packages"): (
         204,

@@ -1784,6 +1784,9 @@ export function stateLightbox() {
                 if (data.success) {
                     this.currentLightboxVideo.user_tags = data.user_tags;
                     _recomputeVideoBadges(this.currentLightboxVideo);
+                    if (data.readonly_no_output) {
+                        this.showToast(window.t('showcase.lightbox.tag_nfo_not_written'), 'info');
+                    }
                 } else {
                     throw new Error(data.error || 'API failed');
                 }
@@ -1818,6 +1821,9 @@ export function stateLightbox() {
                 if (data.success) {
                     this.currentLightboxVideo.user_tags = data.user_tags;
                     _recomputeVideoBadges(this.currentLightboxVideo);
+                    if (data.readonly_no_output) {
+                        this.showToast(window.t('showcase.lightbox.tag_nfo_not_written'), 'info');
+                    }
                 } else {
                     throw new Error(data.error || 'API failed');
                 }

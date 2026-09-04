@@ -589,3 +589,261 @@ class TestE10PathCanonicalization:
         # 檔案不存在 → 可能 4xx（E1 auto-stub or 404），但不應 500（內部錯誤）
         assert resp.status_code != 500, \
             f"UNC URI 導致 API 500，response={resp.text}"
+
+
+# ── T4: 唯讀來源自訂標籤寫進輸出夾 NFO（TASK-143-T4）──────────────────────────
+
+_MINIMAL_NFO = b"""<?xml version='1.0' encoding='utf-8'?>
+<movie>
+  <title>TEST-001</title>
+  <num>TEST-001</num>
+</movie>
+"""
+
+
+def setup_readonly_user_tags_env(tmp_db, tmp_path, monkeypatch, *,
+                                 with_source_nfo=True, with_output_nfo=True,
+                                 output_dir_empty=False, extra_output_nfos=0):
+    """建唯讀來源 + 可選輸出夾，回傳 (client, src_dir, out_dir, file_uri)。
+
+    **模組層函式，不是測試 class 的方法**（Codex PR #179 P1）：環境準備一旦寫成
+    class 的 method，別的測試檔要借用就得把整個 `Test*` class import 過去，於是又得
+    想辦法阻止 pytest 重複收集它——而「改那個 class 的 `__test__` 屬性」是**全域改動**：
+    一旦兩邊的模組身分合而為一（例如有人補了 `tests/integration/__init__.py`），
+    原始檔那幾支測試會整組靜默不被收集。純函式沒有這個攻擊面：名字不以 Test 開頭，
+    pytest 根本不會看它。同 `test_readonly_offflavor_e2e.py` 的既有慣例
+    （`_make_source_dir` / `_make_config` / `_wire` / `_snapshot` 全是模組層函式）。
+    """
+    from web.routers import collection as collection_mod
+    from web.app import app
+    from core.database import Video, VideoRepository
+
+    src_dir = tmp_path / "ro_src"
+    src_dir.mkdir()
+    mp4 = src_dir / "TEST-001.mp4"
+    mp4.write_bytes(b"fake-video")
+    if with_source_nfo:
+        (src_dir / "TEST-001.nfo").write_bytes(_MINIMAL_NFO)
+
+    out_dir = None
+    output_dir_uri = ""
+    if not output_dir_empty:
+        out_dir = tmp_path / "ro_out" / "TEST-001"
+        out_dir.mkdir(parents=True)
+        if with_output_nfo:
+            (out_dir / "TEST-001.nfo").write_bytes(_MINIMAL_NFO)
+        for i in range(extra_output_nfos):
+            (out_dir / f"extra-{i}.nfo").write_bytes(_MINIMAL_NFO)
+        output_dir_uri = to_file_uri(str(out_dir))
+
+    file_uri = to_file_uri(str(mp4))
+    repo = VideoRepository(tmp_db)
+    repo.upsert(Video(
+        path=file_uri,
+        number="TEST-001",
+        title="TEST-001",
+        output_dir=output_dir_uri,
+        user_tags=[],
+    ))
+
+    fake_config = {
+        "gallery": {
+            "directories": [{"path": str(src_dir), "readonly": True, "output_path": ""}],
+            "path_mappings": {},
+        },
+        "scraper": {},
+    }
+    monkeypatch.setattr(collection_mod, "load_config", lambda: fake_config)
+    monkeypatch.setattr("web.routers.collection.get_db_path", lambda: tmp_db)
+
+    return TestClient(app), src_dir, out_dir, file_uri
+
+
+class TestT4ReadonlyUserTags:
+    """TASK-143-T4: 唯讀來源加／刪標籤 → 改寫輸出夾 NFO，來源零寫入。"""
+
+
+    def test_ac2_1_source_nfo_untouched_output_nfo_gets_tag(
+        self, tmp_db, tmp_path, monkeypatch
+    ):
+        """AC2-1: 來源有 NFO → 來源雜湊不變；輸出夾 NFO 帶新標籤。"""
+        from test_readonly_offflavor_e2e import _snapshot
+
+        client, src_dir, out_dir, file_uri = setup_readonly_user_tags_env(
+            tmp_db, tmp_path, monkeypatch,
+            with_source_nfo=True, with_output_nfo=True,
+        )
+
+        before = _snapshot(src_dir)
+        resp = client.post("/api/user-tags", json={
+            "file_path": file_uri,
+            "add": ["T4TAG"],
+        })
+        after = _snapshot(src_dir)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert "T4TAG" in data["user_tags"]
+        assert data["nfo_updated"] is True
+        assert data["readonly_no_output"] is False
+        assert after == before, "來源目錄被寫入（零寫入承諾破掉）"
+
+        out_nfo = (out_dir / "TEST-001.nfo").read_text(encoding="utf-8")
+        assert "T4TAG" in out_nfo
+        assert "<user_tag>T4TAG</user_tag>" in out_nfo
+
+    def test_ac2_2_no_source_nfo_output_updated(self, tmp_db, tmp_path, monkeypatch):
+        """AC2-2: 來源無 NFO、輸出夾有 → 改寫輸出夾 NFO。"""
+        client, src_dir, out_dir, file_uri = setup_readonly_user_tags_env(
+            tmp_db, tmp_path, monkeypatch,
+            with_source_nfo=False, with_output_nfo=True,
+        )
+
+        resp = client.post("/api/user-tags", json={
+            "file_path": file_uri,
+            "add": ["T4TAG2"],
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["nfo_updated"] is True
+        assert data["readonly_no_output"] is False
+
+        out_nfo = (out_dir / "TEST-001.nfo").read_text(encoding="utf-8")
+        assert "<user_tag>T4TAG2</user_tag>" in out_nfo
+        assert not (src_dir / "TEST-001.nfo").exists()
+
+    def test_ac2_2b_stub_no_output_dir_readonly_no_output(
+        self, tmp_db, tmp_path, monkeypatch
+    ):
+        """AC2-2b: 樁列 output_dir='' → 只存 DB、readonly_no_output、不呼叫 NFO 寫入。"""
+        from core.database import VideoRepository
+        from unittest.mock import patch
+
+        client, _src_dir, _out_dir, file_uri = setup_readonly_user_tags_env(
+            tmp_db, tmp_path, monkeypatch,
+            output_dir_empty=True,
+        )
+
+        with patch("web.routers.collection.update_nfo_user_tags") as mock_nfo:
+            resp = client.post("/api/user-tags", json={
+                "file_path": file_uri,
+                "add": ["STUBTAG"],
+            })
+            mock_nfo.assert_not_called()
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["nfo_updated"] is False
+        assert data["readonly_no_output"] is True
+        assert "STUBTAG" in data["user_tags"]
+
+        repo = VideoRepository(tmp_db)
+        video = repo.get_by_path(file_uri)
+        assert video is not None
+        assert "STUBTAG" in video.user_tags
+
+    def test_ac2_defensive_multiple_nfo_in_output_dir(
+        self, tmp_db, tmp_path, monkeypatch
+    ):
+        """防禦性：輸出夾多份 .nfo → 不猜、回報未寫入、既有 NFO 不變。"""
+        from test_readonly_offflavor_e2e import _snapshot
+
+        client, _src_dir, out_dir, file_uri = setup_readonly_user_tags_env(
+            tmp_db, tmp_path, monkeypatch,
+            with_source_nfo=True, with_output_nfo=True, extra_output_nfos=1,
+        )
+
+        before = _snapshot(out_dir)
+        resp = client.post("/api/user-tags", json={
+            "file_path": file_uri,
+            "add": ["MULTITAG"],
+        })
+        after = _snapshot(out_dir)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["nfo_updated"] is False
+        assert data["readonly_no_output"] is True
+        assert after == before, "多份 NFO 時不應改寫任何一份"
+
+    def test_ac2_io_exception_also_reports_no_output(
+        self, tmp_db, tmp_path, monkeypatch
+    ):
+        """例外路徑（輸出夾在 NAS 上、權限／IO 錯誤）同樣要回報「沒有 NFO 被更新」。
+
+        使用者流程：對唯讀來源的片加標籤 → 輸出夾寫入時丟例外 → 過去後端只 log 一行
+        warning、回 readonly_no_output:false ⇒ **畫面上一則提示都沒有**，使用者以為
+        Jellyfin 待會就看得到。那正是 spec-143 §3.2 要消滅的靜默失敗，只是從例外路徑復活。
+        """
+        client, _src_dir, _out_dir, file_uri = setup_readonly_user_tags_env(
+            tmp_db, tmp_path, monkeypatch,
+            with_source_nfo=False, with_output_nfo=True,
+        )
+        monkeypatch.setattr(
+            "web.routers.collection.update_nfo_user_tags",
+            lambda *a, **kw: (_ for _ in ()).throw(OSError("NAS 掉線")),
+        )
+
+        resp = client.post("/api/user-tags", json={
+            "file_path": file_uri,
+            "add": ["IOTAG"],
+        })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True          # 標籤仍進 DB
+        assert data["nfo_updated"] is False
+        assert data["readonly_no_output"] is True
+
+    def test_ac2_malformed_output_nfo_also_reports_no_output(
+        self, tmp_db, tmp_path, monkeypatch
+    ):
+        """輸出夾恰有一份 NFO，但它壞掉（或 glob 之後消失）→ 一樣要回報未更新。
+
+        使用者流程：對唯讀來源的片加標籤 → 輸出夾那份 NFO 是壞的（手動編輯過、
+        寫到一半斷電、被外部工具改壞）→ `update_nfo_user_tags` **catch 後回 False
+        不是 raise** ⇒ 舊寫法三個分支一個都沒中 ⇒ 畫面一則提示都沒有，而標籤其實
+        只進了 DB。這是 Codex PR #179 round 2 的 P3，也是「列舉失敗分支」這個形狀
+        自己生出來的第四個洞——現在旗標改成從 `nfo_updated` 導出。
+        """
+        client, _src_dir, out_dir, file_uri = setup_readonly_user_tags_env(
+            tmp_db, tmp_path, monkeypatch,
+            with_source_nfo=False, with_output_nfo=True,
+        )
+        (out_dir / "TEST-001.nfo").write_bytes(b"<movie><unclosed>")  # 壞掉的 XML
+
+        resp = client.post("/api/user-tags", json={
+            "file_path": file_uri,
+            "add": ["BADNFO"],
+        })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True          # 標籤仍進 DB
+        assert data["nfo_updated"] is False
+        assert data["readonly_no_output"] is True
+
+    def test_normal_video_never_reports_readonly_no_output(
+        self, tmp_db, tmp_path, monkeypatch
+    ):
+        """反向鎖：非唯讀的片即使 NFO 寫失敗，也不得回 readonly_no_output=True。
+
+        導出式旗標最容易壞的方向就是把 `is_readonly` 這一半弄丟——那會讓一般片
+        每次 NFO 沒寫成都跳一則「媒體伺服器讀的那份沒更新」的唯讀專用提示。
+        """
+        with patch("web.routers.collection.update_nfo_user_tags", return_value=False):
+            monkeypatch.setattr("web.routers.collection.get_db_path", lambda: tmp_db)
+            from web.app import app
+            resp = TestClient(app).post("/api/user-tags", json={
+                "file_path": TEST_FILE_URI,
+                "add": ["NORMAL"],
+            })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["nfo_updated"] is False
+        assert data["readonly_no_output"] is False

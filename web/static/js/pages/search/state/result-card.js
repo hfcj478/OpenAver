@@ -380,6 +380,11 @@ export function searchStateResultCard() {
                 // P2: 更新 file-level user_tags（用 captured file ref 避免 await 期間切檔 race）
                 file.user_tags = data.user_tags;
                 this.saveState();
+                // TASK-143-T4: 唯讀來源且輸出夾沒有 NFO → 標籤只存了 DB，Jellyfin 看不到。
+                // 燈箱那側同一條（state-lightbox.js）；這裡不補會讓同一個靜默失敗從搜尋頁復活。
+                if (data.readonly_no_output) {
+                    this.showToast(window.t('search.error.tag_nfo_not_written'), 'info');
+                }
             } else {
                 this.showToast(window.t('search.error.tag_api_failed'), 'error');
             }
@@ -414,6 +419,11 @@ export function searchStateResultCard() {
                 // P2: 更新 file-level user_tags（用 captured file ref 避免 await 期間切檔 race）
                 file.user_tags = data.user_tags;
                 this.saveState();
+                // TASK-143-T4: 唯讀來源且輸出夾沒有 NFO → 標籤只存了 DB，Jellyfin 看不到。
+                // 燈箱那側同一條（state-lightbox.js）；這裡不補會讓同一個靜默失敗從搜尋頁復活。
+                if (data.readonly_no_output) {
+                    this.showToast(window.t('search.error.tag_nfo_not_written'), 'info');
+                }
             } else {
                 this.showToast(window.t('search.error.tag_api_failed'), 'error');
             }

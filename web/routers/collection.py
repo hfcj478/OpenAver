@@ -22,7 +22,8 @@ from core.database import Video, VideoRepository, get_connection, get_db_path
 from core.logger import get_logger
 from core.multipart_group import resolve_groups_bulk
 from core.nfo_updater import update_nfo_user_tags
-from core.path_utils import CURRENT_ENV, reverse_path_mapping, to_file_uri, uri_to_fs_path
+from core.path_utils import CURRENT_ENV, reverse_path_mapping, to_file_uri, uri_to_fs_path, uri_to_local_fs_path
+from core.readonly_producer import resolve_owning_output_root
 from core.scraper import extract_number, is_number_format
 
 logger = get_logger(__name__)
@@ -748,10 +749,13 @@ def post_user_tags(request: UserTagsRequest) -> dict:
     db_path = get_db_path()
     repo = VideoRepository(db_path)
 
+    config = load_config()
+    path_mappings = config.get("gallery", {}).get("path_mappings", {}) or {}
+
     # 0. 解析路徑 — 同時取得 canonical URI（DB key）+ local FS path（filesystem 操作）
     if not request.file_path:
         return {"success": False, "error": "file_path 不可為空"}
-    file_path, local_fs_path = _resolve_user_tag_paths(request.file_path)
+    file_path, local_fs_path = _resolve_user_tag_paths(request.file_path, path_mappings)
     if not file_path:
         return {"success": False, "error": "file_path 格式無效"}
 
@@ -804,15 +808,38 @@ def post_user_tags(request: UserTagsRequest) -> dict:
     if not updated:
         return {"success": False, "error": "DB 更新失敗"}
 
-    # 4. Surgical NFO update — 用 local_fs_path（WSL mapped mount 場景下與 DB key 不同）
+    # 4. Surgical NFO update — 唯讀來源改寫輸出夾那份，來源零寫入（CD-143-4）
     nfo_updated = False
-    try:
-        nfo_path = str(Path(local_fs_path).with_suffix(".nfo"))
-        nfo_updated = update_nfo_user_tags(nfo_path, merged_tags)
-    except Exception as e:
-        logger.warning("[user-tags] NFO 寫入失敗（忽略）: %s", e)
+    is_readonly = resolve_owning_output_root(file_path, config) is not None
+    if is_readonly:
+        # 樁列（從未成功 produce、輸出夾沒有東西）直接跳過，nfo_updated 維持 False
+        if video.output_dir:
+            try:
+                out_fs = Path(uri_to_local_fs_path(video.output_dir, path_mappings))
+                nfo_candidates = list(out_fs.glob("*.nfo"))
+                # 份數不是恰好一份時不猜（full-mode produce 是 holistic，正常恰有一份）
+                if len(nfo_candidates) == 1:
+                    nfo_updated = update_nfo_user_tags(str(nfo_candidates[0]), merged_tags)
+            except Exception as e:
+                logger.warning("[user-tags] 唯讀輸出夾 NFO 寫入失敗（忽略）: %s", e)
+    else:
+        try:
+            nfo_path = str(Path(local_fs_path).with_suffix(".nfo"))
+            nfo_updated = update_nfo_user_tags(nfo_path, merged_tags)
+        except Exception as e:
+            logger.warning("[user-tags] NFO 寫入失敗（忽略）: %s", e)
 
-    return {"success": True, "user_tags": merged_tags, "nfo_updated": nfo_updated}
+    # readonly_no_output 是**導出的**，不是逐個失敗分支去設的（Codex PR #179 round 2）。
+    # 上一輪的修法是「例外路徑補一個 readonly_no_output = True」，下一輪就被找到第四種
+    # 失敗形狀：輸出夾恰有一份 NFO 但它壞掉／glob 之後消失時，`update_nfo_user_tags`
+    # 是 **catch 後回 False**（`core/nfo_updater.py:50`）不是 raise ⇒ 三個分支一個都沒中，
+    # 而標籤其實只進了 DB。列舉失敗分支這個形狀本身會一直生出下一個洞。
+    #
+    # 這個旗標要講的事情只有一句：**唯讀來源的片，媒體伺服器讀的那份 NFO 這次沒有更新。**
+    # 那就直接從結果導出。`update_nfo_user_tags` 的 False 只有「檔案不存在」與「解析／
+    # 寫入失敗」兩種來源（沒有「不需要改所以回 False」），所以不會誤報。
+    readonly_no_output = is_readonly and not nfo_updated
+    return {"success": True, "user_tags": merged_tags, "nfo_updated": nfo_updated, "readonly_no_output": readonly_no_output}
 
 
 @user_tags_router.get("/user-tags")

@@ -82,7 +82,7 @@ from core.path_utils import (
     uri_to_local_fs_path,
 )
 from core.readonly_source import _canonical_source_prefix
-from core.scraper import extract_number, search_jav, search_jav_single_source
+from core.scraper import search_jav, search_jav_single_source
 from core.video_extensions import get_video_extensions
 
 logger = get_logger(__name__)
@@ -124,6 +124,11 @@ class ProduceResult:
 def _min_size_bytes(gallery_config: dict) -> int:
     """Convert gallery.min_size_mb → bytes. Mirrors scanner.py:221."""
     return int(gallery_config.get("min_size_mb", 0)) * 1024 * 1024
+
+
+def extract_number(filename: str) -> Optional[str]:
+    """改向一般掃描 NUM_PATTERNS 表提問提取番號，找不到時回傳 None 而非空字串。"""
+    return VideoScanner().find_num_from_filename(filename) or None
 
 
 def _list_source_videos(
@@ -1000,6 +1005,7 @@ def _write_movie_assets(
     assets_mode: str = 'full',
     old_base: str = '',
     strm_mappings_getter=None,
+    user_tags: Optional[list[str]] = None,
 ) -> dict:
     """Write nfo + cover + -poster/-fanart + extrafanart to movie_dir.
 
@@ -1073,6 +1079,12 @@ def _write_movie_assets(
     never repopulates it, silently wiping 補劇照 output for any video that
     gets re-produced. Any hypothetical future caller that DOES pass full-mode
     samples still gets correct clean+rewrite semantics.
+
+    user_tags (TASK-143-T5, CD-143-5): forwarded verbatim to generate_nfo so a
+    rescrape REGENERATES <user_tag> instead of dropping it (the DB row keeps them
+    either way — what was lost is the copy a media server reads). _produce_one
+    must read them BEFORE _upsert_db overwrites the row. None → [] → byte-identical
+    to pre-T5, which is why the ~40 direct test call sites need no change.
     """
     os.makedirs(movie_dir, exist_ok=True)
 
@@ -1194,6 +1206,7 @@ def _write_movie_assets(
         summary=meta.get('_summary', ''),
         rating=meta.get('_rating'),
         external_manager=external_manager,
+        user_tags=user_tags or [],
     )
     if not nfo_ok:
         raise RuntimeError(f"NFO write failed: {nfo_fs}")
@@ -1625,6 +1638,7 @@ def resolve_ingest_plan(
 
     if meta is None:
         return None, ('none',)
+    meta['maker'] = VideoScanner().normalize_maker(meta.get('number') or '', meta.get('maker', ''))
     meta['sample_images'] = []
     # CD-126-2 等長契約：清空 sample_images 就必須連帶清空 preview——長度不等是**靜默錯位**
     # （圖片對到別張），比破圖難查。
@@ -1777,6 +1791,7 @@ def _produce_one(
         str(movie_dir), meta, fd, file_info["path"], config,
         cover_strategy=cover_strategy, assets_mode=assets_mode,
         old_base=old_base, strm_mappings_getter=strm_mappings_getter,
+        user_tags=(existing.user_tags if existing else []),
     )
     _upsert_db(
         repo, src_uri, file_info, meta, assets, path_mappings, output_dir_uri,
@@ -1789,15 +1804,69 @@ def _produce_one(
 # TASK-105-T5 (T2-a/T2-b): readonly-only Tier-2 convergence helpers
 # ---------------------------------------------------------------------------
 
-def _readonly_stub_not_found(repo, uri: str, number, fs_path: str) -> None:
+def _safe_file_stats(fs_path: str) -> tuple:
+    """回 (size_bytes, mtime)；檔案讀不到（碟斷線／權限）時回 (0, 0.0) 而不是炸掉。
+
+    唯讀來源可能住在會斷線的 NAS 上，而「量不到大小」不該讓整條產出流程失敗——
+    那是 `_list_source_videos` 早就採用的態度（`on_skip` 吞掉 OSError 繼續走）。
+    """
+    try:
+        return os.path.getsize(fs_path), os.path.getmtime(fs_path)
+    except OSError as e:
+        # 吞掉但留痕（與 b9dc36fc「exists 探測的意外例外也留痕」對稱）：不留這一行的話，
+        # 碟斷線時卡片的大小變成未知、流程照樣回報成功，而 debug.log 查不到是哪個路徑、
+        # 什麼錯誤造成的。fallback 本身不變——量不到大小不該讓整條產出流程失敗。
+        logger.warning("[readonly] 讀不到檔案統計，size/mtime 記為 0: %s — %s", fs_path, e)
+        return 0, 0.0
+
+
+def _file_info_for(fs_path: str, existing) -> dict:
+    """_produce_one 要的 {path, size, mtime}：**existing 的值有內容才用，否則現場量**。
+
+    Codex PR #179 round 3。舊寫法是 `existing.size_bytes if existing else os.path.getsize(...)`
+    ——在 T2 之前那是對的（抽不出番號的檔案根本沒有列，`existing` 是 None ⇒ 走 stat）。
+    T2 讓**每個**唯讀檔在這一步之前都已經有一列樁列，而樁列的 size/mtime 都是 0，
+    於是那個三元式永遠走左邊、把 0 一路帶下去：**使用者按 ⚙ 重刮把卡片補完整之後，
+    大小仍然顯示未知、依修改時間排序仍然沉在 epoch 0**（實測 `SONE-205` 那一列）。
+    這是本 branch 自己造成的回歸，不是既有行為。
+    """
+    stat_size, stat_mtime = _safe_file_stats(fs_path)
+    return {
+        "path": fs_path,
+        "size": (existing.size_bytes if existing and existing.size_bytes else stat_size),
+        "mtime": (existing.mtime if existing and existing.mtime else stat_mtime),
+    }
+
+
+def _readonly_stub_not_found(repo, uri: str, number, fs_path: str, *,
+                             size_bytes=None, mtime=None) -> None:
     """唯讀 not-found 樁列（順序不可反）：先 insert_if_ignore 建樁 row、
     再 update_scrape_attempted_at 記帳。update_scrape_attempted_at 是 bare
     UPDATE...WHERE path=?，無 row 靜默 no-op，故必須先建樁（見 video.py:1144-1167）。
 
-    repo 由呼叫端傳（各站來源不同：S1/S2 現場新建、S3 呼叫端傳入共用實例）；
-    `if number:` guard（若有）留呼叫端 — helper body 無條件執行兩步。
+    repo 由呼叫端傳（各站來源不同：S1/S2 現場新建、S3 呼叫端傳入共用實例）。
+    T2（spec-143 §3.1）起兩個呼叫端都是無條件呼叫 — 唯讀列舉到的每個影片檔一律
+    建樁列，與一般掃描一致；`number` 為 None（檔名抽不出番號）也照建。
+    title 用 Path(fs_path).stem（不含副檔名），與一般掃描的標題格式逐字對齊。
+    `number or None` 落在 helper 本體而非呼叫端：兩個呼叫端的 number 來源不同
+    （S3 來自 extract_number 已是 None、S1 來自 request.number 是未經非空檢查的 str），
+    正規化寫在這裡才是 CD-143-3「樁列形狀 ＝ 抽到的值 or None」的單一合約點——
+    AC1-5 要的是 NULL 不是空字串（一般掃描寫的就是 `info.num or None`）。
+
+    `size_bytes` / `mtime`（Codex PR #179 round 3）：樁列也要帶檔案大小與修改時間。
+    掃描端（S3）已經從 `_list_source_videos` 拿到這兩個值，直接傳進來不重複 stat；
+    S1（單片 enrich）沒有那份清單，省略即由 `_safe_file_stats` 現場量。
+    留 0 的後果是使用者看得到的：`/api/showcase/videos` 會把它們吐給前端，
+    那幾張卡的大小永遠顯示未知、依修改時間排序時永遠沉在 epoch 0。
     """
-    repo.insert_if_ignore(Video(path=uri, number=number, title=os.path.basename(fs_path)))
+    if size_bytes is None or mtime is None:
+        stat_size, stat_mtime = _safe_file_stats(fs_path)
+        size_bytes = stat_size if size_bytes is None else size_bytes
+        mtime = stat_mtime if mtime is None else mtime
+    repo.insert_if_ignore(Video(
+        path=uri, number=number or None, title=Path(fs_path).stem,
+        size_bytes=size_bytes, mtime=mtime,
+    ))
     repo.update_scrape_attempted_at(uri, time.time())
 
 
@@ -1962,11 +2031,7 @@ def enrich_one_readonly(
         cover_strategy, write_cover, overwrite_existing, had_cover
     )
     # step 7
-    file_info = {
-        "path": fs_path,
-        "size": existing.size_bytes if existing else os.path.getsize(fs_path),
-        "mtime": existing.mtime if existing else os.path.getmtime(fs_path),
-    }
+    file_info = _file_info_for(fs_path, existing)
     # step 8 — C2 typed 邊界：只包這一個呼叫，前後任何步驟都不得進這個 try。
     # _produce_one now returns (movie_dir, assets). NFO is always written
     # (P1 revert, round-3 review 2026-07-21 — write_nfo=false is rejected by
@@ -2151,12 +2216,12 @@ def produce_source(source, config, repo, *, proxy_url="", on_progress=None, shou
             fi["path"], number, scraper_cfg, action='ingest', proxy_url=proxy_url,
         )
         if not meta or not meta.get('number'):
-            # Only stub+record-attempt when a filename number exists (matches
-            # the old `if not number` branch's behavior byte-for-byte for the
-            # no-number-no-NFO case — no DB row for a file we can't identify
-            # at all).
-            if number:
-                _readonly_stub_not_found(repo, src_uri, number, fi["path"])
+            # T2: always stub a row (with or without a filename number), matching
+            # the non-readonly scan's "every listed file gets a DB row" contract.
+            _readonly_stub_not_found(
+                repo, src_uri, number, fi["path"],
+                size_bytes=fi["size"], mtime=fi["mtime"],
+            )
             result.no_scrape += 1
             _emit(on_progress, result, src_uri, "no_scrape")
             continue

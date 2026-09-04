@@ -56,6 +56,31 @@ class TestMinSizeBytes:
         assert _min_size_bytes({"min_size_mb": 0}) == 0
 
 
+class TestExtractNumberParity:
+    def test_matches_scan_table_for_number_prefix_samples(self):
+        from core.gallery_scanner import VideoScanner
+        from core.readonly_producer import extract_number
+
+        scanner = VideoScanner()
+        samples = [
+            "200GANA-3360.mp4",
+            "259LUXU-001.mp4",
+            "PT-71.mp4",
+            "T28-103.mp4",
+        ]
+        for filename in samples:
+            assert extract_number(filename) == scanner.find_num_from_filename(filename)
+
+        assert extract_number("PT-71.mp4") == "PT-71"
+
+    def test_no_number_returns_none_not_empty_string(self):
+        from core.readonly_producer import extract_number
+
+        res = extract_number("nonumber.mp4")
+        assert res is None
+        assert res != ""
+
+
 # ---------------------------------------------------------------------------
 # _list_source_videos
 # ---------------------------------------------------------------------------
@@ -3033,9 +3058,12 @@ class TestProduceSourceNoneNumberGuard:
         assert result.created == 0
         mock_extract.assert_called_once()
         mock_search.assert_not_called()
-        # 89b-T2 regression lock: no-number branch must NOT write to DB at all.
-        repo.insert_if_ignore.assert_not_called()
-        repo.update_scrape_attempted_at.assert_not_called()
+        # T2: no-number branch always stubs a row (title = stem, number=None).
+        repo.insert_if_ignore.assert_called_once()
+        inserted = repo.insert_if_ignore.call_args[0][0]
+        assert inserted.number is None
+        assert inserted.title == "nonnumber"
+        repo.update_scrape_attempted_at.assert_called_once()
         repo.upsert.assert_not_called()
 
     def test_none_number_emits_no_scrape_outcome(self):
@@ -3101,11 +3129,10 @@ class TestProduceSourceSidecarNfoBypassesFilenameNumberBail:
         upserted = repo.upsert.call_args[0][0]
         assert upserted.number == 'SIDECAR-001'
 
-    def test_no_filename_number_no_nfo_no_scrape_and_no_stub(self):
-        """(b) no filename number + no NFO -> no_scrape, and (unlike the
-        has-number case) NO stub row is created — matches the OLD `if not
-        number` branch's behavior byte-for-byte (regression, same assertions
-        as TestProduceSourceNoneNumberGuard)."""
+    def test_no_filename_number_no_nfo_no_scrape_and_stub_created(self):
+        """(b) no filename number + no NFO -> no_scrape, and (T2 onwards) a
+        stub row IS created — same outcome as TestProduceSourceNoneNumberGuard,
+        via this sidecar-bypass entry point."""
         from core.readonly_producer import produce_source
 
         source = _make_source()
@@ -3125,8 +3152,11 @@ class TestProduceSourceSidecarNfoBypassesFilenameNumberBail:
         mock_search.assert_not_called()
         assert result.no_scrape == 1
         assert result.created == 0
-        repo.insert_if_ignore.assert_not_called()
-        repo.update_scrape_attempted_at.assert_not_called()
+        repo.insert_if_ignore.assert_called_once()
+        inserted = repo.insert_if_ignore.call_args[0][0]
+        assert inserted.number is None
+        assert inserted.title == "nonumber"
+        repo.update_scrape_attempted_at.assert_called_once()
         repo.upsert.assert_not_called()
 
     def test_has_number_no_metadata_still_stubs(self):
@@ -3196,7 +3226,7 @@ class TestProduceSourceNotFoundAttempted:
         assert isinstance(inserted, Video)
         assert inserted.path == "file:///src/videos/NOTFOUND-001.mp4"
         assert inserted.number == "NOTFOUND-001"
-        assert inserted.title == "NOTFOUND-001.mp4"  # basename, WITH extension
+        assert inserted.title == "NOTFOUND-001"
         # minimal row: no cover/folder-related fields populated
         assert inserted.cover_path == ''
         assert inserted.output_dir == ''
@@ -3450,7 +3480,7 @@ class TestProduceSourceExceptionDoesNotAbort:
         call_count = [0]
 
         def fake_write(movie_dir, meta_arg, fd_arg, src_path, cfg, cover_strategy=None,
-                      assets_mode='full', old_base='', strm_mappings_getter=None):
+                      assets_mode='full', old_base='', strm_mappings_getter=None, **kwargs):
             call_count[0] += 1
             if call_count[0] == 2:
                 raise OSError("disk full")
@@ -3714,6 +3744,47 @@ class TestProduceSourcePrune:
         mock_thumb.invalidate.assert_not_called()
         assert result.pruned == 0
         assert result.pruned == 0
+
+
+class TestProduceSourceNoNumberStubPruned:
+    """TASK-143-T2: a no-number stub row created by the T2 path must be
+    pruned by the existing three-gate prune when the file leaves the source
+    (real temp_db, two-round produce_source — same shape as
+    TestProduceSourceNotFoundSecondRunSkipped)."""
+
+    def test_no_number_stub_pruned_when_file_removed(self, temp_db):
+        from core.database import VideoRepository
+        from core.readonly_producer import produce_source
+
+        repo = VideoRepository(temp_db)
+        source = _make_source()
+        config = _make_config()
+        files_r1 = [_make_file_info(path="/src/videos/nonnumber.mp4")]
+
+        # Round 1: no filename number → stub row (number=None, title=stem).
+        with patch("core.readonly_producer._list_source_videos", return_value=files_r1), \
+             patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
+             patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
+             patch("core.readonly_producer.extract_number", return_value=None):
+            result1 = produce_source(source, config, repo)
+
+        assert result1.no_scrape == 1
+        stub = repo.get_by_path("file:///src/videos/nonnumber.mp4")
+        assert stub is not None
+        assert stub.number is None
+        assert stub.title == "nonnumber"
+
+        # Round 2: original file gone; list still non-empty (OTHER-001) so the
+        # "files non-empty" prune gate stays open.
+        files_r2 = [_make_file_info(path="/src/videos/OTHER-001.mp4")]
+        with patch("core.readonly_producer._list_source_videos", return_value=files_r2), \
+             patch("core.readonly_producer.normalize_path", return_value="/output/dest"), \
+             patch("core.readonly_producer.to_file_uri", side_effect=_fake_to_file_uri), \
+             patch("core.readonly_producer.extract_number", return_value=None):
+            result2 = produce_source(source, config, repo)
+
+        assert result2.pruned == 1
+        assert repo.get_by_path("file:///src/videos/nonnumber.mp4") is None
 
 
 # ---------------------------------------------------------------------------
@@ -7281,6 +7352,44 @@ class TestResolveOwningOutputRoot:
         assert result[0].path == str(good)
 
 
+class TestFileInfoFor:
+    """Codex PR #179 round 3：樁列的 0 不得被 ⚙ 重刮沿用。"""
+
+    def _existing(self, size, mtime):
+        from core.database import Video
+        return Video(path="file:///x.mp4", size_bytes=size, mtime=mtime)
+
+    def test_zero_stats_existing_is_restatted(self, tmp_path):
+        from core.readonly_producer import _file_info_for
+        f = tmp_path / "v.mp4"
+        f.write_bytes(b"1234567890")
+
+        info = _file_info_for(str(f), self._existing(0, 0.0))
+
+        assert info["size"] == 10, "樁列的 0 必須被現場量到的值取代"
+        assert info["mtime"] > 0
+
+    def test_real_stats_existing_is_kept(self, tmp_path):
+        from core.readonly_producer import _file_info_for
+        f = tmp_path / "v.mp4"
+        f.write_bytes(b"1234567890")
+
+        info = _file_info_for(str(f), self._existing(999, 1700000000.0))
+
+        assert info["size"] == 999, "既有的真實值不得被覆蓋"
+        assert info["mtime"] == 1700000000.0
+
+    def test_no_existing_row_stats_the_file(self, tmp_path):
+        from core.readonly_producer import _file_info_for
+        f = tmp_path / "v.mp4"
+        f.write_bytes(b"12345")
+
+        info = _file_info_for(str(f), None)
+
+        assert info["size"] == 5
+        assert info["mtime"] > 0
+
+
 class TestReadonlyStubNotFound:
     """TASK-105-T5 (T2-a): _readonly_stub_not_found(repo, uri, number, fs_path)
     collapses the 3 not-found stub call sites (S1 scraper.py enrich-single,
@@ -7320,10 +7429,53 @@ class TestReadonlyStubNotFound:
         assert isinstance(inserted, Video)
         assert inserted.path == "file:///src/videos/NOTFOUND-001.mp4"
         assert inserted.number == "NOTFOUND-001"
-        assert inserted.title == "NOTFOUND-001.mp4"  # basename, WITH extension
+        assert inserted.title == "NOTFOUND-001"  # Path(fs_path).stem, WITHOUT extension
         assert inserted.cover_path == ''
         assert inserted.output_dir == ''
         assert inserted.sample_images == []
+
+    def test_empty_number_normalized_to_null(self):
+        """空字串 number → 寫 NULL（AC1-5：一般掃描寫的就是 `info.num or None`）。
+
+        這條守的是 **S1 那條路**（`enrich_one_readonly` → `request.number`，型別是
+        未經非空檢查的 `str`）；S3（`produce_source`）的 number 來自 `extract_number()`，
+        它已經回 None，所以走掃描的 e2e **殺不掉這顆 mutation**（等價突變，見
+        gotchas BE-TEST-30）。正規化寫在 helper 本體，這支就是它的正向鎖。
+        """
+        from core.readonly_producer import _readonly_stub_not_found
+
+        repo = MagicMock()
+        _readonly_stub_not_found(repo, "file:///src/videos/x.mp4", "", "/src/videos/x.mp4")
+
+        inserted = repo.insert_if_ignore.call_args[0][0]
+        assert inserted.number is None, "空字串必須正規化成 NULL，不是原樣寫進去"
+        assert inserted.title == "x"
+
+    def test_stub_carries_file_stats_from_scan(self):
+        """掃描端已經有 size/mtime，樁列要帶著走（不重複 stat）。"""
+        from core.readonly_producer import _readonly_stub_not_found
+
+        repo = MagicMock()
+        _readonly_stub_not_found(
+            repo, "file:///src/x.mp4", "X-001", "/src/does-not-exist.mp4",
+            size_bytes=4242, mtime=1700000000.0,
+        )
+
+        inserted = repo.insert_if_ignore.call_args[0][0]
+        assert inserted.size_bytes == 4242
+        assert inserted.mtime == 1700000000.0
+
+    def test_stub_stats_fall_back_to_zero_when_file_unreadable(self, tmp_path):
+        """沒帶 size/mtime 且檔案讀不到（碟斷線）→ 回 0，不得炸掉整條產出流程。"""
+        from core.readonly_producer import _readonly_stub_not_found
+
+        repo = MagicMock()
+        _readonly_stub_not_found(repo, "file:///src/x.mp4", "X-001",
+                                 str(tmp_path / "vanished.mp4"))
+
+        inserted = repo.insert_if_ignore.call_args[0][0]
+        assert inserted.size_bytes == 0
+        assert inserted.mtime == 0.0
 
     def test_uri_consistency_between_insert_and_update(self):
         """The uri passed to insert_if_ignore's Video.path must be the exact
@@ -7841,3 +7993,227 @@ class TestT4bReadonlyFullSamplesFallback(_T4bReadonlyBase):
             assert mg.call_count == 3
         finally:
             self._clear_failed_hosts()
+
+
+# ===========================================================================
+# TASK-143-T3 (CD-143-6): resolve_ingest_plan maker normalization
+# ===========================================================================
+
+class TestResolveIngestPlanMakerNormalization:
+    """TASK-143-T3: resolve_ingest_plan 尾端片商正規化對齊（NFO 分支 ＋ 爬蟲分支）。"""
+
+    def _touch_video(self, tmp_path, name='SRC-001.mp4'):
+        p = tmp_path / name
+        p.write_bytes(b'FAKE')
+        return p
+
+    def test_nfo_branch_name_mapping_applied(self, tmp_path):
+        """NFO 分支：sidecar NFO 的 <maker> 為 'S1 NO.1 STYLE'（name_mapping key）
+        → resolve_ingest_plan 回傳之 meta['maker'] 被正規化為 'S1'。"""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path, 'S1-001.mp4')
+        nfo = video.with_suffix('.nfo')
+        nfo.write_text(
+            '<movie><num>S1-001</num><title>T</title><maker>S1 NO.1 STYLE</maker></movie>',
+            encoding='utf-8',
+        )
+
+        meta, cover_strategy = resolve_ingest_plan(str(video), 'S1-001', {}, action='ingest')
+
+        assert meta is not None
+        assert meta['maker'] == 'S1'
+
+    def test_scrape_branch_prefix_mapping_applied(self, tmp_path):
+        """爬蟲分支：search_jav 回傳 number='SSIS-001'、maker='Raw Maker Name'（不在 name_mapping）
+        → 透過 prefix_mapping['SSIS'] == 'S1' 正規化為 'S1'。"""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path, 'SSIS-001.mp4')
+        raw_meta = {
+            'number': 'SSIS-001',
+            'title': 'T',
+            'cover': '',
+            'maker': 'Raw Maker Name',
+        }
+
+        with patch('core.readonly_producer.search_jav', return_value=raw_meta):
+            meta, cover_strategy = resolve_ingest_plan(str(video), 'SSIS-001', {}, action='ingest')
+
+        assert meta is not None
+        assert meta['maker'] == 'S1'
+
+    def test_reverse_lock_name_mapping_takes_precedence_over_prefix_mapping(self, tmp_path):
+        """反向鎖：兩層對照對同一部片給出**不同答案**的真衝突樣本——
+        maker='S1 NO.1 STYLE'（name_mapping → 'S1'）＋ number='CRB-123'
+        （prefix_mapping['CRB'] → 'Caribbeancom'）。期望 'S1'：Step 1 原名對照
+        短路優先，證明加上前綴對照那一層沒有把原名對照擠掉。
+
+        取樣理由（T3 grok review P3）：前綴不在表內的樣本（如 'ZZZFAKE-001'）
+        守不住這條——把 normalize_maker 的 Step1/Step2 對調它照樣綠，因為只有
+        一層會命中。**反向鎖必須用兩層都命中且答案相異的樣本才有鑑別力。**"""
+        from core.readonly_producer import resolve_ingest_plan
+
+        video = self._touch_video(tmp_path, 'CRB-123.mp4')
+        raw_meta = {
+            'number': 'CRB-123',
+            'title': 'T',
+            'cover': '',
+            'maker': 'S1 NO.1 STYLE',
+        }
+
+        with patch('core.readonly_producer.search_jav', return_value=raw_meta):
+            meta, cover_strategy = resolve_ingest_plan(str(video), 'CRB-123', {}, action='ingest')
+
+        assert meta is not None
+        # 兩層都命中：name_mapping 給 'S1'、prefix_mapping 給 'Caribbeancom'。
+        assert meta['maker'] == 'S1'
+        assert meta['maker'] != 'Caribbeancom'
+
+    def test_focal_gate_flips_when_maker_normalized_to_uncensored(self, tmp_path):
+        """focal 連帶「會翻轉」：CRB-123 ＋ RawCRBMaker → 正規化前 requires_face_detection 為 False；
+        正規化後 maker 變 Caribbeancom，requires_face_detection 由 False 變 True。"""
+        from core.focal.gate import requires_face_detection
+        from core.readonly_producer import resolve_ingest_plan
+
+        num = 'CRB-123'
+        raw_maker = 'RawCRBMaker'
+
+        # 驗證初始條件：正規化前 gate 判定為 False
+        assert requires_face_detection(num, raw_maker) is False
+
+        video = self._touch_video(tmp_path, f'{num}.mp4')
+        raw_meta = {
+            'number': num,
+            'title': 'T',
+            'cover': '',
+            'maker': raw_maker,
+        }
+
+        with patch('core.readonly_producer.search_jav', return_value=raw_meta):
+            meta, _ = resolve_ingest_plan(str(video), num, {}, action='ingest')
+
+        assert meta is not None
+        assert meta['maker'] == 'Caribbeancom'
+        assert requires_face_detection(meta['number'], meta['maker']) is True
+
+    def test_focal_gate_remains_false_when_maker_normalized_to_censored(self, tmp_path):
+        """focal 連帶「不翻轉」：SSIS-002 ＋ Maker → 正規化後 maker 變 S1，
+        但 requires_face_detection 兩邊都是 False（maker 值變了、布林判定沒變，明確斷言兩件事）。"""
+        from core.focal.gate import requires_face_detection
+        from core.readonly_producer import resolve_ingest_plan
+
+        num = 'SSIS-002'
+        raw_maker = 'Maker'
+
+        # 驗證初始條件：正規化前 gate 判定為 False
+        assert requires_face_detection(num, raw_maker) is False
+
+        video = self._touch_video(tmp_path, f'{num}.mp4')
+        raw_meta = {
+            'number': num,
+            'title': 'T',
+            'cover': '',
+            'maker': raw_maker,
+        }
+
+        with patch('core.readonly_producer.search_jav', return_value=raw_meta):
+            meta, _ = resolve_ingest_plan(str(video), num, {}, action='ingest')
+
+        assert meta is not None
+        assert meta['maker'] == 'S1'  # 1. maker 值變了
+        assert requires_face_detection(meta['number'], meta['maker']) is False  # 2. 布林判定沒變
+
+
+# ---------------------------------------------------------------------------
+# TASK-143-T5: Readonly NFO user_tags threading
+# ---------------------------------------------------------------------------
+
+class TestWriteMovieAssetsUserTags:
+    def test_write_movie_assets_writes_user_tags_to_nfo(self, tmp_path):
+        from core.readonly_producer import _format_data, _write_movie_assets
+
+        movie_dir = tmp_path / "movie"
+        movie_dir.mkdir()
+        meta = {"number": "TEST-001", "title": "Test Title"}
+        config = {"external_manager": "off"}
+        fd = _format_data(meta, "/src/TEST-001.mp4", config)
+
+        _write_movie_assets(
+            str(movie_dir), meta, fd, "/src/TEST-001.mp4", config,
+            cover_strategy=("none",), user_tags=["★4"],
+        )
+
+        nfo_files = list(movie_dir.glob("*.nfo"))
+        assert len(nfo_files) == 1
+        content = nfo_files[0].read_text(encoding="utf-8")
+        assert "<user_tag>★4</user_tag>" in content
+
+    def test_write_movie_assets_default_user_tags_omits_tag_elements(self, tmp_path):
+        from core.readonly_producer import _format_data, _write_movie_assets
+
+        movie_dir = tmp_path / "movie_default"
+        movie_dir.mkdir()
+        meta = {"number": "TEST-002", "title": "Default Title"}
+        config = {"external_manager": "off"}
+        fd = _format_data(meta, "/src/TEST-002.mp4", config)
+
+        _write_movie_assets(
+            str(movie_dir), meta, fd, "/src/TEST-002.mp4", config,
+            cover_strategy=("none",),
+        )
+
+        nfo_files = list(movie_dir.glob("*.nfo"))
+        assert len(nfo_files) == 1
+        content = nfo_files[0].read_text(encoding="utf-8")
+        assert "<user_tag>" not in content
+
+
+class TestProduceOneUserTags:
+    def test_produce_one_passes_existing_user_tags_to_write_movie_assets(self, tmp_path):
+        from core.database import Video
+        from core.readonly_producer import _produce_one
+
+        output_root = tmp_path / "output"
+        output_root.mkdir()
+        file_info = {"path": "/src/TEST-001.mp4", "size": 1000, "mtime": 1.0}
+        meta = {"number": "TEST-001", "title": "Test"}
+        existing = Video(path="file:///src/TEST-001.mp4", number="TEST-001", title="Test", user_tags=["custom"])
+        repo = MagicMock()
+
+        with patch("core.readonly_producer._resolve_movie_dir",
+                   return_value=(tmp_path / "output" / "TEST-001", "file:///whatever-db-uri")), \
+             patch("core.readonly_producer._write_movie_assets",
+                   return_value={"nfo_mtime": 1.0, "cover_fs": "", "sample_fs": []}) as mock_write, \
+             patch("core.readonly_producer._upsert_db"):
+            _produce_one(
+                repo, None, {"scraper": {}},
+                file_info=file_info, meta=meta, cover_strategy=("none",),
+                assets_mode="full", existing=existing,
+                output_root=str(output_root), output_uri="file:///output",
+                allocated_this_run=set(), path_mappings={},
+            )
+        assert mock_write.call_args.kwargs["user_tags"] == ["custom"]
+
+    def test_produce_one_passes_empty_tags_when_existing_is_none(self, tmp_path):
+        from core.readonly_producer import _produce_one
+
+        output_root = tmp_path / "output"
+        output_root.mkdir()
+        file_info = {"path": "/src/TEST-001.mp4", "size": 1000, "mtime": 1.0}
+        meta = {"number": "TEST-001", "title": "Test"}
+        repo = MagicMock()
+
+        with patch("core.readonly_producer._resolve_movie_dir",
+                   return_value=(tmp_path / "output" / "TEST-001", "file:///whatever-db-uri")), \
+             patch("core.readonly_producer._write_movie_assets",
+                   return_value={"nfo_mtime": 1.0, "cover_fs": "", "sample_fs": []}) as mock_write, \
+             patch("core.readonly_producer._upsert_db"):
+            _produce_one(
+                repo, None, {"scraper": {}},
+                file_info=file_info, meta=meta, cover_strategy=("none",),
+                assets_mode="full", existing=None,
+                output_root=str(output_root), output_uri="file:///output",
+                allocated_this_run=set(), path_mappings={},
+            )
+        assert mock_write.call_args.kwargs["user_tags"] == []
