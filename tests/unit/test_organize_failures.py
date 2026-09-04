@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from core.database.connection import init_db, get_connection
-from core.path_utils import normalize_path
+from core.path_utils import get_environment, normalize_path
 
 
 @pytest.fixture
@@ -232,7 +232,17 @@ def test_duplicate_key_normalization_and_signature():
         duplicate_key("/some/path/video.mp4")  # type: ignore
 
     # 2. 契約檢查：同一檔案在原生路徑與 normalize_path 路徑下回傳相同鍵
-    raw_path = "C:\\Videos\\Folder\\ABP-123.mp4"
+    #
+    # ⚠️ 取樣路徑必須跟著當前環境走，不可寫死 Windows 路徑：
+    # `path_utils` 在**純 Linux／Mac 上對 `C:\...` 直接拋 ValueError**
+    # （`core/path_utils.py:166`），而開發機是 WSL、那裡 Windows 路徑合法。
+    # 寫死 `C:\Videos\...` 的話本機全綠、CI（ubuntu-latest）單獨紅——
+    # 這支測試 2026-09-05 就是這樣讓 PR #181 的 CI 掛掉的，
+    # 而「只含追蹤檔的乾淨樹」那種 parity 驗法**抓不到**（它驗的是檔案，不是環境）。
+    if get_environment() in ("wsl", "windows"):
+        raw_path = "C:\\Videos\\Folder\\ABP-123.mp4"
+    else:
+        raw_path = "/videos/folder/ABP-123.mp4"
     norm_path = normalize_path(raw_path)
     mappings = {}
 
