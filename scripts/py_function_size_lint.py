@@ -137,7 +137,7 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "各存一份同名 helper，比 inline 更糟。",
     ),
     ("core/organizer.py", "organize_file"): (
-        366,
+        369,
         "整理主流程；Phase 2（110b）會在其中加 containment 防線，加的是「呼叫一個新的小函式」，"
         "不得讓本函式本身更複雜（見 plan-110b，與既有 C901 noqa 理由一致）。"
         " ── 359→366（v0.14.6 / TASK-126-T4b，owner 2026-08-23 裁決把 organize 路徑納入）："
@@ -146,7 +146,17 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "readonly_producer×3 共 7 處重複，抽成單一 helper 可同時消掉本條與 _write_movie_assets "
         "的增量——但會讓既有測試的 `patch('core.enricher.download_image')` 攔不到"
         "（BE-TEST-01 是 patch 消費端綁定），屬於「要連測試策略一起改」的動作，"
-        "不該在 pre-merge 尾聲順手做。",
+        "不該在 pre-merge 尾聲順手做。"
+        " ── 366→369（v0.15.13 / TASK-144-T0，CD-144-15）：搬檔那一段從「`os.path.exists()` "
+        "問一句 → `shutil.move()` 動手」兩個獨立動作，改成 `os.open(O_CREAT|O_EXCL)` 原子佔位 "
+        "＋ `atomic_move()`。**+3 行**：`try/except FileExistsError` 包住既有的三行 duplicate "
+        "回傳（+2）、`os.close(fd)`（+1），搬移那一行由 `shutil.move` 換成 `atomic_move` 不增行。"
+        "**佔位這三行刻意留在函式內、不抽 helper**：`_containment_error` 必須在佔位之前"
+        "（CD-144-15）——抽出去會讓這條順序契約從函式內讀得到的相鄰兩行，變成兩個檔案之間的"
+        "隱含約定，正是那條 CD 要消滅的「只有一個人在操作時永遠看不見」的縫。"
+        "反之 `os.replace` ＋ EXDEV fallback **已經抽進 `core/atomic_write.py::atomic_move()`**"
+        "（那是全庫唯一准許出現裸 `os.replace` 的地方，見 test_atomic_write_boundary_guard），"
+        "所以本條的增量只有佔位那三行。",
     ),
     ("core/config.py", "_load_config_unlocked"): (
         304,

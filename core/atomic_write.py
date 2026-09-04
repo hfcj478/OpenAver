@@ -6,11 +6,22 @@
 換成本 primitive 的 mkstemp 才順帶修掉同一位女優並發下載互撞暫存檔，CD-113d-4）。
 只做這一件事：鎖策略、成功後清舊 sibling 檔、失敗語意（拋例外 vs 回 False）、
 dest 在哪，全部留給呼叫端決定（spec §2.5 / D-8）。
+
+本模組是全庫**唯一**准許出現裸 `os.replace` / `tempfile.mkstemp` 的地方
+（`tests/unit/test_atomic_write_boundary_guard.py` 機械守住這條邊界）。因此
+「檔案原子落地」這一類的原語都住這裡，目前兩支，**用途不同不可混用**：
+
+- `atomic_write()`：**產生新內容**（mkstemp → 呼叫端寫 → replace 落地），
+  失敗時 `dest` 逐位元組不變。
+- `atomic_move()`（144-T0 / CD-144-15）：**搬一個已經在磁碟上的檔案**，
+  沒有暫存檔、沒有內容產生，成功後 `src` 消失，失敗時什麼都不清理。
 """
 from contextlib import contextmanager
 from pathlib import Path
 from typing import IO, Iterator, Optional, Union
+import errno
 import os          # 🔴 必須是屬性存取形式：禁 `from os import replace`
+import shutil
 import tempfile    # 🔴 同上：禁 `from tempfile import mkstemp`
 
 
@@ -83,3 +94,44 @@ def atomic_write(
         except OSError:
             pass
         raise
+
+
+def atomic_move(src: Union[Path, str], dest: Union[Path, str]) -> None:
+    """把 `src` 這個**已經存在的檔案**搬到 `dest`，覆蓋 `dest` 的既有內容。
+
+    與同檔的 `atomic_write()` 是**兩種不同的東西，不要混用**：
+    `atomic_write()` 是「產生新內容」——mkstemp 一個暫存檔、讓呼叫端寫進去、
+    再 `os.replace` 落地，失敗時 `dest` 逐位元組不變。
+    `atomic_move()` 是「搬一個已經在磁碟上的檔案」——沒有暫存檔、沒有內容產生，
+    而且**成功後 `src` 會消失**。兩者的失敗保證也不同，見下方「失敗語意」。
+
+    `os.replace` 而不是 `shutil.move`（CD-144-15，真 Windows 實測）：
+    `shutil.move` 內部第一步是 `os.rename`，而 Windows 的 `os.rename` 對**已存在**
+    的目標拋 `FileExistsError`（POSIX 是靜默覆蓋）→ 落進它的 `except OSError` →
+    改走 `copy2` **整份讀寫位元組**再 `unlink`。呼叫端若事先用 `O_CREAT|O_EXCL`
+    佔下了目標檔名（`core.organizer.organize_file` 正是如此），目標就「永遠已存在」，
+    於是 Windows 上每一次搬移都從瞬間 rename 退化成完整複製——60MB 實測 21.6ms
+    vs 0.4ms（54 倍），15GB 的影片在慢碟或 SMB 上是數秒到數分鐘的實體複製。
+    `os.replace` 在兩個平台都是「靜默覆蓋、原子、只動 metadata」，正是這裡要的語意。
+
+    **跨檔案系統**（`EXDEV`）：`os.replace` 只在同一個檔案系統內成立。真的跨檔案
+    系統時（來源夾底下正好有掛載點）退回 `copy2` ＋ `unlink`——那就是 `shutil.move`
+    本來會做的事，行為與本函式出現之前完全相同，不是新增的風險。
+    `EXDEV` 以外的 `OSError` **原樣往外拋，絕不吞掉**（磁碟已滿、真正的權限問題
+    不該被偽裝成一次「跨檔案系統搬移」，那會多做一次無謂的整份複製並掩蓋真因）。
+
+    **失敗語意**：本函式**不清理任何東西**，例外原樣往上傳。呼叫端若已經佔下
+    `dest`，那個佔位檔就留在原地——這是刻意的：在跨程序情境下沒有辦法安全判斷
+    「這個殘留是不是我剛佔的位子」，自動清掉再重試會製造一個更隱蔽的競態
+    （把另一個程序**已經搬完的**成品當成孤兒刪掉）。留下的 0 byte 佔位檔使用者
+    看得見、刪得掉，遠比一次看不見、救不回的覆蓋好（CD-144-15、spec-144 §5）。
+    `BE-ENV-01`（Windows 防毒／檔案總管持有 handle 讓 `os.replace` 拋
+    `PermissionError`）走的也是這條路：原樣往外拋，由呼叫端的既有 except 處理。
+    """
+    try:
+        os.replace(src, dest)
+    except OSError as e:
+        if e.errno != errno.EXDEV:
+            raise
+        shutil.copy2(src, dest)
+        os.unlink(src)

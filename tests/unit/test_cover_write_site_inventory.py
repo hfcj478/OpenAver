@@ -51,7 +51,15 @@ _MODULES = (
     'core/readonly_producer.py',
 )
 
-_WRITE_CALLS = ('copy2', 'copyfile', 'crop_to_poster')
+_WRITE_CALLS = ('copy2', 'copyfile', 'crop_to_poster', 'atomic_move')
+# `atomic_move`（144-T0 新增，`core/atomic_write.py`）為什麼也要進這張清單：
+# 它內部的 `shutil.copy2`（EXDEV fallback）住在**本守衛掃不到的檔案**裡，所以
+# 若不在這裡收，任何人只要在這三支模組寫 `atomic_move(cover, poster_dest)`，
+# 就能新增一個對本守衛**完全隱形**的衍生圖寫入點——比直接寫 `copy2` 更隱蔽
+# （連呼叫名稱都不在關鍵字裡），而且後果更不可逆：`atomic_move` 成功後會
+# `unlink(src)`，`copy2` 至少還留著來源。
+# ⚠️ 這條的判準與其他三個一樣是**呼叫名稱**，不是「它實際寫到哪」——
+# 收在這裡的用意是「新增就轉紅、逼人回來想一次」，不是證明它一定有害。
 _PREFLIGHT = 'same_target_verdict'
 
 # 硬編碼的預期清單（BE-TEST-09：**不得**由掃描結果反推，否則 missing 恆為空
@@ -61,6 +69,7 @@ _EXPECTED_WRITE_SITES = {
     ('core/enricher.py', '_write_external_images', 'copy2'): 1,              # ③ cover → fanart
     ('core/enricher.py', '_write_external_images', 'crop_to_poster'): 1,     # ④ cover → poster
     ('core/organizer.py', 'crop_to_poster', 'copy2'): 1,                     # 葉節點：已是直向、直接複製
+    ('core/organizer.py', 'organize_file', 'atomic_move'): 1,               # 144-T0：影片本體搬進片庫，非衍生圖
     ('core/organizer.py', 'generate_jellyfin_images', 'copy2'): 1,           # ① cover → fanart
     ('core/organizer.py', 'generate_jellyfin_images', 'crop_to_poster'): 1,  # ② cover → poster
     ('core/readonly_producer.py', '_copy_curator_sidecar', 'copy2'): 1,      # ⑨⑩ curator sidecar → slot
@@ -95,6 +104,15 @@ _EXPECTED_PREFLIGHTS = {
 # 允許「沒有自己的 preflight」的函式，逐條寫明理由。清單之外的每一個寫入點
 # 所屬函式都必須自己呼叫 same_target_verdict。
 _PREFLIGHT_EXEMPT = {
+    ('core/organizer.py', 'organize_file'):
+        '144-T0 的 `atomic_move(file_path, target_path)` 搬的是**影片本體**，不是封面或任何 '
+        'stem 級衍生圖：`src` 是使用者的影片檔，`dest` 由番號/標題樣板算出（`format_string`），'
+        '結構上不可能等於 `-poster`／`-fanart` 路徑。而且 `src != dest` 有雙重保證——外層的 '
+        '`if file_path != target_path:` 與緊接在前的 `os.open(O_CREAT|O_EXCL)`（`dest` 是那一刻'
+        '才被建立的 0 byte 佔位檔，必不等於已存在的 `src`）——所以 `same_target_verdict` 對這個'
+        '呼叫點**恆為「不同檔」**，加上去只是一行永遠成立的廢話。'
+        '⚠️ 這條例外只涵蓋「搬影片本體」這一個用途：任何**新的** `atomic_move` 呼叫點都會讓上面'
+        '`_EXPECTED_WRITE_SITES` 的對帳轉紅，屆時必須重新判斷它需不需要 preflight，不得沿用本條。',
     ('core/organizer.py', 'crop_to_poster'):
         '葉節點函式：它的每一個呼叫端（②④⑥）都已在呼叫前 preflight，'
         '且它自身整段包在 try/except 裡，SameFileError 只會回 False、不會毀檔。',

@@ -2,9 +2,11 @@
 T1e Tests — Fix-1 版本標記測試
 測試 core/organizer.py 的 _detect_suffixes(), format_string(), organize_file()
 """
+import errno
 import io
 import json
 import os
+import shutil
 import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -241,6 +243,30 @@ def _make_metadata(number: str = "SONE-205", title: str = "Test Title") -> dict:
 class TestOrganizeDuplicateDetection:
     """organize_file() 覆蓋偵測測試"""
 
+    def test_organize_file_concurrent_second_call_gets_duplicate(self, tmp_path):
+        """
+        DoD-1: 模擬併發 / 第二次呼叫撞同一目標
+        第一次成功佔位並搬移，第二次呼叫因目標已存在（O_CREAT|O_EXCL 拋 FileExistsError）
+        拿到 duplicate=True 且不覆蓋。
+        """
+        src1 = tmp_path / "SRC-001.mp4"
+        src1.write_bytes(b"video 1 content")
+        src2 = tmp_path / "SRC-002.mp4"
+        src2.write_bytes(b"video 2 content")
+
+        config = _make_config(tmp_path)
+        metadata = _make_metadata(number="TARGET-001", title="Same Title")
+
+        res1 = organize_file(str(src1), metadata, config)
+        assert res1["success"] is True
+
+        res2 = organize_file(str(src2), metadata, config)
+        assert res2.get("duplicate") is True
+        assert res2["success"] is False
+        assert src2.exists(), "第二次呼叫來源檔不應被移動"
+        target_path = Path(res1["new_filename"])
+        assert target_path.read_bytes() == b"video 1 content"
+
     def test_organize_duplicate_detection(self, tmp_path):
         """
         目標路徑已存在時：
@@ -269,6 +295,7 @@ class TestOrganizeDuplicateDetection:
         assert src_file.exists(), "原始檔案不應被移動或刪除"
         # 目標檔案內容不應被覆蓋
         assert target_file.read_bytes() == b"existing content"
+        assert result.get("duplicate_target") == "[SONE-205] Test Title.mp4"
 
     def test_organize_suffix_in_filename(self, tmp_path):
         """
@@ -298,6 +325,144 @@ class TestOrganizeDuplicateDetection:
         # CD1 應帶 -cd1 後綴，CD2 應帶 -cd2 後綴
         assert "-cd1" in Path(result1["new_filename"]).name
         assert "-cd2" in Path(result2["new_filename"]).name
+
+
+class TestOrganizeAtomicReplace:
+    """organize_file() 原子佔位與 os.replace 移動測試（TASK-144-T0）"""
+
+    def test_organize_file_uses_os_replace_for_video(self, tmp_path):
+        """
+        DoD-3: 搬移改用 os.replace，且不得退化成整份複製
+        - 正向：os.replace 被呼叫恰好一次，且參數為 (file_path, target_path)
+        - 反向 A：shutil.move 的所有呼叫中，沒有任何一次的第一個參數是 file_path
+        - 反向 B：shutil.copy2 的所有呼叫中，沒有任何一次的第一個參數是 file_path
+        """
+        src_file = tmp_path / "SONE-205.mp4"
+        src_file.write_bytes(b"video content")
+
+        config = _make_config(tmp_path)
+        metadata = _make_metadata()
+
+        with patch("core.atomic_write.os.replace", wraps=os.replace) as spy_replace, \
+             patch("core.organizer.shutil.move", wraps=shutil.move) as spy_move, \
+             patch("core.organizer.shutil.copy2", wraps=shutil.copy2) as spy_copy2, \
+             patch("core.atomic_write.shutil.copy2", wraps=shutil.copy2) as spy_prim_copy2:
+            result = organize_file(str(src_file), metadata, config)
+
+        assert result["success"] is True
+        target_path = result["new_filename"]
+
+        # 正向：os.replace 被呼叫恰好一次，且參數為 (str(src_file), target_path)
+        assert spy_replace.call_count == 1
+        assert spy_replace.call_args == ((str(src_file), target_path),)
+
+        # 反向 A：shutil.move 的所有呼叫中，沒有任何一次的第一個參數是 str(src_file)
+        for call_item in spy_move.call_args_list:
+            assert call_item[0][0] != str(src_file), "shutil.move 不得以影片來源檔作為參數"
+
+        # 反向 B：shutil.copy2 的所有呼叫中，沒有任何一次的第一個參數是 str(src_file)
+        # organizer 側（generate_jellyfin_images 的 fanart 是正常呼叫，故比對來源而非次數）
+        for call_item in spy_copy2.call_args_list:
+            assert call_item[0][0] != str(src_file), "shutil.copy2 不得以影片來源檔作為參數"
+        # primitive 側：EXDEV fallback 才會走 copy2，同檔案系統的正常路徑一次都不該碰
+        for call_item in spy_prim_copy2.call_args_list:
+            assert call_item[0][0] != str(src_file), (
+                "同檔案系統的正常路徑不得走 atomic_move 的 EXDEV copy2 fallback"
+            )
+
+    def test_organize_file_exdev_fallback_reraises_non_exdev_errors(self, tmp_path):
+        """
+        DoD-4: 非 EXDEV 的 OSError 必須原樣往外拋（不被 copy2 fallback 吞掉）
+        mock os.replace 拋 OSError(ENOSPC)，不應走 copy2 fallback，結果為失敗
+        """
+        src_file = tmp_path / "SONE-205.mp4"
+        src_file.write_bytes(b"video content")
+
+        config = _make_config(tmp_path)
+        metadata = _make_metadata()
+
+        non_exdev_err = OSError(errno.ENOSPC, "No space left on device")
+
+        with patch("core.atomic_write.os.replace", side_effect=non_exdev_err), \
+             patch("core.atomic_write.shutil.copy2", wraps=shutil.copy2) as spy_copy2:
+            result = organize_file(str(src_file), metadata, config)
+
+        assert result["success"] is False
+        assert result["error"] == "檔案整理失敗，請查看日誌"
+        for call_item in spy_copy2.call_args_list:
+            assert call_item[0][0] != str(src_file), "非 EXDEV 錯誤不得走 copy2 fallback"
+
+    def test_organize_file_exdev_fallback_success(self, tmp_path):
+        """
+        DoD-4 正向: os.replace 拋 OSError(errno.EXDEV) 時，
+        走 shutil.copy2 + os.unlink fallback，整理成功。
+        """
+        src_file = tmp_path / "SONE-205.mp4"
+        src_file.write_bytes(b"video content for exdev")
+
+        config = _make_config(tmp_path)
+        metadata = _make_metadata()
+
+        exdev_err = OSError(errno.EXDEV, "Invalid cross-device link")
+
+        with patch("core.atomic_write.os.replace", side_effect=exdev_err), \
+             patch("core.atomic_write.shutil.copy2", wraps=shutil.copy2) as spy_copy2, \
+             patch("core.atomic_write.os.unlink", wraps=os.unlink) as spy_unlink:
+            result = organize_file(str(src_file), metadata, config)
+
+        assert result["success"] is True
+        target_path = Path(result["new_filename"])
+        assert target_path.exists()
+        assert target_path.read_bytes() == b"video content for exdev"
+        assert not src_file.exists(), "來源檔應在 fallback 後被 unlink"
+        assert any(c[0][0] == str(src_file) for c in spy_copy2.call_args_list)
+        assert any(c[0][0] == str(src_file) for c in spy_unlink.call_args_list)
+
+    def test_organize_file_replace_permission_error_falls_to_outer_except(self, tmp_path):
+        """
+        DoD-5 (BE-ENV-01): mock os.replace 拋 PermissionError
+        落既有 except 分支，不新增任何清理邏輯、不刪佔位檔。
+        """
+        src_file = tmp_path / "SONE-205.mp4"
+        src_file.write_bytes(b"video content")
+
+        config = _make_config(tmp_path)
+        metadata = _make_metadata()
+
+        perm_err = PermissionError("Access is denied (simulated Windows AV lock)")
+
+        with patch("core.atomic_write.os.replace", side_effect=perm_err):
+            result = organize_file(str(src_file), metadata, config)
+
+        assert result["success"] is False
+        assert result["error"] == "檔案整理失敗，請查看日誌"
+        assert src_file.exists(), "來源檔案應原封不動"
+        expected_target = tmp_path / "[SONE-205] Test Title.mp4"
+        assert expected_target.exists(), "佔位檔不應被清理"
+        assert expected_target.stat().st_size == 0
+
+    def test_organize_file_crash_leaves_source_intact_and_zero_byte_target(self, tmp_path):
+        """
+        DoD-6: 崩潰殘留形狀
+        佔位成功但 os.replace 未執行（拋異常中斷）
+        -> 來源影片檔仍在原資料夾且大小不變，目標路徑存在且恰為 0 byte。
+        """
+        src_file = tmp_path / "SONE-205.mp4"
+        content = b"x" * 1024
+        src_file.write_bytes(content)
+
+        config = _make_config(tmp_path)
+        metadata = _make_metadata()
+
+        with patch("core.atomic_write.os.replace", side_effect=RuntimeError("simulated crash before replace")):
+            result = organize_file(str(src_file), metadata, config)
+
+        assert result["success"] is False
+        assert src_file.exists()
+        assert src_file.stat().st_size == 1024
+        expected_target = tmp_path / "[SONE-205] Test Title.mp4"
+        assert expected_target.exists()
+        assert expected_target.stat().st_size == 0
 
 
 class TestOrganizeTruncateSuffix:
@@ -742,7 +907,7 @@ class TestOrganizeErrorHandling:
         }
 
         secret_msg = "internal disk error XYZ-9999"
-        with patch("core.organizer.shutil.move", side_effect=OSError(secret_msg)):
+        with patch("core.atomic_write.os.replace", side_effect=OSError(secret_msg)):
             result = organize_file(str(src), metadata, config)
 
         assert result["success"] is False
