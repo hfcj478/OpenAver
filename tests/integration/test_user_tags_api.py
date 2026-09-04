@@ -798,3 +798,52 @@ class TestT4ReadonlyUserTags:
         assert data["success"] is True          # 標籤仍進 DB
         assert data["nfo_updated"] is False
         assert data["readonly_no_output"] is True
+
+    def test_ac2_malformed_output_nfo_also_reports_no_output(
+        self, tmp_db, tmp_path, monkeypatch
+    ):
+        """輸出夾恰有一份 NFO，但它壞掉（或 glob 之後消失）→ 一樣要回報未更新。
+
+        使用者流程：對唯讀來源的片加標籤 → 輸出夾那份 NFO 是壞的（手動編輯過、
+        寫到一半斷電、被外部工具改壞）→ `update_nfo_user_tags` **catch 後回 False
+        不是 raise** ⇒ 舊寫法三個分支一個都沒中 ⇒ 畫面一則提示都沒有，而標籤其實
+        只進了 DB。這是 Codex PR #179 round 2 的 P3，也是「列舉失敗分支」這個形狀
+        自己生出來的第四個洞——現在旗標改成從 `nfo_updated` 導出。
+        """
+        client, _src_dir, out_dir, file_uri = setup_readonly_user_tags_env(
+            tmp_db, tmp_path, monkeypatch,
+            with_source_nfo=False, with_output_nfo=True,
+        )
+        (out_dir / "TEST-001.nfo").write_bytes(b"<movie><unclosed>")  # 壞掉的 XML
+
+        resp = client.post("/api/user-tags", json={
+            "file_path": file_uri,
+            "add": ["BADNFO"],
+        })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True          # 標籤仍進 DB
+        assert data["nfo_updated"] is False
+        assert data["readonly_no_output"] is True
+
+    def test_normal_video_never_reports_readonly_no_output(
+        self, tmp_db, tmp_path, monkeypatch
+    ):
+        """反向鎖：非唯讀的片即使 NFO 寫失敗，也不得回 readonly_no_output=True。
+
+        導出式旗標最容易壞的方向就是把 `is_readonly` 這一半弄丟——那會讓一般片
+        每次 NFO 沒寫成都跳一則「媒體伺服器讀的那份沒更新」的唯讀專用提示。
+        """
+        with patch("web.routers.collection.update_nfo_user_tags", return_value=False):
+            monkeypatch.setattr("web.routers.collection.get_db_path", lambda: tmp_db)
+            from web.app import app
+            resp = TestClient(app).post("/api/user-tags", json={
+                "file_path": TEST_FILE_URI,
+                "add": ["NORMAL"],
+            })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["nfo_updated"] is False
+        assert data["readonly_no_output"] is False

@@ -645,7 +645,7 @@ _TOOLS: list[dict] = [
             "success": "boolean",
             "user_tags": "[string] — 更新後的完整 user_tags 清單",
             "nfo_updated": "boolean — NFO 是否同步更新",
-            "readonly_no_output": "boolean — 唯讀來源且找不到可更新的輸出夾 NFO 時為 true（標籤已存進 DB，但媒體伺服器讀到的 NFO 沒變）。一般片恆為 false",
+            "readonly_no_output": "boolean — 唯讀來源的片，這次沒有任何 NFO 被更新時為 true（標籤已存進 DB，但媒體伺服器讀到的 NFO 沒變：可能是還沒產出輸出夾、或那份 NFO 讀不到／壞掉）。一般片恆為 false",
         },
         "side_effect": True,
         "confirmation_required": False,

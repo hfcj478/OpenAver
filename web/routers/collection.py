@@ -810,27 +810,17 @@ def post_user_tags(request: UserTagsRequest) -> dict:
 
     # 4. Surgical NFO update — 唯讀來源改寫輸出夾那份，來源零寫入（CD-143-4）
     nfo_updated = False
-    readonly_no_output = False
-    owning = resolve_owning_output_root(file_path, config)
-    if owning is not None:
-        if not video.output_dir:
-            # US1 樁列：從未成功 produce，輸出夾沒有任何東西（AC2-2b）
-            readonly_no_output = True
-        else:
+    is_readonly = resolve_owning_output_root(file_path, config) is not None
+    if is_readonly:
+        # 樁列（從未成功 produce、輸出夾沒有東西）直接跳過，nfo_updated 維持 False
+        if video.output_dir:
             try:
                 out_fs = Path(uri_to_local_fs_path(video.output_dir, path_mappings))
                 nfo_candidates = list(out_fs.glob("*.nfo"))
+                # 份數不是恰好一份時不猜（full-mode produce 是 holistic，正常恰有一份）
                 if len(nfo_candidates) == 1:
                     nfo_updated = update_nfo_user_tags(str(nfo_candidates[0]), merged_tags)
-                else:
-                    # 理論上不會發生（full-mode produce 是 holistic，恰有一份 NFO）；
-                    # 防禦性 fallback，不 raise，走 AC2-2b 同款「不寫、回報未寫入」
-                    readonly_no_output = True
             except Exception as e:
-                # 例外路徑同樣要回報「沒有 NFO 被更新」——否則 spec-143 §3.2 要消滅的
-                # 那個靜默失敗會從這裡復活（畫面一則提示都沒有，使用者以為 Jellyfin
-                # 待會就看得到）。三個分支（無輸出夾／NFO 份數不對／IO 例外）語意一致。
-                readonly_no_output = True
                 logger.warning("[user-tags] 唯讀輸出夾 NFO 寫入失敗（忽略）: %s", e)
     else:
         try:
@@ -839,6 +829,16 @@ def post_user_tags(request: UserTagsRequest) -> dict:
         except Exception as e:
             logger.warning("[user-tags] NFO 寫入失敗（忽略）: %s", e)
 
+    # readonly_no_output 是**導出的**，不是逐個失敗分支去設的（Codex PR #179 round 2）。
+    # 上一輪的修法是「例外路徑補一個 readonly_no_output = True」，下一輪就被找到第四種
+    # 失敗形狀：輸出夾恰有一份 NFO 但它壞掉／glob 之後消失時，`update_nfo_user_tags`
+    # 是 **catch 後回 False**（`core/nfo_updater.py:50`）不是 raise ⇒ 三個分支一個都沒中，
+    # 而標籤其實只進了 DB。列舉失敗分支這個形狀本身會一直生出下一個洞。
+    #
+    # 這個旗標要講的事情只有一句：**唯讀來源的片，媒體伺服器讀的那份 NFO 這次沒有更新。**
+    # 那就直接從結果導出。`update_nfo_user_tags` 的 False 只有「檔案不存在」與「解析／
+    # 寫入失敗」兩種來源（沒有「不需要改所以回 False」），所以不會誤報。
+    readonly_no_output = is_readonly and not nfo_updated
     return {"success": True, "user_tags": merged_tags, "nfo_updated": nfo_updated, "readonly_no_output": readonly_no_output}
 
 
