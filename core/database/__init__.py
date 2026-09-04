@@ -21,6 +21,7 @@ from .notifications import (
     clear_all_notifications,
     load_recent_notifications,
 )
+from . import organize_failures
 
 __all__ = [
     "get_db_path",
@@ -43,5 +44,6 @@ __all__ = [
     "mark_notifications_read",
     "clear_all_notifications",
     "load_recent_notifications",
+    "organize_failures",
 ]
 

@@ -227,7 +227,7 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "理由一致）。",
     ),
     ("core/database/connection.py", "init_db"): (
-        251,
+        262,
         "資料庫 schema 初始化主流程，逐表 CREATE TABLE/CREATE INDEX 語句序列，schema 仍在"
         "演進中；拆成多個小函式不會降低本質複雜度，只會增加呼叫層次與跨函式的 cursor/conn "
         "傳遞。"
@@ -245,7 +245,13 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "`CREATE TABLE IF NOT EXISTS`（7 欄），讓側欄通知在關掉 App／NAS 重啟後還在。"
         "**+13 行全部是那一句 DDL 的縮排展開，零分支、零遷移**（新表，不需要 `ALTER TABLE`），"
         "與同函式內既有 6 張表逐字同形——把單獨一張表抽成 helper 會讓 7 張表有 6 張在函式內、"
-        "1 張在函式外，反而更難讀（與上面 `wishlist` 那一段同一個理由）。",
+        "1 張在函式外，反而更難讀（與上面 `wishlist` 那一段同一個理由）。"
+        " ／ 251→262（v0.15.13 / TASK-144-T2，CD-144-8）：新增 `organize_failures` 表的 "
+        "`CREATE TABLE IF NOT EXISTS`（6 欄），讓自動整理記得「這部片查無結果／目標已存在」，"
+        "不必每一輪都重跑八個來源。**+11 行全部是那一句 DDL 的縮排展開，零分支、零遷移**，"
+        "與同函式內既有 7 張表逐字同形。理由與上一段（`notifications`）逐字相同："
+        "**每加一張表就長一次是這個函式的固有成本**，抽 helper 只會讓「這個庫有哪些表」"
+        "這件事散到函式外面去。",
     ),
 }
 
