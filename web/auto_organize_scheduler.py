@@ -98,8 +98,32 @@ def enter_and_start(trigger: str) -> dict:
     global _round_task
     if not auto_organize_state.enter_cron(trigger):
         return {"success": False, "reason": "already_running"}
-    _round_task = asyncio.create_task(_run_round_body(trigger))
+    _round_task = asyncio.create_task(_run_round_body_guarded(trigger))
     return {"success": True, "reason": None}
+
+
+async def _run_round_body_guarded(trigger: str) -> None:
+    """v0.15.13 P2-2：`enter_and_start()` 專用的 detached-task wrapper。
+
+    這支端點已經先回應 `{"success": True}`（前端顯示「已開始，完成後側欄會有
+    通知」），呼叫端不 await 這個 task。`_run_round_body()` 本身沒有 try/except
+    ——它同時被 `auto_organize_loop()` 呼叫，那條路徑已經在 loop 那層包了自己
+    的 try（見上方註解），若在 `_run_round_body()` 內部加 try 會讓 loop 那層的
+    行為也跟著變（例外會在這裡被吃掉，loop 就看不到、`reset_due_time()` 的
+    節流邏輯會跟著錯）。所以錯誤處理只包在這一層、只用於 run-now 這條路徑。
+
+    沒有這一層的話：資料夾解析／檔案 I/O／DB／`run_one_round()` 任一處拋例外，
+    這個 detached task 沒人 await，例外會變成 asyncio 的
+    "Task exception was never retrieved" 日誌噪音，而使用者側——已經被告知
+    「已開始」——側欄永遠不會出現任何東西，只能一直等下去。
+    """
+    try:
+        await _run_round_body(trigger)
+    except Exception:
+        logger.exception("[auto_organize] run-now 背景執行例外，本輪未完成")
+        emit_notification(
+            "error", "notif.auto_organize_failed", task_type="auto_organize",
+        )
 
 
 @contextlib.asynccontextmanager

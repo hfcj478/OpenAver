@@ -101,19 +101,58 @@ def _writer_loop(db_path) -> None:
         item = _write_queue.get()
         if item is None:
             _write_queue.task_done()
+            _drain_before_exit(db_path)
             break
         try:
-            op = item.get("op")
-            if op == "insert":
-                insert_notification(item, db_path=db_path)
-            elif op == "mark_read":
-                mark_notifications_read(item.get("ids", []), db_path=db_path)
-            elif op == "clear":
-                clear_all_notifications(db_path=db_path)
-        except Exception:
-            logger.warning("[notif] writer persistence error", exc_info=True)
+            _apply_write(item, db_path)
         finally:
             _write_queue.task_done()
+
+
+def _drain_before_exit(db_path) -> None:
+    """讀到哨兵之後，**在同一條 thread 上**把佇列剩下的排空再退出。
+
+    ⚠️ 這一段是承重的：writer 是靠哨兵結束的，而放哨兵與 writer 讀到哨兵之間
+    仍然有 producer 在跑——run-now 那一輪的 detached task、掃描頁的縮圖預熱
+    daemon thread（`web/routers/scanner.py:1535`）、scanner 的 `_work` daemon
+    thread（`:283`）。它們在那個空隙 emit 的東西會排在哨兵**後面**。
+    沒有這一段的話，那幾筆永遠沒有人消費，跟著 process 一起消失。
+
+    🔴 **收尾一定要在 writer 自己這條 thread 上做，不可以由 shutdown 那一側接手。**
+    曾經那樣做過（v0.15.13 Codex 二審的修法），結果是**兩個消費者吃同一個佇列、
+    同時寫同一個 DB**：shutdown 那側可能先寫掉後面的 `clear`／`mark_read`，
+    writer 卡住的那筆**較早的 insert** 稍後才落地 ⇒ 使用者按過「全部清空」再關 App，
+    重開之後那則通知**又出現了**。少寫幾則只是少幾則；順序倒轉是寫出錯的狀態。
+    消費者恆為一條 thread，順序倒轉就**結構上不可能**發生，不需要任何旗標或時間互斥。
+    """
+    while True:
+        try:
+            item = _write_queue.get_nowait()
+        except queue.Empty:
+            return
+        try:
+            if item is not None:  # 殘留的哨兵直接丟掉
+                _apply_write(item, db_path)
+        finally:
+            _write_queue.task_done()
+
+
+def _apply_write(item: dict, db_path) -> None:
+    """把一筆佇列項目落到 DB。writer thread 與 shutdown 的收尾 flush 共用。
+
+    失敗只記 warning：這裡是「盡力持久化」，任何一筆寫不進去都不該影響其他筆，
+    更不該讓 shutdown 掛住。
+    """
+    try:
+        op = item.get("op")
+        if op == "insert":
+            insert_notification(item, db_path=db_path)
+        elif op == "mark_read":
+            mark_notifications_read(item.get("ids", []), db_path=db_path)
+        elif op == "clear":
+            clear_all_notifications(db_path=db_path)
+    except Exception:
+        logger.warning("[notif] writer persistence error", exc_info=True)
 
 
 
@@ -154,10 +193,15 @@ def start_notification_persistence() -> None:
 
 
 def stop_notification_persistence(timeout: float = 2.0) -> None:
-    """停掉 writer thread（哨兵 ＋ join）。給測試 teardown 用，生產不呼叫。
+    """停掉 writer thread（哨兵 ＋ join）。
 
-    沒有它的話，「模擬重啟」那類測試會把活著的 thread 指標設成 `None` 再開一條，
-    舊的那條變成孤兒、繼續消費同一個 module-level 佇列——兩位 reviewer 都指出過。
+    兩個呼叫端：
+    - 測試 teardown：「模擬重啟」那類測試會把活著的 thread 指標設成 `None` 再開一條，
+      舊的那條變成孤兒、繼續消費同一個 module-level 佇列——兩位 reviewer 都指出過。
+    - `web/app.py` 的 lifespan shutdown（v0.15.13 P2-1）：writer thread 是 daemon，
+      process 結束時會被直接砍掉而不 drain，佇列裡還沒寫進 DB 的通知會消失
+      （關掉 App 之後，最後那幾則通知「不在了」）。shutdown 呼叫時走
+      `asyncio.to_thread()` 包住，因為這支函式本身是同步阻塞的 `thread.join()`。
     """
     global _writer_thread
     with _lock:

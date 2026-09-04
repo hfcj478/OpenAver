@@ -366,3 +366,167 @@ def test_emit_notification_stays_memory_only_and_never_blocks(monkeypatch):
         n["title_key"] == unique_key and n["message"] == unique_msg
         for n in _notifications
     ), "通知沒有真的進到記憶體那一份（前兩條斷言在空操作上也會綠）"
+
+
+def test_app_shutdown_drains_notification_writer_queue(tmp_path, monkeypatch):
+    """v0.15.13 P2-1 回歸：關閉 App 時，還在佇列裡的通知不能被 daemon writer
+    thread 直接砍掉。
+
+    重現方式：真的跑一次 `web.app` 完整 lifespan（`TestClient(app)` 進出就是
+    startup ＋ shutdown），startup 完成後立刻 emit 一筆通知，**不**手動呼叫
+    `stop_notification_persistence()`、也不手動 `queue.join()`——完全依賴
+    shutdown 自己把佇列排空。斷言那筆通知真的落到 DB：若 shutdown 沒有 join
+    writer thread，process（測試裡是 `with` block 結束）就會在 thread 還沒消化
+    完佇列前繼續往下，這筆通知永遠不會被寫進去。
+    """
+    import asyncio
+    import uuid
+    from unittest.mock import AsyncMock, patch
+
+    from fastapi.testclient import TestClient
+
+    import web.routers.notifications as notif_mod
+    from core.database.connection import get_connection, init_db
+
+    test_db = tmp_path / "shutdown_test.db"
+    init_db(test_db)
+    monkeypatch.setattr("core.database.connection.get_db_path", lambda: test_db)
+    monkeypatch.setattr("core.access_auth.get_db_path", lambda: tmp_path / "access.db")
+
+    from web.app import app
+
+    async def _hang_forever():
+        await asyncio.Event().wait()
+
+    with patch("web.app.auto_organize_loop", _hang_forever), \
+         patch("web.app.startup_reconnect", return_value=None), \
+         patch("web.app.source_reachability") as mock_sr:
+        mock_sr.schedule_reprobe_if_stale = AsyncMock(return_value=None)
+        unique_key = f"notif.test_shutdown_drain_{uuid.uuid4()}"
+        with TestClient(app):
+            notif_mod.emit_notification("info", unique_key)
+        # `with` 區塊結束＝TestClient.__exit__ 已經跑完 lifespan shutdown。
+
+    conn = get_connection(test_db)
+    try:
+        rows = conn.execute(
+            "SELECT title_key FROM notifications WHERE title_key = ?", (unique_key,)
+        ).fetchall()
+    finally:
+        conn.close()
+    assert rows, (
+        "shutdown 沒有把 writer 佇列排空——關閉 App 時最後那筆通知遺失了"
+    )
+
+
+def test_items_queued_after_sentinel_are_still_written(tmp_path, monkeypatch):
+    """v0.15.13：排在**哨兵後面**的通知也要落地——由 writer 自己在退出前排空。
+
+    真實來源：run-now 那一輪的 detached task、掃描頁的縮圖預熱 daemon thread
+    （`web/routers/scanner.py:1535`）、scanner 的 `_work` daemon thread（`:283`）。
+    它們在「哨兵已入列、writer 還沒讀到」的空隙 emit 的東西會排在哨兵後面。
+
+    ⚠️ **順序用兩個 Event 釘死，不靠時序碰運氣**（Codex 五審 P3）：
+    先前的寫法是「emit 第一筆 → 馬上呼叫 stop()」，靠「writer 醒來＋寫一筆 SQLite
+    比主執行緒下一行 put_nowait 慢」來讓哨兵先入列。實務上幾乎必定成立（實測單筆約
+    18ms），但**不保證**——若 OS 剛好先排到 writer，late 那筆會排在哨兵**前面**，
+    於是就算把 `_drain_before_exit()` 拿掉測試照樣綠，mutation 收據就是假的。
+
+    這裡改成明確構造：writer 寫完第一筆後**卡住**，主執行緒此時才放哨兵，
+    放完再放行讓它 emit late——late 保證在哨兵之後。
+    """
+    import threading
+    import uuid
+    from contextlib import closing
+
+    import web.routers.notifications as notif_mod
+    from core.database.connection import get_connection, init_db
+
+    test_db = tmp_path / "after_sentinel.db"
+    init_db(test_db)
+    monkeypatch.setattr("core.database.connection.get_db_path", lambda: test_db)
+
+    late_key = f"notif.test_late_{uuid.uuid4()}"
+    first_key = f"notif.test_first_{uuid.uuid4()}"
+
+    first_written = threading.Event()   # writer：第一筆寫完了
+    sentinel_queued = threading.Event()  # 主執行緒：哨兵已入列，你可以 emit late 了
+
+    real_apply = notif_mod._apply_write
+    fired = []
+
+    def apply_then_wait_then_emit_late(item, db_path):
+        real_apply(item, db_path)
+        if fired:
+            return
+        fired.append(True)
+        first_written.set()
+        assert sentinel_queued.wait(timeout=5), "主執行緒沒有在時限內放哨兵"
+        notif_mod.emit_notification("info", late_key)
+
+    notif_mod.start_notification_persistence()
+    writer = notif_mod._writer_thread
+    assert writer is not None, "前提不成立：writer 沒起來"
+    monkeypatch.setattr(notif_mod, "_apply_write", apply_then_wait_then_emit_late)
+
+    notif_mod.emit_notification("info", first_key)
+    assert first_written.wait(timeout=5), "writer 沒有處理第一筆"
+
+    notif_mod._write_queue.put_nowait(None)  # 哨兵：明確排在 late 之前
+    sentinel_queued.set()
+    writer.join(timeout=5)
+    assert not writer.is_alive(), "writer 沒有在時限內退出"
+    notif_mod.stop_notification_persistence()  # 清掉 module-level 指標
+
+    with closing(get_connection(test_db)) as conn:
+        keys = {r[0] for r in conn.execute("SELECT title_key FROM notifications").fetchall()}
+    assert first_key in keys
+    assert late_key in keys, (
+        "排在哨兵後面的通知沒被寫出去——writer 退出前沒有把佇列排空"
+    )
+
+
+def test_stop_notification_persistence_is_bounded_by_its_timeout(tmp_path, monkeypatch):
+    """`stop_notification_persistence()` 的牆鐘 ≤ timeout ＋ ε，**不管佇列裡有什麼**。
+
+    這一條是為了把一個我先前用散文宣稱、卻沒有任何測試量過的東西釘死。
+    先前兩版都由 shutdown 那一側在 join 之後再去消費佇列，於是關閉時間會被
+    **單筆 SQLite 寫入**拖長（`get_connection()` 用 sqlite 預設鎖等待，約 5 秒），
+    「2 秒上限」那句話是假的。單一消費者形狀下 stop() 只做「放哨兵 ＋ join(timeout)」，
+    上限由 join 自己保證，與 DB 快慢完全解耦。
+
+    使用者流程：關掉 App 時畫面卡住不消失。
+    """
+    import threading
+    import time
+
+    import web.routers.notifications as notif_mod
+
+    notif_mod.stop_notification_persistence()  # 清場
+
+    # 佇列裡塞東西，並讓「寫一筆」非常慢——若 stop() 自己去消費就會被拖住
+    notif_mod._write_queue.put_nowait({"op": "insert", "id": "x", "timestamp": 0,
+                                       "level": "info", "title_key": "k",
+                                       "message": "", "task_type": None})
+    monkeypatch.setattr(notif_mod, "_apply_write",
+                        lambda item, db_path: time.sleep(3.0))
+
+    release = threading.Event()
+    stuck = threading.Thread(target=lambda: release.wait(timeout=10),
+                             name="StuckWriter", daemon=True)
+    stuck.start()
+    monkeypatch.setattr(notif_mod, "_writer_thread", stuck)
+
+    try:
+        t0 = time.perf_counter()
+        notif_mod.stop_notification_persistence(timeout=0.1)
+        elapsed = time.perf_counter() - t0
+        assert elapsed < 1.0, (
+            f"stop() 花了 {elapsed:.2f}s，遠超它自己的 timeout=0.1s"
+            "——關閉時間被 DB 寫入拖住了"
+        )
+    finally:
+        release.set()
+        stuck.join(timeout=2)
+        with notif_mod._write_queue.mutex:
+            notif_mod._write_queue.queue.clear()

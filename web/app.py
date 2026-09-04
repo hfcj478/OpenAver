@@ -138,9 +138,32 @@ async def lifespan(app: FastAPI):
 
     yield
     # ── shutdown ──────────────────────────────────────────────
-    app.state.auto_organize_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await app.state.auto_organize_task
+    # 每一步各自 try/except（同 startup 的既有精神）：通知 drain 失敗不可擋住
+    # 排程 task 的 cancel，反之亦然。
+    try:
+        app.state.auto_organize_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.auto_organize_task
+    except Exception:
+        logger.warning("lifespan: auto_organize_task shutdown failed unexpectedly", exc_info=True)
+
+    # v0.15.13 P2-1：writer thread 是 daemon，process 結束時會被直接砍掉、
+    # 佇列裡還沒寫進 DB 的通知會消失。這裡把它 join 掉，讓佇列在真正結束前
+    # 排空。thread.join() 本身是同步阻塞呼叫，丟進 asyncio.to_thread 避免卡住
+    # event loop。**上限就是那支的 timeout（2 秒），由 thread.join() 自己保證**——
+    # 它只做「放哨兵 ＋ join」，佇列的排空由 writer 在自己那條 thread 上完成，
+    # 所以關閉時間與 DB 快慢完全解耦（`test_stop_notification_persistence_is_bounded_by_its_timeout`）。
+    #
+    # ⚠️ 這一段目前**只在 CLI 模式（uvicorn 直跑、Ctrl-C）與測試裡執行**。
+    # 桌面版的伺服器跑在 `windows/standalone.py:558` 的 daemon thread 上，
+    # 全庫沒有任何地方對它設 `should_exit`，所以關 App 時 lifespan shutdown 不會被跑到
+    # ——桌面版的通知持久化靠的是「writer 平常就跟得上」（實測每筆約 18ms、
+    # 佇列正常深度 0–1），不是靠這裡。要讓桌面版也走這條，得把 quit 鉤子接上，
+    # 那是另一支 branch 的事（見 PR body 的 residual）。
+    try:
+        await asyncio.to_thread(stop_notification_persistence)
+    except Exception:
+        logger.warning("lifespan: stop_notification_persistence failed unexpectedly", exc_info=True)
 
 
 # FastAPI 應用
@@ -178,7 +201,7 @@ from web.routers import tags as tags_router
 from web.routers import notifications as notifications_router
 # TASK-107-P1-T2: import emit_notification at module level so lifespan can call
 # it directly and tests can patch("web.app.emit_notification") at the use-site.
-from web.routers.notifications import emit_notification, start_notification_persistence
+from web.routers.notifications import emit_notification, start_notification_persistence, stop_notification_persistence
 from web.routers import similar as similar_router
 from web.routers import settings_link as settings_link_router
 from web.routers import scraper_sources as scraper_sources_router

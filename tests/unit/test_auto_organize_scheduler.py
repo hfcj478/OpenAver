@@ -664,3 +664,70 @@ class TestProbeTimeoutAndLoopSurvival:
         assert "notif.auto_organize_summary" in emitted, (
             "只有 newly_recorded 非零時沒有發通知——事件數公式漏掉了第四項"
         )
+
+
+# ---------------------------------------------------------------------------
+# v0.15.13 P2-2：run-now 的 detached task 沒有自己的例外處理，使用者永遠等不到
+# 任何結果（側欄一片安靜）。回歸鎖 enter_and_start() 真正 create_task 出去的
+# 那個 coroutine（不是直接呼叫 _run_round_body），確保例外被攔下、不逃逸成
+# asyncio 的 "Task exception was never retrieved"，且有一則固定文案的失敗通知。
+# ---------------------------------------------------------------------------
+
+async def test_enter_and_start_exception_is_caught_and_notified(monkeypatch):
+    """run-now 背景例外必須被攔下：不吞掉、不裸露例外細節、running 要釋放。
+
+    重現方式：讓 `_prepare_and_run`（資料夾解析／探測／`run_one_round()` 那一段，
+    `_round_guard()` 真正保護的主體）拋一個帶內部細節的例外——**不**整支 mock 掉
+    `_run_round_body`，否則 `_round_guard()` 的 finally 根本不會跑到，running
+    永遠不會被釋放，會誤判成 wrapper 沒接住例外。透過 `enter_and_start()`
+    （不是直接呼叫 `_run_round_body`）啟動，await 它真正建立的 `_round_task`，
+    斷言：
+    1. 例外沒有從 task 逃逸出去（`_round_task.exception()` 為 None，不是
+       `_round_task` 本身 raise）——否則就是 "Task exception was never
+       retrieved" 那個洞還在。
+    2. 發出的通知是固定的 `notif.auto_organize_failed`，且訊息裡**不含**例外
+       原文（不可把內部路徑／SQL 洩到畫面上）。
+    3. `auto_organize_state` 的 running 有被釋放（`_round_guard()` 的 finally
+       仍然跑到）。
+    """
+    from core import auto_organize_state
+
+    secret_detail = "sqlite3.OperationalError: no such table: /internal/path/leak"
+
+    async def boom(trigger):
+        raise RuntimeError(secret_detail)
+
+    monkeypatch.setattr(sched, "_prepare_and_run", boom)
+
+    emitted = []
+    monkeypatch.setattr(
+        sched, "emit_notification",
+        lambda level, key, message="", task_type=None: emitted.append(
+            (level, key, message, task_type)
+        ),
+    )
+
+    result = sched.enter_and_start("run_now")
+    assert result == {"success": True, "reason": None}
+
+    # 不能直接 `await sched._round_task` 期待它乾淨結束後再檢查——重點正是
+    # 「即使 body 拋例外，這個 task 本身也不可以再往外拋」。用 wait_for 確保
+    # 它會結束（不是掛住），再看它是否真的沒有帶著例外收尾。
+    await asyncio.wait_for(sched._round_task, timeout=1.0)
+    assert sched._round_task.exception() is None, (
+        "detached task 帶著例外結束——沒人 await 它，會變成 "
+        "'Task exception was never retrieved' 噪音，使用者側也看不到任何通知"
+    )
+
+    assert len(emitted) == 1, f"預期恰好一則失敗通知，實際：{emitted!r}"
+    level, key, message, task_type = emitted[0]
+    assert level == "error"
+    assert key == "notif.auto_organize_failed"
+    assert task_type == "auto_organize"
+    assert secret_detail not in message, (
+        "失敗通知的 message 洩漏了例外原文——內部路徑／SQL 不該出現在畫面上"
+    )
+
+    assert auto_organize_state.get_status()["running"] is False, (
+        "背景例外之後 running 沒有被釋放——下一輪 run-now 會被永久卡在 already_running"
+    )
