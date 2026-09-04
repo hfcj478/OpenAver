@@ -90,6 +90,7 @@
       "favorite": "我的最愛",
       "load_favorite": "載入我的最愛資料夾",
       "load_favorite_folder": "載入：{folder}",
+      "auto_organize": "自動整理",
       "add_tag": "新增標籤",
       "edit_title": "編輯標題",
       "translate_ai": "AI 翻譯",
@@ -104,6 +105,16 @@
       "back_to_detail": "返回詳情",
       "view_search_results": "檢視搜尋結果",
       "view_wishlist": "檢視書籤"
+    },
+    "auto_organize": {
+      "enable_label": "每 12 小時自動整理",
+      "run_now": "立刻執行一次",
+      "run_now_started": "已開始，完成後側欄會有通知",
+      "run_now_busy": "自動整理已在進行中",
+      "use_resolved_folder": "就用這個資料夾",
+      "folder_warning": "請指向下載器的完成資料夾，不要指到下載中的資料夾",
+      "running": "目前正在執行一輪",
+      "config_failed": "操作失敗，請稍後再試"
     },
     "empty": {
       "hint": "輸入番號搜尋，或加入影片檔案",

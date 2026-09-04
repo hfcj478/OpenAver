@@ -43,7 +43,7 @@ from core.image_host_policy import (
 from core.maker_mapping import load_prefix_mapping
 from core.source_config import validate_source_id
 from core.source_settings import get_switchable_source_ids_ordered, is_uncensored_mode_effective
-from core.auto_organize_state import mark_manual_activity, request_abort
+from core.auto_organize_state import mark_manual_activity, request_abort, get_status
 from core.config import load_config, mutate_config
 from core.favorite_scan import resolve_favorite_folder
 from web import auto_organize_scheduler
@@ -1020,3 +1020,37 @@ async def run_auto_organize_now() -> dict:
     上執行，沒有 threadpool 調度的額外開銷，反而更快。
     """
     return auto_organize_scheduler.enter_and_start("run_now")
+
+
+@router.get("/search/auto-organize/status")
+def get_auto_organize_status() -> dict:
+    """面板 openPanel() 的**唯一**讀取端點：一次給完面板要顯示的全部東西。
+
+    回 6 個 key：`running`／`current_number`（純記憶體，來自 auto_organize_state）
+    ＋ `enabled`／`folder`／`folder_is_set`／`resolved_folder`（來自 config）。
+
+    ⚠️ **為什麼是一支肥一點的端點，而不是讓面板打三支**（2026-09-05 主 session 修正）：
+    初版承重段把這支定成「純記憶體兩 key」，於是面板為了拿到「還沒設資料夾時要顯示的候選
+    路徑」，只好去打 `GET /api/search/favorite-files`——那支會把整個系統下載資料夾**列完
+    並逐檔 stat**，只為了讀回一個路徑字串，而且它的 handler 帶有 `mark_manual_activity()`
+    ／`request_abort()` 兩個副作用。**還沒設資料夾的人正是最常打開這個面板的人**，下載夾大
+    的話面板會卡著不出現。改成這支一次回完，面板開一次只發一個請求，零副作用。
+
+    `resolved_folder` 走 `resolve_favorite_folder()`（＝「就用這個資料夾」會寫進去的那個值），
+    所以灰字顯示的路徑與按下去真正生效的路徑保證同源。
+
+    **純讀**：不呼叫 `mark_manual_activity()`／`request_abort()`／`mutate_config()`，
+    不改變任何 module-level 狀態（D8）。sync def——`load_config()` 是檔案 I/O，
+    依 BE-ASYNC-01 不可寫成 async def 卡 event loop。
+    """
+    config = load_config()
+    folder = config.get("search", {}).get("favorite_folder", "").strip()
+    return {
+        **get_status(),
+        "enabled": bool(
+            config.get("search", {}).get("auto_organize", {}).get("enabled", False)
+        ),
+        "folder": folder,
+        "folder_is_set": bool(folder),
+        "resolved_folder": resolve_favorite_folder(config),
+    }

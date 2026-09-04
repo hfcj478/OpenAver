@@ -593,6 +593,13 @@ async def search_page(request: Request):
     """搜尋頁面"""
     context = get_common_context(request)
     context["page"] = "search"
+    # TASK-144-T7：「自動整理」鈕的 accent 狀態由伺服器 render，不由前端 fetch。
+    # 前端拿的話，按鈕會先畫成 btn-outline、等請求回來才跳成 btn-accent——每次進
+    # 搜尋頁閃一下，而且每次多一個請求。面板打開時才會再向 status 端點問一次最新值。
+    # 沿用 get_common_context() 已經載好的那份 config（`:552`），不重讀一次磁碟。
+    context["auto_organize_enabled"] = bool(
+        context["config"].get("search", {}).get("auto_organize", {}).get("enabled", False)
+    )
     return templates.TemplateResponse(request, "search.html", context)
 
 
