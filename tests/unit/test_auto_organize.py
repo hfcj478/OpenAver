@@ -131,6 +131,72 @@ class TestFourFileRoundStatistics:
 
 
 class TestReturnSchema:
+    def test_failure_memory_read_failure_does_not_kill_the_round(
+        self, tmp_path, isolated_db, mocker
+    ):
+        """Codex 六審 P3：失敗記憶查不到時本輪照常整理，不得整輪陣亡。
+
+        使用者流程：背景掃描正在寫 DB → 定時整理那一輪去問「這部片之前查無結果嗎」→
+        修正前那兩行拋例外、**整輪當場結束**，一部片都沒整理，排程還要再等 12 小時。
+        失敗記憶只是「省得重問 8 個來源」的快取，不該有權殺掉整輪；而手動清單那一邊
+        （`_filter_files_sync`）已經是 best-effort，自動不該比手動嚴格。
+        """
+        fav_dir = tmp_path / "fav"
+        fav_dir.mkdir()
+        write_video(fav_dir, "MEMDOWN-001.mp4")
+
+        config = make_config(fav_dir)
+        mocker.patch("core.auto_organize.smart_search",
+                      return_value=[{"number": "MEMDOWN-001", "title": "t", "actors": []}])
+        mocker.patch("core.auto_organize.organize_file",
+                      return_value=default_organize_success())
+        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
+        mocker.patch.object(organize_failures, "should_skip",
+                            side_effect=Exception("database is locked"))
+
+        result = run_one_round(config)
+
+        assert result["added"] == ["MEMDOWN-001"], (
+            "失敗記憶查不到就讓整輪陣亡——那一輪一部片都沒整理，還要再等 12 小時"
+        )
+        assert result["skipped"]["memory_hit"] == 0
+
+    def test_failure_memory_write_failure_does_not_kill_the_round(
+        self, tmp_path, isolated_db, mocker
+    ):
+        """同上的另一半：**記**不起來也不得讓整輪陣亡。
+
+        查無結果的片走 `record_failure('not_found', ...)`。DB 鎖住時修正前那一行拋例外
+        ⇒ 整輪結束，**後面還沒處理的片全部被賠掉**。記不起來的代價只是下一輪再問一次。
+        """
+        fav_dir = tmp_path / "fav"
+        fav_dir.mkdir()
+        write_video(fav_dir, "DBLOCK-001.mp4")
+        write_video(fav_dir, "DBLOCK-002.mp4")
+
+        config = make_config(fav_dir)
+        # 第一部查無結果（要寫記憶、會炸），第二部查得到（必須照樣被整理）
+        mocker.patch(
+            "core.auto_organize.smart_search",
+            side_effect=lambda number, **_kw: (
+                [] if number == "DBLOCK-001"
+                else [{"number": number, "title": "t", "actors": []}]
+            ),
+        )
+        mocker.patch("core.auto_organize.organize_file",
+                      return_value=default_organize_success())
+        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
+        mocker.patch.object(organize_failures, "record_failure",
+                            side_effect=Exception("database is locked"))
+
+        result = run_one_round(config)
+
+        assert result["failed"] == ["DBLOCK-001"]
+        assert result["added"] == ["DBLOCK-002"], (
+            "寫記憶失敗把後面還沒處理的片一起賠掉了"
+        )
+        assert result["newly_recorded"] == 0, "沒真的寫進去就不該計數"
+
     def test_wishlist_reconcile_failure_does_not_kill_the_round_report(
         self, tmp_path, isolated_db, mocker
     ):

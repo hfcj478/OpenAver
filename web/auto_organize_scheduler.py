@@ -145,6 +145,17 @@ async def _prepare_and_run(trigger: str) -> dict:
     ``{"folder_unreachable": True, "folder": <path>}``（不含其餘 run_one_round 鍵）。
     """
     config = await asyncio.to_thread(load_config)
+    # 拿到執行權之後**再問一次開關**（Codex PR#181 六審 P3）。
+    # 沒有這一句的話有一個很窄的空檔會漏掉：loop 在 :69 讀到「開著」，使用者接著撥掉開關，
+    # 此時 `request_abort()` 看到「沒有任何一輪在跑」⇒ 什麼都不做；然後 loop 進場，
+    # `enter_cron()` 又把中止旗標清成 0 ⇒ **畫面說已經關了，整輪照樣搬檔改名跑完。**
+    # 這是「撥掉開關＝叫停」那個承諾剩下的最後一個縫，修法選最低風險的那一種：
+    # 不加旗標、不加鎖，只是拿這份**已經讀進來的**設定多問一句（race 修法階梯的第一階）。
+    # 只對 schedule 生效——「立刻執行一次」在開關關著時本來就該按得動。
+    if trigger == "schedule" and not config.get("search", {}).get(
+        "auto_organize", {}
+    ).get("enabled", False):
+        return {"scheduling_disabled": True}
     configured = (config.get('search', {}).get('favorite_folder') or '').strip()
     if not configured:
         return {"folder_not_configured": True}
@@ -175,6 +186,11 @@ async def _run_round_body(trigger: str) -> None:
     """真正跑一輪；不回傳任何東西，所有結果一律走 emit_notification()。"""
     async with _round_guard():
         result = await _prepare_and_run(trigger)
+
+    if result.get("scheduling_disabled"):
+        # 使用者自己關掉的，安靜收工——這裡發通知只會變成噪音。
+        # 到期時間不重置：重新打開開關時 `update_auto_organize_config()` 會重置。
+        return
 
     if result.get("folder_not_configured"):
         emit_notification(

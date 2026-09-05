@@ -305,7 +305,8 @@ def test_aborted_after_none_falls_through_to_event_threshold(monkeypatch):
 async def test_folder_probe_respects_timeout(monkeypatch):
     """DoD-8 / M6：exists 探測必須有 wait_for 上限；逾時 → folder_unreachable。"""
     monkeypatch.setattr(sched, "_FOLDER_EXISTS_TIMEOUT_S", 0.05)
-    monkeypatch.setattr(sched, "load_config", lambda: {"search": {"favorite_folder": "/nas/fav"}})
+    monkeypatch.setattr(sched, "load_config", lambda: {"search": {"favorite_folder": "/nas/fav",
+                                        "auto_organize": {"enabled": True}}})
     monkeypatch.setattr(sched, "resolve_favorite_folder", lambda _c: "/nas/fav")
 
     def slow_exists(_path):
@@ -406,6 +407,66 @@ async def test_wishlist_removed_emits_formatted_message(monkeypatch):
     reconcile.assert_not_called()
 
 
+async def test_scheduled_round_rechecks_enabled_after_acquiring_ownership(monkeypatch):
+    """Codex 六審 P3：拿到執行權之後要再問一次開關。
+
+    使用者流程：排程 loop 讀到「開著」→ 使用者**就在這一瞬間**撥掉開關 →
+    `request_abort()` 看到「沒有任何一輪在跑」什麼都不做 → loop 進場、`enter_cron()`
+    把中止旗標清成 0 → 修正前它照樣把整輪跑完（搬檔、改名、寫 NFO），**而畫面說已經關了**。
+    """
+    from core import config as core_config
+
+    core_config.mutate_config(
+        lambda cfg: cfg.setdefault("search", {}).update(
+            {
+                "favorite_folder": "/tmp/fav-for-ao",
+                "auto_organize": {"enabled": False},   # 使用者剛剛撥掉
+            }
+        )
+    )
+    ran = MagicMock()
+    monkeypatch.setattr(sched, "run_one_round", ran, raising=False)
+
+    result = await sched._prepare_and_run("schedule")
+
+    assert result == {"scheduling_disabled": True}, (
+        "撥掉開關之後排程還是把整輪跑完了"
+    )
+    ran.assert_not_called()
+
+
+async def test_run_now_still_works_while_toggle_is_off(monkeypatch):
+    """反向鎖：「立刻執行一次」在開關關著時本來就該按得動，不受上面那道閘影響。"""
+    from core import config as core_config
+
+    core_config.mutate_config(
+        lambda cfg: cfg.setdefault("search", {}).update(
+            {"favorite_folder": "", "auto_organize": {"enabled": False}}
+        )
+    )
+
+    result = await sched._prepare_and_run("run_now")
+
+    # 走到下一道閘（沒設資料夾）＝沒有被 scheduling_disabled 擋掉
+    assert result == {"folder_not_configured": True}
+
+
+async def test_scheduling_disabled_emits_nothing(monkeypatch):
+    """使用者自己關掉的，安靜收工——發通知只會變成噪音。"""
+    emit = MagicMock()
+    monkeypatch.setattr(sched, "emit_notification", emit)
+
+    async def fake_prepare(_trigger):
+        return {"scheduling_disabled": True}
+
+    monkeypatch.setattr(sched, "_prepare_and_run", fake_prepare)
+    assert auto_organize_state.enter_cron("schedule") is True
+
+    await sched._run_round_body("schedule")
+
+    emit.assert_not_called()
+
+
 async def test_reconcile_failure_still_emits_summary_plus_its_own_warning(monkeypatch):
     """最壞情況盤點 R2：對帳失敗時摘要照發，另外多一則「書籤對帳失敗」。
 
@@ -488,7 +549,8 @@ class TestProbeTimeoutAndLoopSurvival:
         from web import auto_organize_scheduler as aos
 
         monkeypatch.setattr(aos, "_FOLDER_EXISTS_TIMEOUT_S", 0.2)
-        monkeypatch.setattr(aos, "load_config", lambda: {"search": {"favorite_folder": "/nas/asleep"}})
+        monkeypatch.setattr(aos, "load_config", lambda: {"search": {"favorite_folder": "/nas/asleep",
+                                                "auto_organize": {"enabled": True}}})
         monkeypatch.setattr(aos, "resolve_favorite_folder", lambda _cfg: "/nas/asleep")
 
         # 🔴 只對「我們這一條路徑」變慢：`aos.os` 就是全域 `os` 模組，
@@ -772,7 +834,8 @@ async def test_enter_and_start_exception_is_caught_and_notified(monkeypatch):
 
 async def test_folder_not_configured_skips_round_and_emits_warning(monkeypatch):
     """正向鎖：favorite_folder 是空字串 → run_one_round 不跑，發 folder_not_set 通知。"""
-    monkeypatch.setattr(sched, "load_config", lambda: {"search": {"favorite_folder": ""}})
+    monkeypatch.setattr(sched, "load_config", lambda: {"search": {"favorite_folder": "",
+                                        "auto_organize": {"enabled": True}}})
     run_spy = MagicMock()
     monkeypatch.setattr(sched, "run_one_round", run_spy)
     resolve_spy = MagicMock()
@@ -796,7 +859,8 @@ async def test_folder_not_configured_skips_round_and_emits_warning(monkeypatch):
 
 async def test_whitespace_only_folder_is_treated_as_not_configured(monkeypatch):
     """正向鎖的邊界：只有空白字元的 favorite_folder 也算沒設定。"""
-    monkeypatch.setattr(sched, "load_config", lambda: {"search": {"favorite_folder": "   "}})
+    monkeypatch.setattr(sched, "load_config", lambda: {"search": {"favorite_folder": "   ",
+                                        "auto_organize": {"enabled": True}}})
     run_spy = MagicMock()
     monkeypatch.setattr(sched, "run_one_round", run_spy)
 
@@ -811,7 +875,8 @@ async def test_folder_configured_proceeds_past_the_new_guard(monkeypatch, tmp_pa
     fav = tmp_path / "fav"
     fav.mkdir()
     monkeypatch.setattr(
-        sched, "load_config", lambda: {"search": {"favorite_folder": str(fav)}},
+        sched, "load_config", lambda: {"search": {"favorite_folder": str(fav),
+                                    "auto_organize": {"enabled": True}}},
     )
     run_spy = MagicMock(return_value=_empty_result())
     monkeypatch.setattr(sched, "run_one_round", run_spy)

@@ -25,6 +25,43 @@ from core.wishlist_reconcile import reconcile_wishlist
 logger = get_logger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# 失敗記憶是 best-effort（Codex PR#181 五審 P1 ／ 六審 P3）
+#
+# 它只是「省得重問 8 個來源」的快取，**不該有權殺掉整輪**：DB 一鎖住（背景掃描正在寫）
+# 這些呼叫就拋例外 ⇒ 整輪當場結束、一部片都沒整理，排程還要再等 12 小時。
+# 手動清單那一邊已經是 best-effort（web/routers/search.py::_filter_files_sync），
+# 自動不該比手動嚴格——「與手動同一份判斷」是這支 branch 自己的原則。
+# 查不到就當作沒有記憶：頂多多問一次 8 個來源，而那正是沒有這個快取時的行為。
+# ---------------------------------------------------------------------------
+
+def _memory_says_skip(upper_number: str, dup_key: str) -> Optional[bool]:
+    """查失敗記憶。回 True/False＝查得到；回 **None**＝查不到（呼叫端本輪起不再查）。"""
+    try:
+        return bool(
+            organize_failures.should_skip('not_found', upper_number)
+            or organize_failures.should_skip('duplicate', dup_key)
+        )
+    except Exception:
+        logger.warning(
+            "[auto_organize] 讀取失敗記憶失敗，本輪不再查詢記憶（照常整理，"
+            "查無結果／重複的片這一輪會被重新問一次）", exc_info=True,
+        )
+        return None
+
+
+def _remember_failure(reason: str, key: str, number: str, **kwargs) -> bool:
+    """記一筆失敗記憶；成功回 True。記不起來頂多下一輪再問一次，不值得把整輪賠進去。"""
+    try:
+        organize_failures.record_failure(reason, key, number, **kwargs)
+        return True
+    except Exception:
+        logger.warning(
+            "[auto_organize] 記錄「%s」失敗（%s），本輪繼續", reason, number, exc_info=True,
+        )
+        return False
+
+
 def run_one_round(
     config: dict,
     should_abort: Optional[Callable[[], bool]] = None,
@@ -38,6 +75,7 @@ def run_one_round(
     skipped_memory_hit = 0
     skipped_duplicate = []
     newly_recorded = 0
+    memory_ok = True   # 失敗記憶掛掉之後本輪不再查（整輪只記一行 log，1965 個檔不能記 1965 行）
     aborted_after = None
 
     gallery_config = config.get('gallery', {})
@@ -123,17 +161,19 @@ def run_one_round(
             continue
 
         upper_number = number.upper()
-        dup_key = organize_failures.duplicate_key(path, path_mappings)
-        if organize_failures.should_skip('not_found', upper_number) or \
-                organize_failures.should_skip('duplicate', dup_key):
-            skipped_memory_hit += 1  # 記憶命中不算事件（DoD-9）
-            completed += 1
-            continue
+        dup_key = organize_failures.duplicate_key(path, path_mappings)  # 純函式，不碰 DB
+        if memory_ok:
+            hit = _memory_says_skip(upper_number, dup_key)
+            memory_ok = hit is not None      # None＝DB 掛了，本輪起不再問
+            if hit:
+                skipped_memory_hit += 1  # 記憶命中不算事件（DoD-9）
+                completed += 1
+                continue
 
         results = smart_search(number, uncensored_mode=uncensored_mode, proxy_url=proxy_url)  # CD-144-4：逐字同手動批次
         if not results:
-            organize_failures.record_failure('not_found', upper_number, number)
-            newly_recorded += 1
+            if _remember_failure('not_found', upper_number, number):
+                newly_recorded += 1
             failed.append(number)
             completed += 1
             continue
@@ -158,8 +198,8 @@ def run_one_round(
 
         if organize_result.get('duplicate'):
             target = organize_result.get('duplicate_target', '')
-            organize_failures.record_failure('duplicate', dup_key, number, duplicate_target=target)
-            newly_recorded += 1
+            if _remember_failure('duplicate', dup_key, number, duplicate_target=target):
+                newly_recorded += 1
             skipped_duplicate.append({"number": number, "target": target})
         elif organize_result.get('success'):
             try:
