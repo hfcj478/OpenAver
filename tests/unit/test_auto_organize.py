@@ -131,6 +131,35 @@ class TestFourFileRoundStatistics:
 
 
 class TestReturnSchema:
+    def test_wishlist_reconcile_failure_does_not_kill_the_round_report(
+        self, tmp_path, isolated_db, mocker
+    ):
+        """最壞情況盤點 R2：對帳失敗不得把整輪的帳一起吃掉。
+
+        使用者流程：開著定時整理、同時在掃描頁跑一次片庫掃描 → 背景那一輪把片整理完、
+        搬好、寫好 NFO，最後一步對帳書籤時撞上 DB 鎖 → 修正前例外冒到排程的 except，
+        側欄只出現一則紅色「定時整理失敗」，**摘要根本沒發出去** ⇒ 使用者不知道那幾部
+        已經被搬走改名了；而且它們現在都有 NFO，下一輪一律跳過，這筆帳永遠補不回來。
+        通知是這個功能唯一的帳本（spec §F5），不能誤報。
+        """
+        fav_dir = tmp_path / "fav"
+        fav_dir.mkdir()
+        write_video(fav_dir, "RECON-001.mp4")
+
+        config = make_config(fav_dir)
+        mocker.patch("core.auto_organize.smart_search",
+                      return_value=[{"number": "RECON-001", "title": "t", "actors": []}])
+        mocker.patch("core.auto_organize.organize_file",
+                      return_value=default_organize_success())
+        mocker.patch("core.auto_organize.reconcile_wishlist",
+                      side_effect=Exception("database is locked"))
+
+        result = run_one_round(config)
+
+        assert result["added"] == ["RECON-001"], "對帳失敗把整輪的成果吃掉了"
+        assert result["wishlist_removed"] == []
+        assert result["wishlist_reconcile_failed"] is True
+
     def test_return_schema_has_all_required_keys(self, tmp_path, isolated_db, mocker):
         fav_dir = tmp_path / "fav"
         fav_dir.mkdir()
@@ -146,7 +175,8 @@ class TestReturnSchema:
 
         assert set(result.keys()) == {
             "added", "cover_missing", "failed", "skipped",
-            "newly_recorded", "wishlist_removed", "aborted_after",
+            "newly_recorded", "wishlist_removed", "wishlist_reconcile_failed",
+            "aborted_after",
         }
         assert set(result["skipped"].keys()) == {"has_nfo", "memory_hit", "duplicate"}
         assert isinstance(result["added"], list)

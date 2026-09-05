@@ -89,7 +89,10 @@ def mark_manual_activity(now: float | None = None) -> None:
 
 
 def request_abort() -> None:
-    """只有 favorite-files handler 打這支；沒在跑時不設旗標。"""
+    """兩個呼叫點：favorite-files handler（人要用了）與撥掉排程開關（人要它停）。
+
+    沒在跑時不設旗標；``enter_cron()`` 進場也會把旗標歸零，所以不會外溢到之後的輪次。
+    """
     global _abort_requested
     with _lock:
         if _running:

@@ -83,24 +83,49 @@ def test_emit_evicts_orphan_read_id():
 
 
 def test_emit_notification_dedup_same_title_and_message():
-    """DoD-3 (M1): 同 title_key 且同 message 在**還沒被看過**之前不重複寫入。"""
+    """DoD-3 (M1): 同 title_key 且同 message 在**還沒被看過**之前不重複寫入。
+
+    去重只作用在 ``task_type="auto_organize"``（見下面那支反向鎖）。
+    """
     from web.routers.notifications import emit_notification, _notifications, _read_ids
-    emit_notification("info", "notif.update_available", message="v1.0.0")
+    emit_notification("info", "notif.auto_organize_summary", message="v1.0.0",
+                      task_type="auto_organize")
     assert len(_notifications) == 1
     first_id = _notifications[0]["id"]
     first_time = _notifications[0]["timestamp"]
 
     # 連發相同 title_key 且相同 message（都還沒讀過）→ 合併，時間戳不動
-    emit_notification("info", "notif.update_available", message="v1.0.0")
+    emit_notification("info", "notif.auto_organize_summary", message="v1.0.0",
+                      task_type="auto_organize")
     assert len(_notifications) == 1
     assert _notifications[0]["id"] == first_id
     assert _notifications[0]["timestamp"] == first_time
     assert first_id not in _read_ids
 
     # 同 title_key 但不同 message → 應新增第二筆
-    emit_notification("info", "notif.update_available", message="v1.0.1")
+    emit_notification("info", "notif.auto_organize_summary", message="v1.0.1",
+                      task_type="auto_organize")
     assert len(_notifications) == 2
     assert _notifications[0]["message"] == "v1.0.1"
+
+
+def test_dedup_does_not_touch_other_features():
+    """去重不得跨出定時整理的邊界。
+
+    使用者流程：從來沒開過定時整理的人按「產生影片列表」→ 側欄出「掃描開始」→
+    沒點開通知抽屜就再按一次 → 修正前第二則被吃掉，使用者以為掃描沒跑。
+    main 上完全沒有去重，這條規則是本 branch 加的，不該外溢到別的功能。
+    """
+    from web.routers.notifications import emit_notification, _notifications
+
+    emit_notification("info", "notif.scanner_started", message="", task_type="scanner")
+    emit_notification("info", "notif.scanner_started", message="", task_type="scanner")
+    assert len(_notifications) == 2, "掃描類通知被定時整理的去重規則吃掉"
+
+    # task_type 沒帶的呼叫點（更新提醒等）同樣不受影響
+    emit_notification("info", "notif.update_available", message="v1.0.0")
+    emit_notification("info", "notif.update_available", message="v1.0.0")
+    assert len(_notifications) == 4
 
 
 def test_emit_notification_non_blocking_zero_db_calls():
@@ -568,12 +593,15 @@ def test_dedup_still_applies_when_an_unread_copy_exists_among_read_ones():
     """
     from web.routers.notifications import emit_notification, _notifications, _read_ids
 
-    emit_notification("error", "notif.auto_organize_failed", message="")
+    emit_notification("error", "notif.auto_organize_failed", message="",
+                      task_type="auto_organize")
     _read_ids.add(_notifications[0]["id"])          # 第一則：已讀
-    emit_notification("error", "notif.auto_organize_failed", message="")   # 第二則：未讀
+    emit_notification("error", "notif.auto_organize_failed", message="",
+                      task_type="auto_organize")    # 第二則：未讀
     assert len(_notifications) == 2
 
-    emit_notification("error", "notif.auto_organize_failed", message="")   # 第三次
+    emit_notification("error", "notif.auto_organize_failed", message="",
+                      task_type="auto_organize")    # 第三次
     assert len(_notifications) == 2, (
         "已經有一則未讀的同內容通知在了，不得再堆第二則未讀"
     )

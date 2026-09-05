@@ -201,6 +201,13 @@ async def _run_round_body(trigger: str) -> None:
 
     _emit_round_summary(result)
 
+    if result.get("wishlist_reconcile_failed"):
+        # 摘要已經發出去了（整理結果是真的），這則只說「對帳那一步失敗」。
+        # 沿用另外三個呼叫點的同一個 key（scanner/scraper/wishlist）。
+        emit_notification(
+            "warn", "notif.wishlist_reconcile_failed", task_type="wishlist_reconcile",
+        )
+
     wishlist_removed = result.get("wishlist_removed") or []
     if wishlist_removed:
         emit_notification(

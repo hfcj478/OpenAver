@@ -862,6 +862,13 @@ def _filter_files_sync(paths: list) -> dict:
     # NFO 同 stem 偵測（case-insensitive，批次一次算完，父目錄 listing cache 才有效）
     nfo_map = detect_nfo([path for _, path in candidates])
     path_mappings = config.get("gallery", {}).get("path_mappings", {})
+    # 失敗記憶（灰字「查無結果」／橘色「重複」）是**加值**，不是這個端點的職責。
+    # DB 一鎖住（背景掃描或定時整理正在寫）就讓整包清單失敗的話，前端 setFileList()
+    # 只 console.error 然後帶著**空的 hasNfoMap** 繼續 ⇒ `has_nfo` 全變 false ⇒
+    # 使用者按「整理全部」會把已經刮好的整批片重新整理、NFO 整份重寫。
+    # ⇒ 失敗就退回 T6 之前的行為（skip_reason 留空），has_nfo 照常回。
+    # 一次請求只記一行 log（1965 個檔不能記 1965 行）。
+    memory_ok = True
     filtered = []
     for original_path, path in candidates:
         skip_reason = ""
@@ -869,13 +876,23 @@ def _filter_files_sync(paths: list) -> dict:
 
         # 番號一律從 basename 取：與 core/auto_organize.py::run_one_round 同源（CD-144-8 要求兩邊算出同一個鍵），等價性由 tests/unit/test_number_extraction_key_parity.py 守
         number = extract_number(Path(path).name)
-        if number:
-            dup_key = organize_failures.duplicate_key(path, path_mappings)
-            if organize_failures.should_skip("duplicate", dup_key):
-                skip_reason = "duplicate"
-                duplicate_target = organize_failures.get_duplicate_target(dup_key)
-            elif organize_failures.should_skip("not_found", number.upper()):
-                skip_reason = "not_found"
+        if number and memory_ok:
+            try:
+                dup_key = organize_failures.duplicate_key(path, path_mappings)
+                if organize_failures.should_skip("duplicate", dup_key):
+                    skip_reason = "duplicate"
+                    duplicate_target = organize_failures.get_duplicate_target(dup_key)
+                elif organize_failures.should_skip("not_found", number.upper()):
+                    skip_reason = "not_found"
+            except Exception:
+                memory_ok = False
+                skip_reason = ""
+                duplicate_target = ""
+                logger.warning(
+                    "[filter_files] 讀取失敗記憶失敗，本次清單不顯示「查無結果」／「重複」標記；"
+                    "檔案清單與 NFO 判斷不受影響",
+                    exc_info=True,
+                )
 
         filtered.append({
             "path": original_path,
@@ -984,6 +1001,14 @@ def update_auto_organize_config(body: AutoOrganizeConfigRequest) -> dict:
         cfg.setdefault("search", {}).setdefault("auto_organize", {})["enabled"] = body.enabled
 
     mutate_config(_mut)
+    if not body.enabled:
+        # 撥掉開關＝叫停。沒有這一行的話，使用者關掉排程之後**正在跑的那一輪照樣
+        # 搬檔改名到跑完為止**（1965 個檔的第一輪是數小時等級），而面板上沒有任何
+        # 停止鈕、`request_abort()` 全庫唯一的呼叫點是「我的最愛」按鈕（:740）
+        # ⇒ 使用者唯一的脫身方式是關掉整個 App。
+        # 安全性：`request_abort()` 沒在跑時不設旗標，且 `enter_cron()` 進場時
+        # 會把旗標歸零，所以不會外溢到之後的任何一輪（core/auto_organize_state.py:52-63）。
+        request_abort()
     # 撥開關的當下重新計時（[NEEDS CLARIFICATION]⑤ 裁決：同步呼叫，成功寫入之後、
     # 回應之前）——不重置的話，關掉再開回來仍沿用舊的到期時間，可能立刻觸發。
     auto_organize_scheduler.reset_due_time()

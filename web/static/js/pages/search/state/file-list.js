@@ -62,7 +62,12 @@ export function searchStateFileList() {
             this.hasMoreResults = false;
             this.currentIndex = 0;
             this._resetCoverState();
-            this.coverError = window.t('search.filelist.not_found', { number: file.number });
+            // T6 的失敗記憶把「重複」的檔標成 searched=true 但 searchResults 是空的，
+            // 會落進這個通用分支顯示「找不到 XXX 的資料」——跟同一列上的橘色「重複」標記
+            // 自相矛盾（那部片查得到，是目標位置已經有同名檔）。純顯示層，不影響任何寫入。
+            this.coverError = file.skipReason === 'duplicate'
+                ? window.t('search.filelist.duplicate_detail', { number: file.number })
+                : window.t('search.filelist.not_found', { number: file.number });
             this.pageState = 'result';
         }
     },

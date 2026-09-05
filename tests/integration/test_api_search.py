@@ -2007,6 +2007,55 @@ class TestAutoOrganizeEndpoints:
         cfg = core_config.load_config()
         assert cfg["search"]["auto_organize"]["enabled"] is True
 
+    def test_disabling_toggle_aborts_running_round(self, client):
+        """Codex PR#181 之後的最壞情況盤點 R1：撥掉開關＝叫停正在跑的那一輪。
+
+        使用者流程：打開「定時整理」面板 → 看到「目前正在執行一輪」、覺得不對勁把開關
+        撥掉 → 修正前那一輪**繼續搬檔改名到跑完為止**（最愛資料夾 1965 個檔的第一輪是
+        數小時等級）。面板上沒有停止鈕，`request_abort()` 全庫唯一的呼叫點是「我的最愛」
+        按鈕，所以使用者唯一的脫身方式是關掉整個 App。
+        """
+        from core import auto_organize_state
+        from core import config as core_config
+
+        core_config.mutate_config(
+            lambda cfg: cfg.setdefault("search", {}).update(
+                {"favorite_folder": "/tmp/fav-for-ao"}
+            )
+        )
+
+        assert auto_organize_state.enter_cron("run_now") is True
+        try:
+            assert auto_organize_state.should_abort() is False
+
+            resp = client.post("/api/search/auto-organize/config", json={"enabled": False})
+            assert resp.status_code == 200
+            assert resp.json() == {"success": True}
+            assert auto_organize_state.should_abort() is True, (
+                "撥掉開關之後那一輪還在搬檔改名，而畫面上沒有任何其他停止入口"
+            )
+        finally:
+            auto_organize_state.exit_cron()
+
+    def test_enabling_toggle_does_not_abort(self, client):
+        """反向鎖：撥「開」不得設中止旗標（否則剛開的排程立刻自廢）。"""
+        from core import auto_organize_state
+        from core import config as core_config
+
+        core_config.mutate_config(
+            lambda cfg: cfg.setdefault("search", {}).update(
+                {"favorite_folder": "/tmp/fav-for-ao"}
+            )
+        )
+
+        assert auto_organize_state.enter_cron("run_now") is True
+        try:
+            resp = client.post("/api/search/auto-organize/config", json={"enabled": True})
+            assert resp.status_code == 200
+            assert auto_organize_state.should_abort() is False
+        finally:
+            auto_organize_state.exit_cron()
+
     def test_use_resolved_folder_writes_favorite_folder(self, client, tmp_path, monkeypatch):
         """DoD：use-resolved-folder 把 resolve 結果寫進 favorite_folder。"""
         from core import config as core_config

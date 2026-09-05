@@ -250,6 +250,7 @@
       "result_count": "搜尋結果 ({count})",
       "unrecognized": "無法識別番號: {filename}",
       "not_found": "找不到 {number} 的資料",
+      "duplicate_detail": "{number}：目標位置已有同名檔案（重複）",
       "search_failed": "搜尋失敗",
       "connection_error": "連線錯誤，請稍後再試",
       "already_organized": "已整理",

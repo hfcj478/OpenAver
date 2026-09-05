@@ -186,7 +186,19 @@ def run_one_round(
 
         completed += 1
 
-    wishlist_removed = reconcile_wishlist()  # 迴圈結束（含被中止的情況）跑一次
+    # 迴圈結束（含被中止的情況）跑一次。**必須包 try**：這一步在整輪的最後，
+    # 片已經全部搬完改完名了。它拋例外（掃描正在寫、DB 鎖住）會讓整輪冒到排程的
+    # except，發一則「定時整理失敗」——而那一輪其實全部成功，摘要根本沒發出去 ⇒
+    # 使用者不知道那幾十部已經被搬走改名，而且它們現在都有 NFO 了、下一輪一律跳過，
+    # 這筆帳永遠補不回來。通知是這個功能唯一的帳本（spec §F5），不能誤報。
+    # 形狀照 web/routers/scanner.py:739-743（另外三個呼叫點都是這樣包的）。
+    wishlist_reconcile_failed = False
+    try:
+        wishlist_removed = reconcile_wishlist()
+    except Exception:
+        logger.exception("[auto_organize] wishlist 對帳失敗（本輪收尾）；整理結果不受影響")
+        wishlist_removed = []
+        wishlist_reconcile_failed = True
 
     return {
         "added": added,
@@ -199,5 +211,6 @@ def run_one_round(
         },
         "newly_recorded": newly_recorded,
         "wishlist_removed": wishlist_removed,
+        "wishlist_reconcile_failed": wishlist_reconcile_failed,
         "aborted_after": aborted_after,
     }

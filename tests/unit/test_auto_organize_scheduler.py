@@ -25,6 +25,7 @@ def _empty_result(**overrides):
         "skipped": {"has_nfo": 0, "memory_hit": 0, "duplicate": []},
         "newly_recorded": 0,
         "wishlist_removed": [],
+        "wishlist_reconcile_failed": False,
         "aborted_after": None,
     }
     base.update(overrides)
@@ -403,6 +404,34 @@ async def test_wishlist_removed_emits_formatted_message(monkeypatch):
     )
     assert "ABC-123" in wishlist_call.kwargs["message"]
     reconcile.assert_not_called()
+
+
+async def test_reconcile_failure_still_emits_summary_plus_its_own_warning(monkeypatch):
+    """最壞情況盤點 R2：對帳失敗時摘要照發，另外多一則「書籤對帳失敗」。
+
+    使用者流程：那一輪把片整理完、搬好、寫好 NFO，最後一步對帳撞上 DB 鎖 → 修正前
+    整輪冒到 except，側欄只有一則紅色「定時整理失敗」、摘要沒發 ⇒ 使用者不知道那幾部
+    已經被搬走改名（而且它們現在都有 NFO，下一輪一律跳過，這筆帳補不回來）。
+    """
+    emit = MagicMock()
+    monkeypatch.setattr(sched, "emit_notification", emit)
+
+    async def fake_prepare(_trigger):
+        return _empty_result(added=["ABC-123"], wishlist_reconcile_failed=True)
+
+    monkeypatch.setattr(sched, "_prepare_and_run", fake_prepare)
+    assert auto_organize_state.enter_cron("run_now") is True
+
+    await sched._run_round_body("run_now")
+
+    title_keys = [c.args[1] for c in emit.call_args_list]
+    assert "notif.auto_organize_summary" in title_keys, (
+        "對帳失敗把整輪的帳吃掉了——使用者不知道片已經被搬走改名"
+    )
+    assert "notif.wishlist_reconcile_failed" in title_keys, "對帳失敗完全無聲"
+    assert "notif.auto_organize_failed" not in title_keys, (
+        "那一輪其實全成功，不該報成整輪失敗"
+    )
 
 
 # ---------------------------------------------------------------------------

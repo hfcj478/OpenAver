@@ -156,3 +156,48 @@ class TestFilterFilesMemory:
             f"extract_number 收到的不是 basename：{seen_args!r}。"
             "傳整條路徑會讓父目錄名（MDCX／Jellyfin 的每片一夾佈局）被誤當番號。"
         )
+
+    def test_memory_lookup_failure_is_best_effort_and_keeps_has_nfo(
+        self, client, tmp_path, monkeypatch
+    ):
+        """Codex PR#181 五審 P1：失敗記憶查不到時整包清單仍要回，且 has_nfo 必須是真的。
+
+        使用者流程：定時整理（或背景掃描）正在寫 DB → 你按「我的最愛」→ 失敗記憶那幾行
+        拋例外。修正前整個 /api/search/filter-files 變 500，前端 `setFileList()` 只
+        `console.error` 然後帶著**空的 hasNfoMap** 繼續 ⇒ `has_nfo: hasNfoMap[path] || false`
+        讓每一個檔都變成「沒有 NFO」⇒ 按「整理全部」把已經刮好的整批片重新整理、NFO 整份重寫。
+
+        T6 之前這個迴圈完全沒有 DB 存取，所以是本次改動自己引入的回歸。
+        修法＝失敗記憶降為 best-effort：掛掉就讓 skip_reason 留空（退回 T6 之前的行為），
+        `has_nfo` 照常回。
+        """
+        db_path = tmp_path / "test_filter_files_memory.db"
+        init_db(db_path)
+        monkeypatch.setattr("core.database.connection.get_db_path", lambda: db_path)
+
+        def boom(*args, **kwargs):
+            raise Exception("database is locked")
+
+        monkeypatch.setattr(organize_failures, "should_skip", boom)
+
+        with_nfo = self._make_mp4(tmp_path, "CAWD-500.mp4")
+        (tmp_path / "CAWD-500.nfo").write_text("<movie/>", encoding="utf-8")
+        without_nfo = self._make_mp4(tmp_path, "ABP-100.mp4")
+
+        resp = client.post(
+            "/api/search/filter-files",
+            json={"paths": [str(with_nfo), str(without_nfo)]},
+        )
+        assert resp.status_code == 200, "失敗記憶查詢失敗把整包清單打成 500"
+        data = resp.json()
+        assert data["success"] is True
+        by_path = {f["path"]: f for f in data["files"]}
+        # 核心斷言：has_nfo 不受失敗記憶影響——這才是「整批被重新整理」的閘門
+        assert by_path[str(with_nfo)]["has_nfo"] is True, (
+            "失敗記憶掛掉讓 has_nfo 歸零 ⇒ 使用者按「整理全部」會把已刮好的片整批重刮"
+        )
+        assert by_path[str(without_nfo)]["has_nfo"] is False
+        # 加值退場：skip_reason 留空＝退回 T6 之前的行為
+        for entry in data["files"]:
+            assert entry["skip_reason"] == ""
+            assert entry["duplicate_target"] == ""
