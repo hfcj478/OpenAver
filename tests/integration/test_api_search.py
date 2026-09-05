@@ -8,7 +8,7 @@ import logging
 import pytest
 import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock, call, ANY
+from unittest.mock import AsyncMock, patch, MagicMock, call, ANY
 
 
 def load_fixture(filename: str) -> dict:
@@ -1909,3 +1909,260 @@ class TestBatchSearch:
         # summary.total 是去重後的數量（2），不是原始輸入數量（3）
         assert data['summary']['total'] == 2, \
             f"Expected summary.total == 2 (deduped), got {data['summary']['total']}"
+
+
+class TestAutoOrganizeHooks:
+    """DoD-6: 驗證三個掛載點對 auto_organize_state 的分工與呼叫。"""
+
+    def test_favorite_files_marks_activity_and_requests_abort(self, client, mocker):
+        """GET /api/search/favorite-files 兩支都打：mark_manual_activity 與 request_abort。"""
+        from web.routers import search as search_module
+        spy_mark = mocker.spy(search_module, "mark_manual_activity")
+        spy_abort = mocker.spy(search_module, "request_abort")
+
+        client.get("/api/search/favorite-files")
+
+        assert spy_mark.call_count == 1
+        assert spy_abort.call_count == 1
+
+    def test_search_stream_only_marks_activity(self, client, mocker):
+        """GET /api/search/stream 只打 mark_manual_activity，絕不呼叫 request_abort。"""
+        from web.routers import search as search_module
+        spy_mark = mocker.spy(search_module, "mark_manual_activity")
+        spy_abort = mocker.spy(search_module, "request_abort")
+
+        client.get("/api/search/stream?q=AB")
+
+        assert spy_mark.call_count == 1
+        assert spy_abort.call_count == 0
+
+    def test_scrape_single_only_marks_activity(self, client, mocker):
+        """POST /api/scrape-single 只打 mark_manual_activity，絕不呼叫 request_abort。"""
+        from web.routers import scraper as scraper_module
+        spy_mark = mocker.spy(scraper_module.auto_organize_state, "mark_manual_activity")
+        spy_abort = mocker.spy(scraper_module.auto_organize_state, "request_abort")
+
+        client.post(
+            "/api/scrape-single",
+            json={"file_path": "/nonexistent/test.mp4", "number": "ABC-123"},
+        )
+
+        assert spy_mark.call_count == 1
+        assert spy_abort.call_count == 0
+
+
+# ============ TASK-144-T5：auto-organize 三端點 ＋ lifespan ============
+
+class TestAutoOrganizeEndpoints:
+    """TASK-144-T5：config / use-resolved-folder / run-now 與 lifespan 接線。"""
+
+    @pytest.fixture(autouse=True)
+    def _reset_auto_organize_state(self):
+        """每支測試前後把 module-level 狀態清乾淨。
+
+        本檔前面的測試會打 `/api/search/*` 端點，而那些端點（T4a）會呼叫
+        `mark_manual_activity()` 把 `_last_manual_at` 設成「剛剛」——
+        `enter_cron('schedule')` 因此會正確地讓路而回 `False`。
+        那是產品**正確**的行為，不該讓它污染本 class 的前置條件。
+        """
+        from core import auto_organize_state
+        auto_organize_state.exit_cron()
+        auto_organize_state._last_manual_at = float("-inf")
+        yield
+        auto_organize_state.exit_cron()
+        auto_organize_state._last_manual_at = float("-inf")
+
+    def test_auto_organize_config_requires_favorite_folder(self, client):
+        """DoD-12：favorite_folder 空時只允許寫 False。"""
+        from core import config as core_config
+        core_config.mutate_config(
+            lambda cfg: cfg.setdefault("search", {}).update({"favorite_folder": ""})
+        )
+
+        resp = client.post("/api/search/auto-organize/config", json={"enabled": True})
+        assert resp.status_code == 200
+        assert resp.json() == {"success": False, "error": "favorite_folder_unset"}
+
+        resp_off = client.post("/api/search/auto-organize/config", json={"enabled": False})
+        assert resp_off.status_code == 200
+        assert resp_off.json() == {"success": True}
+
+    def test_auto_organize_config_toggle_resets_due_time(self, client, mocker):
+        """DoD-1 / M3：撥開關當下呼叫 reset_due_time。"""
+        from core import config as core_config
+        from web import auto_organize_scheduler
+
+        core_config.mutate_config(
+            lambda cfg: cfg.setdefault("search", {}).update(
+                {"favorite_folder": "/tmp/fav-for-ao"}
+            )
+        )
+        spy = mocker.spy(auto_organize_scheduler, "reset_due_time")
+
+        resp = client.post("/api/search/auto-organize/config", json={"enabled": True})
+        assert resp.status_code == 200
+        assert resp.json() == {"success": True}
+        spy.assert_called()
+
+        cfg = core_config.load_config()
+        assert cfg["search"]["auto_organize"]["enabled"] is True
+
+    def test_disabling_toggle_aborts_running_round(self, client):
+        """Codex PR#181 之後的最壞情況盤點 R1：撥掉開關＝叫停正在跑的那一輪。
+
+        使用者流程：打開「定時整理」面板 → 看到「目前正在執行一輪」、覺得不對勁把開關
+        撥掉 → 修正前那一輪**繼續搬檔改名到跑完為止**（最愛資料夾 1965 個檔的第一輪是
+        數小時等級）。面板上沒有停止鈕，`request_abort()` 全庫唯一的呼叫點是「我的最愛」
+        按鈕，所以使用者唯一的脫身方式是關掉整個 App。
+        """
+        from core import auto_organize_state
+        from core import config as core_config
+
+        core_config.mutate_config(
+            lambda cfg: cfg.setdefault("search", {}).update(
+                {"favorite_folder": "/tmp/fav-for-ao"}
+            )
+        )
+
+        assert auto_organize_state.enter_cron("run_now") is True
+        try:
+            assert auto_organize_state.should_abort() is False
+
+            resp = client.post("/api/search/auto-organize/config", json={"enabled": False})
+            assert resp.status_code == 200
+            assert resp.json() == {"success": True}
+            assert auto_organize_state.should_abort() is True, (
+                "撥掉開關之後那一輪還在搬檔改名，而畫面上沒有任何其他停止入口"
+            )
+        finally:
+            auto_organize_state.exit_cron()
+
+    def test_enabling_toggle_does_not_abort(self, client):
+        """反向鎖：撥「開」不得設中止旗標（否則剛開的排程立刻自廢）。"""
+        from core import auto_organize_state
+        from core import config as core_config
+
+        core_config.mutate_config(
+            lambda cfg: cfg.setdefault("search", {}).update(
+                {"favorite_folder": "/tmp/fav-for-ao"}
+            )
+        )
+
+        assert auto_organize_state.enter_cron("run_now") is True
+        try:
+            resp = client.post("/api/search/auto-organize/config", json={"enabled": True})
+            assert resp.status_code == 200
+            assert auto_organize_state.should_abort() is False
+        finally:
+            auto_organize_state.exit_cron()
+
+    def test_use_resolved_folder_writes_favorite_folder(self, client, tmp_path, monkeypatch):
+        """DoD：use-resolved-folder 把 resolve 結果寫進 favorite_folder。"""
+        from core import config as core_config
+
+        fav = tmp_path / "resolved-fav"
+        fav.mkdir()
+        monkeypatch.setattr(
+            "web.routers.search.resolve_favorite_folder",
+            lambda _cfg: str(fav),
+        )
+
+        resp = client.post("/api/search/auto-organize/use-resolved-folder")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["folder"] == str(fav)
+        assert core_config.load_config()["search"]["favorite_folder"] == str(fav)
+
+    def test_run_now_returns_immediately_even_when_round_is_slow(
+        self, client, mocker, tmp_path
+    ):
+        """DoD-2 / M4：run-now 毫秒返回，絕不 await 整輪。"""
+        import time
+        from core import config as core_config
+        from core import auto_organize_state
+
+        fav = tmp_path / "ao-fav"
+        fav.mkdir()
+        core_config.mutate_config(
+            lambda cfg: cfg.setdefault("search", {}).update(
+                {"favorite_folder": str(fav)}
+            )
+        )
+
+        def slow_round(*_a, **_k):
+            time.sleep(2.0)
+            return {
+                "added": [],
+                "cover_missing": [],
+                "failed": [],
+                "skipped": {"has_nfo": 0, "memory_hit": 0, "duplicate": []},
+                "newly_recorded": 0,
+                "wishlist_removed": [],
+                "aborted_after": None,
+            }
+
+        mocker.patch("web.auto_organize_scheduler.run_one_round", side_effect=slow_round)
+        mocker.patch("web.auto_organize_scheduler.emit_notification")
+
+        # 清掉可能殘留的 running
+        auto_organize_state.exit_cron()
+
+        t0 = time.perf_counter()
+        resp = client.post("/api/search/auto-organize/run-now")
+        elapsed = time.perf_counter() - t0
+
+        assert resp.status_code == 200
+        assert resp.json() == {"success": True, "reason": None}
+        assert elapsed < 0.5, f"run-now took {elapsed:.3f}s — must not await the round"
+
+        # 等背景輪結束，避免污染後續測試
+        from web import auto_organize_scheduler as aos
+        if aos._round_task is not None:
+            import asyncio
+            # 🔴 不可用 `aos._round_task.result(timeout=5)`：`asyncio.Task.result()`
+            # **不接受 timeout 參數**（那是 `concurrent.futures.Future` 的簽名），
+            # 會立刻拋 TypeError 並被 `except` 吞掉 ⇒ 這段「等背景輪結束」完全沒有生效
+            # （PR review 實測指出）。直接取消即可：這裡要的只是不要把背景輪留給下一支測試。
+            aos._round_task.cancel()
+            auto_organize_state.exit_cron()
+
+    def test_run_now_already_running_reason(self, client):
+        """DoD-2：另一輪在跑 → already_running。"""
+        from core import auto_organize_state
+
+        # 用 run_now 佔住「正在跑」這個位子：它不讀 _last_manual_at，
+        # 不會因為同檔前面的測試打過端點而被讓路擋掉。
+        assert auto_organize_state.enter_cron("run_now") is True
+        try:
+            resp = client.post("/api/search/auto-organize/run-now")
+            assert resp.status_code == 200
+            assert resp.json() == {"success": False, "reason": "already_running"}
+        finally:
+            auto_organize_state.exit_cron()
+
+    def test_lifespan_starts_auto_organize_task(self, tmp_path, monkeypatch):
+        """DoD-13 / M8：lifespan 掛 auto_organize_task 強引用。"""
+        import asyncio
+        from fastapi.testclient import TestClient
+        from web.app import app
+
+        monkeypatch.setattr(
+            "core.database.connection.get_db_path", lambda: tmp_path / "app.db"
+        )
+        monkeypatch.setattr(
+            "core.access_auth.get_db_path", lambda: tmp_path / "access.db"
+        )
+
+        async def hang_forever():
+            await asyncio.Event().wait()
+
+        with patch("web.app.auto_organize_loop", hang_forever), \
+             patch("web.app.startup_reconnect", return_value=None), \
+             patch("web.app.source_reachability") as mock_sr:
+            mock_sr.schedule_reprobe_if_stale = AsyncMock(return_value=None)
+            with TestClient(app) as _client:
+                task = getattr(app.state, "auto_organize_task", None)
+                assert task is not None, "lifespan must create auto_organize_task"
+                assert not task.done()
+

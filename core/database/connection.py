@@ -254,6 +254,30 @@ def init_db(db_path: Path = None) -> None:
         CREATE INDEX IF NOT EXISTS idx_wishlist_created_at ON wishlist(created_at)
     """)
 
+    # 創建通知表格
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id TEXT PRIMARY KEY,
+            timestamp REAL NOT NULL,
+            level TEXT NOT NULL,
+            title_key TEXT NOT NULL,
+            message TEXT DEFAULT '',
+            task_type TEXT,
+            is_read INTEGER DEFAULT 0
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS organize_failures (
+            key TEXT PRIMARY KEY,
+            reason TEXT NOT NULL,
+            number TEXT NOT NULL,
+            duplicate_target TEXT DEFAULT '',
+            attempt_count INTEGER DEFAULT 1,
+            last_failed_at REAL NOT NULL
+        )
+    """)
+
     # Migration: 加入 Phase 37 新欄位
     existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(videos)").fetchall()}
     if 'director' not in existing_cols:

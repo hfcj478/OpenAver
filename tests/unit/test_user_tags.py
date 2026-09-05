@@ -15,6 +15,27 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from core.path_utils import to_file_uri
+from core.database.connection import init_db
+
+
+@pytest.fixture(autouse=True)
+def _t6_isolated_failure_db(tmp_path, monkeypatch):
+    """TASK-144-T6：這支檔案裡的測試現在會間接碰到 organize_failures 這張表。
+
+    `POST /api/search/filter-files` 會查失敗記憶、`scrape_single()` 成功時會清失敗記憶，
+    兩者都開 sqlite 連線——而這些測試原本完全不碰 DB，於是被 repo-write 守衛（G1，
+    `tests/conftest.py:250`）擋成 `RepoWriteGuardViolation`（繼承 `BaseException`，
+    產品碼的 `except Exception` 攔不到，整個請求變 500）。
+
+    **這不是放寬守衛**：守衛擋的是「寫進真實 output/openaver.db」，把預設 db_path 指到
+    tmp 正是它訊息裡列的四種修法第一種。形狀照 `tests/unit/test_auto_organize.py::isolated_db`
+    的既有慣例（T3 建立）。
+    """
+    db_path = tmp_path / "t6_organize_failures.db"
+    init_db(db_path)
+    monkeypatch.setattr("core.database.connection.get_db_path", lambda: db_path)
+    return db_path
+
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -411,12 +432,14 @@ def test_write_nfo_passes_user_tags_to_generate_nfo():
 
 def test_organize_file_separates_user_tags_in_nfo():
     """T5-RED1: organize_file 呼叫 generate_nfo 時 user_tags 分開寫 <user_tag>，不混入 <tag>"""
-    import tempfile, os
+    import tempfile, os, shutil as _shutil
     from pathlib import Path
     from unittest.mock import patch, MagicMock
 
-    # 建立假影片檔案
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+    # 獨立暫存夾：organize_file 會真的搬檔（T0 起改用 os.replace ＋ O_EXCL 佔位），
+    # 產物若落在共用的系統暫存夾，同檔其他測試會撞到既有目標而被判 duplicate。
+    work_dir = tempfile.mkdtemp(prefix="user_tags_organize_")
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=work_dir) as f:
         video_path = f.name
 
     from core.organizer import generate_nfo as real_generate_nfo
@@ -447,7 +470,7 @@ def test_organize_file_separates_user_tags_in_nfo():
         }
 
         scraper_config = {
-            'output_dir': tempfile.gettempdir(),
+            'output_dir': work_dir,
             'folder_name_template': '{number}',
         }
 
@@ -473,17 +496,18 @@ def test_organize_file_separates_user_tags_in_nfo():
         if os.path.exists(nfo_path):
             os.unlink(nfo_path)
     finally:
-        if os.path.exists(video_path):
-            os.unlink(video_path)
+        _shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def test_organize_file_no_user_tags_no_regression():
     """T5-RED2: metadata 無 user_tags 時，NFO 不含 <user_tag>（不回歸）"""
-    import tempfile, os
+    import tempfile, os, shutil as _shutil
     from pathlib import Path
     from unittest.mock import patch
 
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+    # 獨立暫存夾：理由同 test_organize_file_separates_user_tags_in_nfo
+    work_dir = tempfile.mkdtemp(prefix="user_tags_organize_")
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=work_dir) as f:
         video_path = f.name
 
     from core.organizer import generate_nfo as real_generate_nfo
@@ -514,7 +538,7 @@ def test_organize_file_no_user_tags_no_regression():
         }
 
         scraper_config = {
-            'output_dir': tempfile.gettempdir(),
+            'output_dir': work_dir,
             'folder_name_template': '{number}',
         }
 
@@ -535,8 +559,7 @@ def test_organize_file_no_user_tags_no_regression():
         if os.path.exists(nfo_path):
             os.unlink(nfo_path)
     finally:
-        if os.path.exists(video_path):
-            os.unlink(video_path)
+        _shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def test_scrape_single_upserts_user_tags_to_db():

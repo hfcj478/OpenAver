@@ -78,11 +78,20 @@ class ScraperConfig(BaseModel):
     strm_path_mappings: Dict[str, str] = {}
 
 
+AUTO_ORGANIZE_INTERVAL_HOURS = 12  # D7 二次收斂：不給選，寫死；供本檔與
+# web/auto_organize_scheduler.py 共用同一個數字，不重複寫兩份。
+
+
+class AutoOrganizeConfig(BaseModel):
+    enabled: bool = False
+
+
 class SearchConfig(BaseModel):
     search_filter: str = ""
     uncensored_mode_enabled: bool = False  # deprecated: read via core.source_settings.is_uncensored_mode_effective()
     favorite_folder: str = ""  # 我的最愛資料夾 - 空字串 = 使用系統下載資料夾
     proxy_url: str = ""
+    auto_organize: AutoOrganizeConfig = AutoOrganizeConfig()
 
 
 class SourceLinksConfig(BaseModel):

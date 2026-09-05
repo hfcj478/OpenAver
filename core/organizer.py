@@ -16,6 +16,7 @@ from PIL import Image
 from typing import Optional, Dict, Any, List, Tuple
 from urllib.parse import urlparse
 
+from core.atomic_write import atomic_move
 from core.config import STEM_IMAGE_MODES
 from core.cover_attributes import effective_tags
 from core.cover_layout import resolve_cover_target, same_target_verdict
@@ -1248,12 +1249,15 @@ def organize_file(  # noqa: C901 — 整理主流程；Phase 2（110b）會在�
             if containment_error:
                 result['error'] = containment_error
                 return result
-            if os.path.exists(target_path):
+            try:
+                fd = os.open(target_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
                 result['success'] = False
                 result['duplicate'] = True
                 result['duplicate_target'] = os.path.basename(target_path)
                 return result
-            shutil.move(file_path, target_path)
+            os.close(fd)
+            atomic_move(file_path, target_path)
 
             # 搬移字幕檔（影片有搬移時才執行）
             subs_to_move = subtitle_files

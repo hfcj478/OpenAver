@@ -4882,6 +4882,36 @@ const RULES = [
     pattern: /^\s*(?:self\.)?NUM_PATTERNS\s*(?::[^=\n]*)?=/m,
     note: '[TASK-143-T6 CD-143-7] core/readonly_producer.py 不得自建 NUM_PATTERNS 表（CD-143-2 單一來源是 core/gallery_scanner.py）',
   },
+
+  // ==== [TASK-144-T7] Auto Organize Panel 掛載 ====
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: 'type="module" src="/static/js/components/auto-organize-panel.js"',
+    note: '[TASK-144-T7] base.html 缺少 auto-organize-panel.js 的 module script tag——元件沒被載入，按鈕點了沒反應',
+  },
+  {
+    file: 'web/templates/search.html', kind: 'required-string',
+    pattern: 'x-data="autoOrganizePanel"',
+    note: '[TASK-144-T7] search.html 缺少 x-data="autoOrganizePanel"——Alpine 找不到元件，面板永遠不出現',
+  },
+  {
+    file: 'web/templates/base.html', kind: 'required-string',
+    pattern: 'href="/static/css/components/auto-organize-panel.css"',
+    note: '[TASK-144-T7] base.html 缺少 auto-organize-panel.css 的 link——面板 surface 樣式不會載入',
+  },
+
+  // ---- [TASK-144 Codex 四審] 自動整理開關的 :disabled 綁定不得退回成只看 !folderIsSet ----
+  // scope 錨定「:checked="enabled"」後緊接的 :disabled="..." 屬性值本身（regex 第一個
+  // capture group 當 scopedText），只鎖這顆 checkbox、不影響下面 runNow 按鈕自己的
+  // :disabled="!folderIsSet || loading"。清空最愛資料夾後 folderIsSet 會變 false，
+  // 若綁定只看 !folderIsSet，開著的開關會變成「打勾但灰掉」永遠關不掉。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    scope: /:checked="enabled"\s+:disabled="([^"]*)"/,
+    pattern: '!enabled',
+    note: '[TASK-144 Codex 四審] search.html 自動整理開關的 :disabled 綁定必須含 !enabled（只看 !folderIsSet 會讓清空最愛資料夾後這顆開關關不掉）',
+  },
 ];
 
 // ---- helpers ----

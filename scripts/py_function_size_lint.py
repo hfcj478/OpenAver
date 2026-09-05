@@ -137,7 +137,7 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "各存一份同名 helper，比 inline 更糟。",
     ),
     ("core/organizer.py", "organize_file"): (
-        366,
+        369,
         "整理主流程；Phase 2（110b）會在其中加 containment 防線，加的是「呼叫一個新的小函式」，"
         "不得讓本函式本身更複雜（見 plan-110b，與既有 C901 noqa 理由一致）。"
         " ── 359→366（v0.14.6 / TASK-126-T4b，owner 2026-08-23 裁決把 organize 路徑納入）："
@@ -146,7 +146,17 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "readonly_producer×3 共 7 處重複，抽成單一 helper 可同時消掉本條與 _write_movie_assets "
         "的增量——但會讓既有測試的 `patch('core.enricher.download_image')` 攔不到"
         "（BE-TEST-01 是 patch 消費端綁定），屬於「要連測試策略一起改」的動作，"
-        "不該在 pre-merge 尾聲順手做。",
+        "不該在 pre-merge 尾聲順手做。"
+        " ── 366→369（v0.15.13 / TASK-144-T0，CD-144-15）：搬檔那一段從「`os.path.exists()` "
+        "問一句 → `shutil.move()` 動手」兩個獨立動作，改成 `os.open(O_CREAT|O_EXCL)` 原子佔位 "
+        "＋ `atomic_move()`。**+3 行**：`try/except FileExistsError` 包住既有的三行 duplicate "
+        "回傳（+2）、`os.close(fd)`（+1），搬移那一行由 `shutil.move` 換成 `atomic_move` 不增行。"
+        "**佔位這三行刻意留在函式內、不抽 helper**：`_containment_error` 必須在佔位之前"
+        "（CD-144-15）——抽出去會讓這條順序契約從函式內讀得到的相鄰兩行，變成兩個檔案之間的"
+        "隱含約定，正是那條 CD 要消滅的「只有一個人在操作時永遠看不見」的縫。"
+        "反之 `os.replace` ＋ EXDEV fallback **已經抽進 `core/atomic_write.py::atomic_move()`**"
+        "（那是全庫唯一准許出現裸 `os.replace` 的地方，見 test_atomic_write_boundary_guard），"
+        "所以本條的增量只有佔位那三行。",
     ),
     ("core/config.py", "_load_config_unlocked"): (
         304,
@@ -217,7 +227,7 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "理由一致）。",
     ),
     ("core/database/connection.py", "init_db"): (
-        238,
+        262,
         "資料庫 schema 初始化主流程，逐表 CREATE TABLE/CREATE INDEX 語句序列，schema 仍在"
         "演進中；拆成多個小函式不會降低本質複雜度，只會增加呼叫層次與跨函式的 cursor/conn "
         "傳遞。"
@@ -230,7 +240,18 @@ EXEMPTIONS: dict[tuple[str, str], tuple[int, str]] = {
         "表抽成 helper 會讓 6 張表有 5 張在函式內、1 張在函式外，反而更難讀。"
         " ／ 235→238（feature/141-wishlist-motion T1）：新增 `idx_videos_number_upper` "
         "表達式索引（`UPPER(number)`），與同區塊既有 4 條 `idx_videos_*` 逐字同形。"
-        "它讓書籤與片庫對帳不再全表掃描（spec-141 F5），是純加法的 3 行索引宣告。",
+        "它讓書籤與片庫對帳不再全表掃描（spec-141 F5），是純加法的 3 行索引宣告。"
+        " ／ 238→251（v0.15.13 / TASK-144-T1，CD-144-1）：新增 `notifications` 表的 "
+        "`CREATE TABLE IF NOT EXISTS`（7 欄），讓側欄通知在關掉 App／NAS 重啟後還在。"
+        "**+13 行全部是那一句 DDL 的縮排展開，零分支、零遷移**（新表，不需要 `ALTER TABLE`），"
+        "與同函式內既有 6 張表逐字同形——把單獨一張表抽成 helper 會讓 7 張表有 6 張在函式內、"
+        "1 張在函式外，反而更難讀（與上面 `wishlist` 那一段同一個理由）。"
+        " ／ 251→262（v0.15.13 / TASK-144-T2，CD-144-8）：新增 `organize_failures` 表的 "
+        "`CREATE TABLE IF NOT EXISTS`（6 欄），讓自動整理記得「這部片查無結果／目標已存在」，"
+        "不必每一輪都重跑八個來源。**+11 行全部是那一句 DDL 的縮排展開，零分支、零遷移**，"
+        "與同函式內既有 7 張表逐字同形。理由與上一段（`notifications`）逐字相同："
+        "**每加一張表就長一次是這個函式的固有成本**，抽 helper 只會讓「這個庫有哪些表」"
+        "這件事散到函式外面去。",
     ),
 }
 

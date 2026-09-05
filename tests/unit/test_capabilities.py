@@ -165,6 +165,29 @@ class TestCapabilitiesEndpoint:
         assert "server_mode" not in blob, "capabilities 不得揭露 server_mode 翻轉"
         assert "/api/config/general" not in blob, "capabilities 不得揭露 config/general 寫入端點"
 
+    def test_no_auto_organize_control_exposed(self, client):
+        """spec-144（TASK-144 pre-merge）：自動整理的**控制面**不得揭露給 AI agent。
+
+        本 branch 新增四支端點（`auto-organize/config` / `run-now` /
+        `use-resolved-folder` / `status`），過 `capabilities.md`「揭露判斷四問」後
+        **四支全部不揭露**，理由與 `test_no_server_mode_toggle_exposed` 同一條：
+
+        - `config` 是一個**持續性的設定翻轉**——打開之後每 12 小時無人值守地
+          對使用者的最愛資料夾**搬檔改名**。那是人的決定，不是 agent 的。
+        - `run-now` 是同一件事的立即版，一次可能動到整個資料夾（owner 的測試資料夾
+          就有 1965 個影片檔），而且 agent 對個別檔案**沒有任何取捨餘地**。
+        - agent 想達成同樣結果，既有的 `POST /api/scrape-single`（已揭露、已標
+          `confirmation_required`）本來就做得到，而且是**逐片、可審**的——
+          揭露 `run-now` 只會讓它失去控制權，不會讓它更快更準（四問的第 2 問答「沒有優勢」）。
+        - `status` 純讀，但沒有任何 agent 可據以行動的價值。
+
+        這支守衛是回歸保險：整串序列化比對，涵蓋 tools／instructions／任何欄位。
+        """
+        import json
+        blob = json.dumps(client.get("/api/capabilities").json(), ensure_ascii=False).lower()
+        assert "auto-organize" not in blob, "capabilities 不得揭露自動整理的控制端點"
+        assert "auto_organize" not in blob, "capabilities 不得揭露自動整理的控制端點"
+
     def test_each_tool_has_required_fields(self, client):
         data = client.get("/api/capabilities").json()
         for tool in data["tools"]:

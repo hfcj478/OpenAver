@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 import asyncio
+import contextlib
 import ipaddress
 import os
 import re
@@ -22,6 +23,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from web.static_cache import NoCacheStaticFiles
+from web.auto_organize_scheduler import auto_organize_loop
 from fastapi.templating import Jinja2Templates
 
 # 版本號（從 core/version.py 統一管理）
@@ -78,6 +80,7 @@ async def lifespan(app: FastAPI):
     # 移除 legacy clip_embedding / clip_model_id），確保 Video.from_row cls(**data)
     # 不會因 legacy schema 欄位收到未知 keyword 而 500。CD-57b-8 contract。
     init_db()
+    start_notification_persistence()
 
     # TASK-114a-T2: 認證閘門的 schema 就緒動作，與 init_db() 同一段落一起跑
     # （CD-114a-3：兩者刻意不合併成同一支函式，但啟動時機一致）。idempotent
@@ -124,6 +127,10 @@ async def lifespan(app: FastAPI):
     # 執行中途被 GC 回收 —— 存 app.state（app 已建立、比 module global 乾淨，無需 global）。
     app.state.startup_check_task = asyncio.create_task(_startup_update_check())
 
+    # TASK-144-T5: 12 小時排程 loop；create_task 回傳值須保留強引用（同上一段理由，
+    # event loop 只持 weak ref，task 可能執行中途被 GC 回收）。
+    app.state.auto_organize_task = asyncio.create_task(auto_organize_loop())
+
     try:
         await source_reachability.schedule_reprobe_if_stale()
     except Exception:
@@ -131,7 +138,32 @@ async def lifespan(app: FastAPI):
 
     yield
     # ── shutdown ──────────────────────────────────────────────
-    # 目前無 shutdown 邏輯（setup_logging 是 module-level，不需 teardown）
+    # 每一步各自 try/except（同 startup 的既有精神）：通知 drain 失敗不可擋住
+    # 排程 task 的 cancel，反之亦然。
+    try:
+        app.state.auto_organize_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await app.state.auto_organize_task
+    except Exception:
+        logger.warning("lifespan: auto_organize_task shutdown failed unexpectedly", exc_info=True)
+
+    # v0.15.13 P2-1：writer thread 是 daemon，process 結束時會被直接砍掉、
+    # 佇列裡還沒寫進 DB 的通知會消失。這裡把它 join 掉，讓佇列在真正結束前
+    # 排空。thread.join() 本身是同步阻塞呼叫，丟進 asyncio.to_thread 避免卡住
+    # event loop。**上限就是那支的 timeout（2 秒），由 thread.join() 自己保證**——
+    # 它只做「放哨兵 ＋ join」，佇列的排空由 writer 在自己那條 thread 上完成，
+    # 所以關閉時間與 DB 快慢完全解耦（`test_stop_notification_persistence_is_bounded_by_its_timeout`）。
+    #
+    # ⚠️ 這一段目前**只在 CLI 模式（uvicorn 直跑、Ctrl-C）與測試裡執行**。
+    # 桌面版的伺服器跑在 `windows/standalone.py:558` 的 daemon thread 上，
+    # 全庫沒有任何地方對它設 `should_exit`，所以關 App 時 lifespan shutdown 不會被跑到
+    # ——桌面版的通知持久化靠的是「writer 平常就跟得上」（實測每筆約 18ms、
+    # 佇列正常深度 0–1），不是靠這裡。要讓桌面版也走這條，得把 quit 鉤子接上，
+    # 那是另一支 branch 的事（見 PR body 的 residual）。
+    try:
+        await asyncio.to_thread(stop_notification_persistence)
+    except Exception:
+        logger.warning("lifespan: stop_notification_persistence failed unexpectedly", exc_info=True)
 
 
 # FastAPI 應用
@@ -169,7 +201,7 @@ from web.routers import tags as tags_router
 from web.routers import notifications as notifications_router
 # TASK-107-P1-T2: import emit_notification at module level so lifespan can call
 # it directly and tests can patch("web.app.emit_notification") at the use-site.
-from web.routers.notifications import emit_notification
+from web.routers.notifications import emit_notification, start_notification_persistence, stop_notification_persistence
 from web.routers import similar as similar_router
 from web.routers import settings_link as settings_link_router
 from web.routers import scraper_sources as scraper_sources_router
@@ -584,6 +616,13 @@ async def search_page(request: Request):
     """搜尋頁面"""
     context = get_common_context(request)
     context["page"] = "search"
+    # TASK-144-T7：「自動整理」鈕的 accent 狀態由伺服器 render，不由前端 fetch。
+    # 前端拿的話，按鈕會先畫成 btn-outline、等請求回來才跳成 btn-accent——每次進
+    # 搜尋頁閃一下，而且每次多一個請求。面板打開時才會再向 status 端點問一次最新值。
+    # 沿用 get_common_context() 已經載好的那份 config（`:552`），不重讀一次磁碟。
+    context["auto_organize_enabled"] = bool(
+        context["config"].get("search", {}).get("auto_organize", {}).get("enabled", False)
+    )
     return templates.TemplateResponse(request, "search.html", context)
 
 

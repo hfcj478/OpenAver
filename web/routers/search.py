@@ -43,6 +43,11 @@ from core.image_host_policy import (
 from core.maker_mapping import load_prefix_mapping
 from core.source_config import validate_source_id
 from core.source_settings import get_switchable_source_ids_ordered, is_uncensored_mode_effective
+from core.auto_organize_state import mark_manual_activity, request_abort, get_status
+from core.config import load_config, mutate_config
+from core.favorite_scan import resolve_favorite_folder
+from web import auto_organize_scheduler
+
 from core.scraper import (
     search_jav, smart_search, is_partial_number, is_number_format,
     is_prefix_only, search_partial, search_actress, strip_internal_nfo_keys
@@ -551,6 +556,7 @@ async def search_stream(
     - status: 搜尋狀態更新
     - result: 搜尋結果
     """
+    mark_manual_activity()
     q = q.strip()
     if not q or len(q) < 2:
         async def error_gen():
@@ -730,25 +736,17 @@ def get_favorite_files() -> dict:
             "total": 50
         }
     """
+    mark_manual_activity()
+    request_abort()
     from core.config import load_config
-    from core.path_utils import expand_env_vars, get_environment
+    from core.favorite_scan import list_favorite_video_files, resolve_favorite_folder
 
     config = load_config()
     original_folder = config.get('search', {}).get('favorite_folder', '').strip()
 
     # 處理資料夾路徑
     try:
-        if not original_folder:
-            # 空字串 = 使用系統下載資料夾
-            if get_environment() == 'wsl':
-                # WSL 環境：使用 Windows 下載資料夾
-                folder = expand_env_vars('%USERPROFILE%\\Downloads')
-            else:
-                # 其他環境：使用本地 home 下載資料夾
-                folder = str(Path.home() / "Downloads")
-        else:
-            # 使用 expand_env_vars 處理環境變數並轉換路徑
-            folder = expand_env_vars(original_folder)
+        folder = resolve_favorite_folder(config)
     except ValueError as e:
         logger.error("路徑轉換失敗: %s", e)
         return {
@@ -765,23 +763,9 @@ def get_favorite_files() -> dict:
             "folder": original_folder or folder
         }
 
-    # 過濾設定
-    video_exts = get_video_extensions(config)
-    min_size_mb = config.get("gallery", {}).get("min_size_mb", 0)
-    min_size_bytes = min_size_mb * 1024 * 1024
-
     # 掃描資料夾（不遞迴，只掃描第一層）
-    files = []
     try:
-        for f in folder_path.iterdir():
-            if not f.is_file():
-                continue
-            if f.suffix.lower() not in video_exts:
-                continue
-            suffix = f.suffix.lower()
-            if min_size_bytes > 0 and suffix not in ZERO_SIZE_EXTENSIONS and f.stat().st_size < min_size_bytes:
-                continue
-            files.append(str(f))
+        files = list_favorite_video_files(folder, config)
     except PermissionError:
         return {
             "success": False,
@@ -827,7 +811,10 @@ def _filter_files_sync(paths: list) -> dict:
     整段同步阻塞 I/O，由 filter_files 經 await asyncio.to_thread 移出 event loop。
     """
     from core.config import load_config
+    from core.favorite_scan import detect_nfo
     from core.path_utils import normalize_path
+    from core.scrapers.utils import extract_number
+    from core.database import organize_failures
 
     # 載入設定
     config = load_config()
@@ -835,10 +822,9 @@ def _filter_files_sync(paths: list) -> dict:
     min_size_mb = config.get("gallery", {}).get("min_size_mb", 0)
     min_size_bytes = min_size_mb * 1024 * 1024
 
-    filtered = []
     # P2-T6: inaccessible 桶＝無讀權限（PermissionError）＋未掛載/UNC（啟發式），與 not_found 分流
     rejected = {"extension": 0, "size": 0, "not_found": 0, "inaccessible": 0}
-    nfo_stem_cache: dict = {}
+    candidates = []  # [(original_path, normalized_path), ...]，保留原始迭代順序
 
     for original_path in paths:
         # 轉換路徑格式（Windows -> WSL）
@@ -871,21 +857,49 @@ def _filter_files_sync(paths: list) -> dict:
                 rejected["size"] += 1
                 continue
 
-        # NFO 同 stem 偵測（case-insensitive，父目錄 listing cache）
-        parent = p.parent
-        if parent not in nfo_stem_cache:
-            try:
-                nfo_stem_cache[parent] = {
-                    s.stem.lower()
-                    for s in parent.iterdir()
-                    if s.suffix.lower() == ".nfo" and s.is_file()
-                }
-            except (OSError, PermissionError):
-                nfo_stem_cache[parent] = set()
-        has_nfo = p.stem.lower() in nfo_stem_cache[parent]
+        candidates.append((original_path, path))
 
-        # 保留原始路徑（前端需要），帶 has_nfo 欄位
-        filtered.append({"path": original_path, "has_nfo": has_nfo})
+    # NFO 同 stem 偵測（case-insensitive，批次一次算完，父目錄 listing cache 才有效）
+    nfo_map = detect_nfo([path for _, path in candidates])
+    path_mappings = config.get("gallery", {}).get("path_mappings", {})
+    # 失敗記憶（灰字「查無結果」／橘色「重複」）是**加值**，不是這個端點的職責。
+    # DB 一鎖住（背景掃描或定時整理正在寫）就讓整包清單失敗的話，前端 setFileList()
+    # 只 console.error 然後帶著**空的 hasNfoMap** 繼續 ⇒ `has_nfo` 全變 false ⇒
+    # 使用者按「整理全部」會把已經刮好的整批片重新整理、NFO 整份重寫。
+    # ⇒ 失敗就退回 T6 之前的行為（skip_reason 留空），has_nfo 照常回。
+    # 一次請求只記一行 log（1965 個檔不能記 1965 行）。
+    memory_ok = True
+    filtered = []
+    for original_path, path in candidates:
+        skip_reason = ""
+        duplicate_target = ""
+
+        # 番號一律從 basename 取：與 core/auto_organize.py::run_one_round 同源（CD-144-8 要求兩邊算出同一個鍵），等價性由 tests/unit/test_number_extraction_key_parity.py 守
+        number = extract_number(Path(path).name)
+        if number and memory_ok:
+            try:
+                dup_key = organize_failures.duplicate_key(path, path_mappings)
+                if organize_failures.should_skip("duplicate", dup_key):
+                    skip_reason = "duplicate"
+                    duplicate_target = organize_failures.get_duplicate_target(dup_key)
+                elif organize_failures.should_skip("not_found", number.upper()):
+                    skip_reason = "not_found"
+            except Exception:
+                memory_ok = False
+                skip_reason = ""
+                duplicate_target = ""
+                logger.warning(
+                    "[filter_files] 讀取失敗記憶失敗，本次清單不顯示「查無結果」／「重複」標記；"
+                    "檔案清單與 NFO 判斷不受影響",
+                    exc_info=True,
+                )
+
+        filtered.append({
+            "path": original_path,
+            "has_nfo": nfo_map.get(path, False),
+            "skip_reason": skip_reason,
+            "duplicate_target": duplicate_target,
+        })
 
     return {
         "success": True,
@@ -963,3 +977,105 @@ def get_local_status(numbers: str = Query(..., description="逗號分隔的番�
             }
 
     return result
+
+
+class AutoOrganizeConfigRequest(BaseModel):
+    enabled: bool
+
+
+@router.post("/search/auto-organize/config")
+def update_auto_organize_config(body: AutoOrganizeConfigRequest) -> dict:
+    """開關「自動整理」排程（輕量端點，比照 web/routers/config.py:211
+    update_general_field() 的「單一欄位」形狀）。
+
+    未設最愛資料夾時只允許寫 False（D8：未設資料夾不准開排程）。sync def：
+    mutate_config 走檔案 I/O，依 async-offload 守衛（BE-ASYNC-01）不可寫成
+    async def 卡 event loop。
+    """
+    config = load_config()
+    favorite_folder = config.get("search", {}).get("favorite_folder", "").strip()
+    if body.enabled and not favorite_folder:
+        return {"success": False, "error": "favorite_folder_unset"}
+
+    def _mut(cfg):
+        cfg.setdefault("search", {}).setdefault("auto_organize", {})["enabled"] = body.enabled
+
+    mutate_config(_mut)
+    if not body.enabled:
+        # 撥掉開關＝叫停。沒有這一行的話，使用者關掉排程之後**正在跑的那一輪照樣
+        # 搬檔改名到跑完為止**（1965 個檔的第一輪是數小時等級），而面板上沒有任何
+        # 停止鈕、`request_abort()` 全庫唯一的呼叫點是「我的最愛」按鈕（:740）
+        # ⇒ 使用者唯一的脫身方式是關掉整個 App。
+        # 安全性：`request_abort()` 沒在跑時不設旗標，且 `enter_cron()` 進場時
+        # 會把旗標歸零，所以不會外溢到之後的任何一輪（core/auto_organize_state.py:52-63）。
+        request_abort()
+    # 撥開關的當下重新計時（[NEEDS CLARIFICATION]⑤ 裁決：同步呼叫，成功寫入之後、
+    # 回應之前）——不重置的話，關掉再開回來仍沿用舊的到期時間，可能立刻觸發。
+    auto_organize_scheduler.reset_due_time()
+    return {"success": True}
+
+
+@router.post("/search/auto-organize/use-resolved-folder")
+def use_resolved_auto_organize_folder() -> dict:
+    """把目前「手動用的那個路徑」（含系統下載資料夾 fallback）寫進
+    search.favorite_folder（spec §F1「就用這個資料夾」）。
+    """
+    config = load_config()
+    resolved = resolve_favorite_folder(config)
+
+    def _mut(cfg):
+        cfg.setdefault("search", {})["favorite_folder"] = resolved
+
+    mutate_config(_mut)
+    return {"success": True, "folder": resolved}
+
+
+@router.post("/search/auto-organize/run-now")
+async def run_auto_organize_now() -> dict:
+    """立刻執行一次；毫秒級返回，輪在背景 task 跑（見
+    web/auto_organize_scheduler.py 檔頭 🚫：絕不可 await 整輪跑完）。
+
+    ⚠️ 必須是 `async def`，不可比照 update_auto_organize_config() 寫成
+    sync def：`enter_and_start()` 內部呼叫 `asyncio.create_task()`，這支
+    API 只有在**目前執行緒就是 event loop 執行緒**時才不拋
+    `RuntimeError: no running event loop`。sync def 的 handler body 被
+    Starlette 丟進 threadpool 執行（另一條 OS thread），不是 event loop
+    執行緒——會讓這支端點每次呼叫都 500。本函式體內完全沒有 `await`
+    不影響「毫秒級返回」：FastAPI 對 `async def` handler 直接在 event loop
+    上執行，沒有 threadpool 調度的額外開銷，反而更快。
+    """
+    return auto_organize_scheduler.enter_and_start("run_now")
+
+
+@router.get("/search/auto-organize/status")
+def get_auto_organize_status() -> dict:
+    """面板 openPanel() 的**唯一**讀取端點：一次給完面板要顯示的全部東西。
+
+    回 6 個 key：`running`／`current_number`（純記憶體，來自 auto_organize_state）
+    ＋ `enabled`／`folder`／`folder_is_set`／`resolved_folder`（來自 config）。
+
+    ⚠️ **為什麼是一支肥一點的端點，而不是讓面板打三支**（2026-09-05 主 session 修正）：
+    初版承重段把這支定成「純記憶體兩 key」，於是面板為了拿到「還沒設資料夾時要顯示的候選
+    路徑」，只好去打 `GET /api/search/favorite-files`——那支會把整個系統下載資料夾**列完
+    並逐檔 stat**，只為了讀回一個路徑字串，而且它的 handler 帶有 `mark_manual_activity()`
+    ／`request_abort()` 兩個副作用。**還沒設資料夾的人正是最常打開這個面板的人**，下載夾大
+    的話面板會卡著不出現。改成這支一次回完，面板開一次只發一個請求，零副作用。
+
+    `resolved_folder` 走 `resolve_favorite_folder()`（＝「就用這個資料夾」會寫進去的那個值），
+    所以灰字顯示的路徑與按下去真正生效的路徑保證同源。
+
+    **純讀**：不呼叫 `mark_manual_activity()`／`request_abort()`／`mutate_config()`，
+    不改變任何 module-level 狀態（D8）。sync def——`load_config()` 是檔案 I/O，
+    依 BE-ASYNC-01 不可寫成 async def 卡 event loop。
+    """
+    config = load_config()
+    folder = config.get("search", {}).get("favorite_folder", "").strip()
+    return {
+        **get_status(),
+        "enabled": bool(
+            config.get("search", {}).get("auto_organize", {}).get("enabled", False)
+        ),
+        "folder": folder,
+        "folder_is_set": bool(folder),
+        "resolved_folder": resolve_favorite_folder(config),
+    }

@@ -495,6 +495,50 @@
                     <span x-show="isLoadingFavorite" class="loading loading-spinner loading-sm"></span>
                     <span x-text="isLoadingFavorite ? '' : t('search.action.favorite')">{{ t('search.action.favorite') }}</span>
                 </button>
+                <div class="popover-anchor" x-data="autoOrganizePanel"
+                     data-auto-organize-enabled="{{ '1' if auto_organize_enabled else '0' }}">
+                    <button type="button" class="btn btn-sm"
+                            :class="enabled ? 'btn-accent' : 'btn-outline'"
+                            @click="openPanel()"
+                            id="btnAutoOrganize">
+                        <i class="bi bi-clock-history"></i>
+                        <span x-text="window.t('search.action.auto_organize')">{{ t('search.action.auto_organize') }}</span>
+                    </button>
+                    <div class="auto-organize-panel" x-show="open" x-cloak @click.outside="closePanel()">
+                        <template x-if="running">
+                            <p class="auto-organize-panel__running" x-text="window.t('search.auto_organize.running')"></p>
+                        </template>
+                        <div class="auto-organize-panel__row">
+                            <input type="checkbox"
+                                   class="toggle toggle-sm toggle-primary"
+                                   :checked="enabled"
+                                   :disabled="loading || (!folderIsSet && !enabled)"
+                                   @change="setEnabled($event.target.checked, $event.target)">
+                            <span class="auto-organize-panel__label" x-text="window.t('search.auto_organize.enable_label')">{{ t('search.auto_organize.enable_label') }}</span>
+                        </div>
+                        <div class="auto-organize-panel__row">
+                            <button type="button" class="btn btn-sm"
+                                    :disabled="!folderIsSet || loading"
+                                    @click="runNow()"
+                                    x-text="window.t('search.auto_organize.run_now')">{{ t('search.auto_organize.run_now') }}</button>
+                        </div>
+                        <p class="auto-organize-panel__path" x-text="displayFolderPath()"></p>
+                        <p class="auto-organize-panel__warning" x-text="window.t('search.auto_organize.folder_warning')">{{ t('search.auto_organize.folder_warning') }}</p>
+                        {# 這一列用 x-show，不要改回 x-if：x-if 會在 folderIsSet 變 true 的當下把整列
+                           從 DOM 拔掉，面板高度當場縮一截——使用者剛按下去的那個位置變成「面板外面」，
+                           下一下點擊就會被 @click.outside 收走。x-show 只切 display，節點留在樹上。
+                           ⚠️ 別把這裡寫成「x-if 拔掉 target ⇒ contains 回 false ⇒ 判成點在外面」——
+                           那個直覺解釋是**錯的**，vendor/alpine/alpine.min.js 的 outside handler 有
+                           `l.target.isConnected !== !1` 守衛，已經脫離文件樹的 target **不會**觸發它；
+                           而且 useResolvedFolder() 是 async，狀態要等 fetch 回來才變，那一下的
+                           outside 判定早就跑完了。詳見 gotchas-frontend.md 的 FE-ALPINE-16。 #}
+                        <div class="auto-organize-panel__row" x-show="!folderIsSet">
+                            <button type="button" class="btn btn-sm btn-outline"
+                                    @click="useResolvedFolder()"
+                                    x-text="window.t('search.auto_organize.use_resolved_folder')">{{ t('search.auto_organize.use_resolved_folder') }}</button>
+                        </div>
+                    </div>
+                </div>
             </div>
             <small class="state-page-hint">{{ t('search.empty.drag_hint') }}</small>
             <div class="empty-explainer">

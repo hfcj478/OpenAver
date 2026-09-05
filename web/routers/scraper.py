@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Any, Dict, List, Literal, Optional
 
-from core.database import VideoRepository
+from core.database import VideoRepository, organize_failures
 from core.db_inflow import try_inflow_upsert
 from core.focal_trigger import maybe_submit_video_focal
 from core.enricher import enrich_single, fetch_samples_only, resolve_nfo_cover_paths
@@ -41,6 +41,7 @@ from core.readonly_producer import (
     enrich_one_readonly, ReadonlyProduceError,
 )
 from core import thumbnail_cache
+from core import auto_organize_state
 from web.routers.notifications import emit_notification as _emit_notif
 from core.wishlist_reconcile import reconcile_wishlist, format_wishlist_removed_message
 
@@ -187,6 +188,7 @@ def scrape_single(request: ScrapeRequest) -> dict:
     4. 下載封面
     5. 生成 NFO
     """
+    auto_organize_state.mark_manual_activity()
     file_path = request.file_path
     number = request.number
 
@@ -240,6 +242,13 @@ def scrape_single(request: ScrapeRequest) -> dict:
             "duplicate": True,
             "duplicate_target": result.get('duplicate_target', ''),
         }
+
+    # 刮削成功後清除失敗記憶（spec §F3，CD-144-8）
+    if result.get('success'):
+        try:
+            organize_failures.clear_on_success(number)
+        except Exception:
+            logger.warning(f"scrape_single: clear_on_success 失敗（{number}）", exc_info=True)
 
     # scrape 成功後：若 metadata 含 user_tags，寫入 DB（與現有值取聯集）
     if result.get('success') and metadata.get('user_tags'):
