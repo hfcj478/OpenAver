@@ -83,6 +83,9 @@ async def auto_organize_loop() -> None:
             # 下一次 5 分鐘輪詢本來就會重試；在這裡重置等於因為一次磁碟抖動
             # 就把排程整整推走 12 小時，恢復之後還要再等半天才會動。
             if entered:
+                emit_notification(
+                    "error", "notif.auto_organize_failed", task_type="auto_organize",
+                )
                 reset_due_time()
 
 
@@ -142,6 +145,9 @@ async def _prepare_and_run(trigger: str) -> dict:
     ``{"folder_unreachable": True, "folder": <path>}``（不含其餘 run_one_round 鍵）。
     """
     config = await asyncio.to_thread(load_config)
+    configured = (config.get('search', {}).get('favorite_folder') or '').strip()
+    if not configured:
+        return {"folder_not_configured": True}
     folder = await asyncio.to_thread(resolve_favorite_folder, config)
     try:
         # 🔴 `asyncio.wait_for` 是承重的，不是裝飾：`asyncio.to_thread` 自己**永遠不會**
@@ -169,6 +175,13 @@ async def _run_round_body(trigger: str) -> None:
     """真正跑一輪；不回傳任何東西，所有結果一律走 emit_notification()。"""
     async with _round_guard():
         result = await _prepare_and_run(trigger)
+
+    if result.get("folder_not_configured"):
+        emit_notification(
+            "warn", "notif.auto_organize_folder_not_set", task_type="auto_organize",
+        )
+        reset_due_time()
+        return
 
     if result.get("folder_unreachable"):
         emit_notification(

@@ -197,7 +197,7 @@ async def test_prepare_exception_still_releases_running(monkeypatch):
         raise RuntimeError("probe boom")
 
     monkeypatch.setattr(sched, "resolve_favorite_folder", boom)
-    monkeypatch.setattr(sched, "load_config", lambda: {"search": {}})
+    monkeypatch.setattr(sched, "load_config", lambda: {"search": {"favorite_folder": "/some/folder"}})
 
     with pytest.raises(RuntimeError, match="probe boom"):
         await sched._run_round_body("run_now")
@@ -459,7 +459,7 @@ class TestProbeTimeoutAndLoopSurvival:
         from web import auto_organize_scheduler as aos
 
         monkeypatch.setattr(aos, "_FOLDER_EXISTS_TIMEOUT_S", 0.2)
-        monkeypatch.setattr(aos, "load_config", lambda: {})
+        monkeypatch.setattr(aos, "load_config", lambda: {"search": {"favorite_folder": "/nas/asleep"}})
         monkeypatch.setattr(aos, "resolve_favorite_folder", lambda _cfg: "/nas/asleep")
 
         # 🔴 只對「我們這一條路徑」變慢：`aos.os` 就是全域 `os` 模組，
@@ -731,3 +731,132 @@ async def test_enter_and_start_exception_is_caught_and_notified(monkeypatch):
     assert auto_organize_state.get_status()["running"] is False, (
         "背景例外之後 running 沒有被釋放——下一輪 run-now 會被永久卡在 already_running"
     )
+
+
+# ---------------------------------------------------------------------------
+# Codex 三審 ①：沒設定最愛資料夾就不准跑（P0）
+#
+# 使用者流程：開了定時整理之後，在設定頁把 favorite_folder 清空，enabled 仍是
+# true——resolve_favorite_folder() 會 fallback 到系統的「下載」資料夾，無人值守
+# 地把整個下載夾的片改名搬走，而使用者從來沒指定過那個資料夾。
+# ---------------------------------------------------------------------------
+
+async def test_folder_not_configured_skips_round_and_emits_warning(monkeypatch):
+    """正向鎖：favorite_folder 是空字串 → run_one_round 不跑，發 folder_not_set 通知。"""
+    monkeypatch.setattr(sched, "load_config", lambda: {"search": {"favorite_folder": ""}})
+    run_spy = MagicMock()
+    monkeypatch.setattr(sched, "run_one_round", run_spy)
+    resolve_spy = MagicMock()
+    monkeypatch.setattr(sched, "resolve_favorite_folder", resolve_spy)
+    emit = MagicMock()
+    monkeypatch.setattr(sched, "emit_notification", emit)
+    reset = MagicMock(wraps=sched.reset_due_time)
+    monkeypatch.setattr(sched, "reset_due_time", reset)
+
+    assert auto_organize_state.enter_cron("schedule") is True
+    await sched._run_round_body("schedule")
+
+    run_spy.assert_not_called()
+    resolve_spy.assert_not_called()
+    emit.assert_called_once_with(
+        "warn", "notif.auto_organize_folder_not_set", task_type="auto_organize",
+    )
+    reset.assert_called_once()
+    assert auto_organize_state.get_status()["running"] is False
+
+
+async def test_whitespace_only_folder_is_treated_as_not_configured(monkeypatch):
+    """正向鎖的邊界：只有空白字元的 favorite_folder 也算沒設定。"""
+    monkeypatch.setattr(sched, "load_config", lambda: {"search": {"favorite_folder": "   "}})
+    run_spy = MagicMock()
+    monkeypatch.setattr(sched, "run_one_round", run_spy)
+
+    result = await sched._prepare_and_run("schedule")
+
+    assert result == {"folder_not_configured": True}
+    run_spy.assert_not_called()
+
+
+async def test_folder_configured_proceeds_past_the_new_guard(monkeypatch, tmp_path):
+    """反向鎖：有設定 favorite_folder 時，照常往下跑到 run_one_round（不被新 guard 擋住）。"""
+    fav = tmp_path / "fav"
+    fav.mkdir()
+    monkeypatch.setattr(
+        sched, "load_config", lambda: {"search": {"favorite_folder": str(fav)}},
+    )
+    run_spy = MagicMock(return_value=_empty_result())
+    monkeypatch.setattr(sched, "run_one_round", run_spy)
+
+    result = await sched._prepare_and_run("schedule")
+
+    run_spy.assert_called_once()
+    assert "folder_not_configured" not in result
+
+
+# ---------------------------------------------------------------------------
+# Codex 三審 ③：排程輪拋例外時側欄要有訊息（P2）
+#
+# 使用者流程：auto_organize_loop() 的 except Exception 只寫 log 就把下次推遲
+# 12 小時，run-now 那條路會發 notif.auto_organize_failed，排程這條不會——無人
+# 值守的使用者看到開關還亮著、側欄一個字都沒有。
+# ---------------------------------------------------------------------------
+
+async def test_loop_exception_after_entered_emits_failed_notification(monkeypatch):
+    """正向鎖：entered 為真時例外要發 notif.auto_organize_failed。"""
+    wake_count = {"n": 0}
+
+    async def fake_sleep(_s):
+        wake_count["n"] += 1
+        if wake_count["n"] >= 2:
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(sched.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(
+        sched, "load_config",
+        lambda: {"search": {"auto_organize": {"enabled": True}}},
+    )
+    sched._next_due_at = time.time() - 1.0
+
+    async def boom(_trigger):
+        # 真正的 _round_guard() 一定會在例外離開 _run_round_body() 之前釋放 running
+        # （finally 區塊），這裡手動模擬同一個保證，避免測試本身洩漏狀態。
+        auto_organize_state.exit_cron()
+        raise RuntimeError("round boom")
+
+    monkeypatch.setattr(sched, "_run_round_body", boom)
+
+    emit = MagicMock()
+    monkeypatch.setattr(sched, "emit_notification", emit)
+
+    with pytest.raises(asyncio.CancelledError):
+        await sched.auto_organize_loop()
+
+    emit.assert_called_once_with(
+        "error", "notif.auto_organize_failed", task_type="auto_organize",
+    )
+    assert auto_organize_state.get_status()["running"] is False
+
+
+async def test_loop_exception_before_entered_does_not_emit(monkeypatch):
+    """反向鎖：連 config 都讀不到（entered 為假）時，不得發通知。"""
+    wake_count = {"n": 0}
+
+    async def fake_sleep(_s):
+        wake_count["n"] += 1
+        if wake_count["n"] >= 2:
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(sched.asyncio, "sleep", fake_sleep)
+
+    def boom_config():
+        raise RuntimeError("config read boom")
+
+    monkeypatch.setattr(sched, "load_config", boom_config)
+
+    emit = MagicMock()
+    monkeypatch.setattr(sched, "emit_notification", emit)
+
+    with pytest.raises(asyncio.CancelledError):
+        await sched.auto_organize_loop()
+
+    emit.assert_not_called()

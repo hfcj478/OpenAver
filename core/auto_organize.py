@@ -18,6 +18,7 @@ from core.path_utils import coerce_to_file_uri
 from core.readonly_source import is_path_readonly, readonly_source_prefixes, writable_source_prefixes
 from core.scraper import smart_search
 from core.scrapers.utils import extract_number, has_japanese
+from core.source_settings import is_uncensored_mode_effective
 from core.translate_service import create_translate_service
 from core.wishlist_reconcile import reconcile_wishlist
 
@@ -68,6 +69,7 @@ def run_one_round(
         return {"folder_unreachable": True}
 
     proxy_url = config.get('search', {}).get('proxy_url', '')
+    uncensored_mode = is_uncensored_mode_effective(config)  # 整輪只算一次（DoD-7 慣例）
     scraper_config = config.get('scraper', {})
     translate_config = config.get('translate', {})
     translate_enabled = translate_config.get('enabled', False)
@@ -128,7 +130,7 @@ def run_one_round(
             completed += 1
             continue
 
-        results = smart_search(number, proxy_url=proxy_url)  # CD-144-4：逐字同手動批次
+        results = smart_search(number, uncensored_mode=uncensored_mode, proxy_url=proxy_url)  # CD-144-4：逐字同手動批次
         if not results:
             organize_failures.record_failure('not_found', upper_number, number)
             newly_recorded += 1
@@ -160,7 +162,12 @@ def run_one_round(
             newly_recorded += 1
             skipped_duplicate.append({"number": number, "target": target})
         elif organize_result.get('success'):
-            organize_failures.clear_on_success(number)
+            try:
+                organize_failures.clear_on_success(number)
+            except Exception:
+                logger.warning(
+                    "[auto_organize] 清除失敗記憶失敗（%s），整理已完成、本輪繼續", number, exc_info=True,
+                )
             # in-flow upsert：與手動整理（web/routers/scraper.py:276）同一個動作。
             # 少了這一行，自動整理成功的片**不會進 DB**——瀏覽頁看不到它、
             # 迴圈結束那次 reconcile_wishlist() 也查不到它（對帳走

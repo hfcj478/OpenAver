@@ -897,6 +897,7 @@
     "update_available": "OpenAver 有新版本",
     "auto_organize_summary": "定時整理",
     "auto_organize_aborted": "定時整理已中止",
+    "auto_organize_folder_not_set": "定時整理：還沒設定最愛資料夾",
     "auto_organize_folder_unreachable": "定時整理：無法存取最愛資料夾",
     "auto_organize_readonly": "定時整理：最愛資料夾是唯讀來源",
     "auto_organize_failed": "定時整理失敗，請查閱日誌",

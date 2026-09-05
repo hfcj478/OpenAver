@@ -96,7 +96,7 @@ class TestFourFileRoundStatistics:
 
         config = make_config(fav_dir)
 
-        def fake_smart_search(number, proxy_url=""):
+        def fake_smart_search(number, uncensored_mode=False, proxy_url=""):
             return [{"number": number, "title": f"title-{number}", "actors": []}]
 
         def fake_organize_file(file_path, metadata, cfg):
@@ -229,7 +229,7 @@ class TestAbortOrdering:
         mocker.patch("core.auto_organize.list_favorite_video_files",
                       return_value=[str(f1), str(f2)])
         mocker.patch("core.auto_organize.smart_search",
-                      side_effect=lambda number, proxy_url="": [{"number": number, "title": "t", "actors": []}])
+                      side_effect=lambda number, uncensored_mode=False, proxy_url="": [{"number": number, "title": "t", "actors": []}])
         organize_mock = mocker.patch("core.auto_organize.organize_file",
                                       return_value=default_organize_success())
         mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
@@ -259,7 +259,7 @@ class TestAbortOrdering:
         mocker.patch("core.auto_organize.list_favorite_video_files",
                       return_value=[str(f1), str(f2)])
         mocker.patch("core.auto_organize.smart_search",
-                      side_effect=lambda number, proxy_url="": [{"number": number, "title": "t", "actors": []}])
+                      side_effect=lambda number, uncensored_mode=False, proxy_url="": [{"number": number, "title": "t", "actors": []}])
         mocker.patch("core.auto_organize.organize_file", return_value=default_organize_success())
         mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
 
@@ -303,7 +303,7 @@ class TestNoneCallablesMeanNeverAbort:
 
         config = make_config(fav_dir)
         mocker.patch("core.auto_organize.smart_search",
-                      side_effect=lambda number, proxy_url="": [{"number": number, "title": "t", "actors": []}])
+                      side_effect=lambda number, uncensored_mode=False, proxy_url="": [{"number": number, "title": "t", "actors": []}])
         organize_mock = mocker.patch("core.auto_organize.organize_file",
                                       return_value=default_organize_success())
         mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
@@ -448,7 +448,7 @@ class TestMemoryHitNotAnEvent:
 
         search_mock = mocker.patch(
             "core.auto_organize.smart_search",
-            side_effect=lambda number, proxy_url="": [] if number == "NEW-001" else None,
+            side_effect=lambda number, uncensored_mode=False, proxy_url="": [] if number == "NEW-001" else None,
         )
         organize_mock = mocker.patch("core.auto_organize.organize_file")
         mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
@@ -746,3 +746,89 @@ class TestNfoEnumerationFailsClosed:
         assert detect_spy.call_args.kwargs.get("strict") is True, (
             "必須以 strict=True 呼叫 detect_nfo，否則列不到目錄會被靜默當成「沒有 NFO」"
         )
+
+
+class TestUncensoredModeParity:
+    """Codex 三審 ②：auto ≠ manual 的無碼模式落差。
+
+    使用者流程：使用者在設定頁開了無碼模式（只搜 AVSOX / FC2）→ 定時整理卻
+    永遠用預設 False 去問 `smart_search` → 該片這一輪要嘛查無結果被記進失敗
+    記憶、要嘛湊巧命中一個有碼來源的錯誤結果 → 使用者看不出來、只覺得
+    「定時整理跟我自己按搜尋的結果不一樣」。手動搜尋（web/routers/search.py）
+    與掃描（web/routers/scanner.py）都把 `is_uncensored_mode_effective(config)`
+    傳進去，這裡補回同一條。
+    """
+
+    def test_smart_search_receives_true_when_uncensored_mode_enabled(
+        self, tmp_path, isolated_db, mocker
+    ):
+        fav = tmp_path / "fav"
+        fav.mkdir()
+        write_video(fav, "ABC-123.mp4")
+        config = make_config(fav)
+        config["search"]["uncensored_mode_enabled"] = True
+
+        search_spy = mocker.patch("core.auto_organize.smart_search", return_value=[])
+        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
+
+        run_one_round(config)
+
+        search_spy.assert_called_once()
+        assert search_spy.call_args.kwargs.get("uncensored_mode") is True, (
+            "config 開了無碼模式，smart_search 卻沒收到 uncensored_mode=True"
+        )
+
+    def test_smart_search_receives_false_when_uncensored_mode_disabled(
+        self, tmp_path, isolated_db, mocker
+    ):
+        fav = tmp_path / "fav"
+        fav.mkdir()
+        write_video(fav, "ABC-123.mp4")
+        config = make_config(fav)
+        config["search"]["uncensored_mode_enabled"] = False
+
+        search_spy = mocker.patch("core.auto_organize.smart_search", return_value=[])
+        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
+
+        run_one_round(config)
+
+        search_spy.assert_called_once()
+        assert search_spy.call_args.kwargs.get("uncensored_mode") is False, (
+            "config 沒開無碼模式，smart_search 不該收到 uncensored_mode=True"
+        )
+
+
+class TestClearOnSuccessBestEffort:
+    """Codex 三審 ④：`clear_on_success()` 拋例外不准讓整輪中止。
+
+    使用者流程：`organize_file()` 已經把片搬完改完名了 → 這一刻 SQLite 短暫
+    鎖住 → `clear_on_success()` 拋例外 → 若沒接住，整輪 abort，那部**已經搬好
+    的片**不進 `added` 統計、也不會呼叫 `try_inflow_upsert()`（可能不進片庫，
+    瀏覽頁看不到它）。手動路徑（web/routers/scraper.py 的 scrape_single）已經
+    把這一步當 best-effort，這裡照抄同一形狀。
+    """
+
+    def test_clear_on_success_exception_does_not_abort_round(
+        self, tmp_path, isolated_db, mocker, stub_inflow
+    ):
+        fav = tmp_path / "fav"
+        fav.mkdir()
+        write_video(fav, "ABC-123.mp4")
+        config = make_config(fav)
+
+        mocker.patch("core.auto_organize.smart_search",
+                     return_value=[{"number": "ABC-123", "title": "Some Title"}])
+        mocker.patch("core.auto_organize.organize_file",
+                     return_value=default_organize_success())
+        mocker.patch("core.auto_organize.reconcile_wishlist", return_value=[])
+        mocker.patch(
+            "core.auto_organize.organize_failures.clear_on_success",
+            side_effect=RuntimeError("database is locked"),
+        )
+
+        result = run_one_round(config)
+
+        assert result["added"] == ["ABC-123"], (
+            "clear_on_success 拋例外不該讓已經整理好的片漏掉 added 統計"
+        )
+        stub_inflow.assert_called_once()
