@@ -55,8 +55,19 @@ export function autoOrganizePanel() {
          * 開關就停在使用者撥過去的位置——畫面說「開著」，後端其實是關的。
          * （T7 CDP 驗收實測到：撥之前 checked=true，失敗後停在 false。
          *   node:test 只看得到 `panel.enabled`，看不到這個。）
+         *
+         * ⚠️ 連點兩下會發兩個並行請求、回應順序不保證，存到後端的值可能不是使用者
+         * 最後點的那一下——套用 `runNow()` 已經在用的 `loading` 早退。早退這條**必須**
+         * 把 checkbox 的 DOM 狀態拉回 `this.enabled`：瀏覽器在使用者點擊當下已經把
+         * `checked` 翻過去了，而 `:checked="enabled"` 這個值若沒變化 Alpine 不會重跑
+         * 綁定（Proxy 的 hasChanged），所以不能只 `return`。
          */
         async setEnabled(enabled, el) {
+            if (this.loading) {
+                if (el) el.checked = this.enabled;
+                return;
+            }
+            this.loading = true;
             const prev = this.enabled;
             const restore = () => {
                 this.enabled = prev;
@@ -78,6 +89,8 @@ export function autoOrganizePanel() {
             } catch (_e) {
                 restore();
                 showToast(window.t('search.auto_organize.config_failed'), 'error');
+            } finally {
+                this.loading = false;
             }
         },
 

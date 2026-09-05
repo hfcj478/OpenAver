@@ -512,7 +512,7 @@
                             <input type="checkbox"
                                    class="toggle toggle-sm toggle-primary"
                                    :checked="enabled"
-                                   :disabled="!folderIsSet"
+                                   :disabled="loading || (!folderIsSet && !enabled)"
                                    @change="setEnabled($event.target.checked, $event.target)">
                             <span class="auto-organize-panel__label" x-text="window.t('search.auto_organize.enable_label')">{{ t('search.auto_organize.enable_label') }}</span>
                         </div>

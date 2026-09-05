@@ -4899,6 +4899,19 @@ const RULES = [
     pattern: 'href="/static/css/components/auto-organize-panel.css"',
     note: '[TASK-144-T7] base.html 缺少 auto-organize-panel.css 的 link——面板 surface 樣式不會載入',
   },
+
+  // ---- [TASK-144 Codex 四審] 自動整理開關的 :disabled 綁定不得退回成只看 !folderIsSet ----
+  // scope 錨定「:checked="enabled"」後緊接的 :disabled="..." 屬性值本身（regex 第一個
+  // capture group 當 scopedText），只鎖這顆 checkbox、不影響下面 runNow 按鈕自己的
+  // :disabled="!folderIsSet || loading"。清空最愛資料夾後 folderIsSet 會變 false，
+  // 若綁定只看 !folderIsSet，開著的開關會變成「打勾但灰掉」永遠關不掉。
+  {
+    file: 'web/templates/search.html',
+    kind: 'required-string',
+    scope: /:checked="enabled"\s+:disabled="([^"]*)"/,
+    pattern: '!enabled',
+    note: '[TASK-144 Codex 四審] search.html 自動整理開關的 :disabled 綁定必須含 !enabled（只看 !folderIsSet 會讓清空最愛資料夾後這顆開關關不掉）',
+  },
 ];
 
 // ---- helpers ----

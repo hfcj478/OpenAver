@@ -127,6 +127,66 @@ test('setEnabled(true) 打 POST /search/auto-organize/config，回應 {success:f
     assert.ok(toastCalls.length >= 1);
 });
 
+test('[TASK-144 Codex 四審] setEnabled 連點兩下：第一個請求還沒完成時，第二次呼叫不再發 fetch，並把 checkbox 拉回目前的 enabled', { timeout: 3000 }, async () => {
+    const panel = freshPanel();
+    panel.enabled = false;
+    panel.folderIsSet = true;
+
+    let fetchCalls = 0;
+    let resolveFetch;
+    const pending = new Promise((resolve) => { resolveFetch = resolve; });
+    fetchImpl = async (url, opts = {}) => {
+        if (String(url).includes('/auto-organize/config') && opts.method === 'POST') {
+            fetchCalls += 1;
+            await pending;
+            return { ok: true, json: async () => ({ success: true }) };
+        }
+        return { ok: true, json: async () => ({}) };
+    };
+
+    const el1 = { checked: true };
+    const firstCall = panel.setEnabled(true, el1); // 第一下：尚未 resolve，loading 應已變 true
+
+    // 第二下點擊：瀏覽器已把 DOM 狀態翻成 true（模擬與目前 enabled 不同的殘留值），
+    // 用來證明拉回動作真的發生，不是巧合相等
+    const el2 = { checked: true };
+    await panel.setEnabled(false, el2); // 第一個請求還在飛，這次呼叫必須早退
+
+    assert.equal(fetchCalls, 1, '第一個請求還在進行時，第二次呼叫不得再發 fetch');
+    assert.equal(
+        el2.checked, panel.enabled,
+        '早退必須把 checkbox 的 DOM 狀態拉回目前的 enabled——瀏覽器已經先把 checked 翻過去，'
+        + 'Alpine 的 :checked 綁定在值沒變時不會重跑（FE-ALPINE-15）',
+    );
+    assert.equal(panel.enabled, false);
+
+    resolveFetch();
+    await firstCall;
+    assert.equal(panel.enabled, true, '第一個請求 resolve 後應套用它送出的值');
+    assert.equal(fetchCalls, 1, '全程只應有一次 fetch');
+});
+
+test('[TASK-144 Codex 四審 反向鎖] setEnabled 依序呼叫（第一次 await 完才第二次）→ fetch 被呼叫兩次，證明不是把功能鎖死', async () => {
+    const panel = freshPanel();
+    panel.enabled = false;
+    panel.folderIsSet = true;
+
+    let fetchCalls = 0;
+    fetchImpl = async (url, opts = {}) => {
+        if (String(url).includes('/auto-organize/config') && opts.method === 'POST') {
+            fetchCalls += 1;
+            return { ok: true, json: async () => ({ success: true }) };
+        }
+        return { ok: true, json: async () => ({}) };
+    };
+
+    await panel.setEnabled(true, { checked: true });
+    await panel.setEnabled(false, { checked: false });
+
+    assert.equal(fetchCalls, 2, '依序呼叫（非並行）必須各自成功發出請求');
+    assert.equal(panel.enabled, false);
+});
+
 test('runNow() success=true → toast 使用「已開始」語意 key，不是「已完成」語意 key', async () => {
     const panel = freshPanel();
     panel.folderIsSet = true;
