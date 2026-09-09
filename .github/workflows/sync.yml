@@ -1,0 +1,56 @@
+name: Sync Upstream Main - OpenAver
+
+on:
+  schedule:
+    # UTC 16:00 = 北京时间 00:00
+    - cron: '0 16 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Reset main to upstream main but keep sync workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+
+          git remote add upstream https://github.com/slive777/OpenAver.git
+          git fetch upstream main
+          git fetch origin main
+
+          mkdir -p /tmp/openaver-workflow-backup
+          cp .github/workflows/sync.yml /tmp/openaver-workflow-backup/sync.yml
+
+          git checkout main
+          git reset --hard upstream/main
+
+          mkdir -p .github/workflows
+          cp /tmp/openaver-workflow-backup/sync.yml .github/workflows/sync.yml
+
+          # 如果最终文件树和当前 origin/main 一样，就不提交，避免每天制造空同步 commit
+          if git diff --quiet origin/main -- .; then
+            echo "No upstream changes."
+            exit 0
+          fi
+
+          git add -A
+          git commit -m "Sync upstream main and keep workflow"
+          git push --force-with-lease origin main
